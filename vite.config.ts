@@ -1,7 +1,15 @@
-import { defineConfig } from "vitest/config";
+import { defineConfig } from "vite-plus";
+import { lintConfig } from "./tools/oxlint/config.ts";
 
-/** `unit` is every workspace's tests; `architecture` tests the lint rules and the backlog. */
+/** One config for the whole toolchain: `vp check` (format, lint, type-check) and `vp test`. */
 export default defineConfig({
+  lint: {
+    ...lintConfig,
+    options: { typeAware: true, typeCheck: true },
+  },
+  fmt: {
+    ignorePatterns: ["tools/oxlint/anti-slop/**", "pnpm-lock.yaml"],
+  },
   test: {
     projects: [
       {

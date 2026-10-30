@@ -2,12 +2,12 @@
 
 Four tiers. Each tier proves something the one below cannot.
 
-| Tier | Proves | How | How many |
-| --- | --- | --- | --- |
-| **1. Pure** | Grants, rules, redaction, snapshot capping | Plain unit tests, no I/O | Most tests |
-| **2. Services** | Gateway, AgentRunner, Computers logic | `@effect/vitest` with fake layers: fake computers, in-memory audit. `TestClock` for anything timed | Many |
-| **3. Contract** | Every computer provider behaves the same | One suite, run against each provider (`docker` now, `ecs` and `k8s` later), against a local HTML fixture instead of real websites | Few |
-| **4. End to end** | One ticket's demo works | `docker compose up`, a scripted model, and an `agent-browser` run of the demo | One per ticket |
+| Tier              | Proves                                     | How                                                                                                                               | How many       |
+| ----------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| **1. Pure**       | Grants, rules, redaction, snapshot capping | Plain unit tests, no I/O                                                                                                          | Most tests     |
+| **2. Services**   | Gateway, AgentRunner, Computers logic      | `@effect/vitest` with fake layers: fake computers, in-memory audit. `TestClock` for anything timed                                | Many           |
+| **3. Contract**   | Every computer provider behaves the same   | One suite, run against each provider (`docker` now, `ecs` and `k8s` later), against a local HTML fixture instead of real websites | Few            |
+| **4. End to end** | One ticket's demo works                    | `docker compose up`, a scripted model, and an `agent-browser` run of the demo                                                     | One per ticket |
 
 ## The model in tests
 
@@ -19,7 +19,7 @@ One nightly smoke test runs against the real model, so a model or SDK change sho
 
 ## Rules the tooling enforces
 
-See [quality-gates.md](quality-gates.md): `bun run check`, the oxlint plugins, the architecture
+See [quality-gates.md](quality-gates.md): `vp run check`, the oxlint plugins, the architecture
 rules and the tests that keep the docs honest.
 
 ## Definition of done for a ticket

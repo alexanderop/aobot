@@ -25,7 +25,7 @@ Out:
 
 ## Demo
 
-1. Run `bun test` with no network and no API key.
+1. Run `vp test run` with no network and no API key.
 2. The E0-1 tier-2 and tier-4 tests pass.
 
 ## Layers

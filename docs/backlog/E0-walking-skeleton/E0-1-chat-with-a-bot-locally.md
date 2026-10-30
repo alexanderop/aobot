@@ -15,9 +15,9 @@ estimate: 3d
 
 In:
 
-- Bun workspace: `apps/server`, `apps/web`, `packages/domain`
+- pnpm workspace through Vite+: `apps/server`, `apps/web`, `packages/domain`
 - Docker Compose with Postgres
-- Effect server on Bun (`HttpRouter`), settings through `Config`
+- Effect server on Node (`HttpRouter`, `@effect/platform-node`), settings through `Config`
 - One hard-coded Bot running on the Claude Agent SDK with `tools: []` and `settingSources: []`
 - Answer streamed as `ChatEvent`s defined with Effect Schema in `packages/domain`
 - Messages stored in Postgres, so a reload keeps the conversation
@@ -56,4 +56,4 @@ None yet (E0-2).
 
 ## Reference
 
-Set the server's idle timeout off: Bun closes quiet requests after 10 seconds and an agent turn is often quiet for longer.
+Check the HTTP server's request and idle timeouts: an agent turn can be quiet for minutes, and a streaming response must not be cut off. (In the Bun prototype this was a 10-second default.)

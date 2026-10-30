@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Schema } from "effect";
 import { parse } from "yaml";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { policyProblems } from "../oxlint/aobot-architecture/policy.ts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -50,10 +50,13 @@ describe("the backlog", () => {
     expect(tickets.length).toBeGreaterThan(0);
   });
 
-  it.each(tickets.map((ticket) => [ticket.id, ticket] as const))("%s sits in its epic folder and is named by its id", (_id, ticket) => {
-    expect(ticket.file.startsWith(`${ticket.id}-`)).toBe(true);
-    expect(ticket.folder.startsWith(`${ticket.epic}-`)).toBe(true);
-  });
+  it.each(tickets.map((ticket) => [ticket.id, ticket] as const))(
+    "%s sits in its epic folder and is named by its id",
+    (_id, ticket) => {
+      expect(ticket.file.startsWith(`${ticket.id}-`)).toBe(true);
+      expect(ticket.folder.startsWith(`${ticket.epic}-`)).toBe(true);
+    },
+  );
 
   it("uses each id once", () => {
     expect(ids.size).toBe(tickets.length);

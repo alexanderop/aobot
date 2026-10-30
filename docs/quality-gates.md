@@ -3,44 +3,56 @@
 Copied from the setup in `~/Projects/games/effect-factory`, adapted to aobot. Rules are enforced by
 tools, never by documents alone: if a rule matters, a lint rule or a test fails when it is broken.
 
+## The toolchain: Vite+
+
+aobot uses [Vite+](https://viteplus.dev) (`vp`) as its one toolchain, like effect-factory's
+`chore/vite-plus` branch. It bundles oxlint, oxfmt, Vitest and a type-aware checker, and it installs
+the pinned Node and pnpm itself. All configuration lives in `vite.config.ts`; the lint rules live in
+`tools/oxlint/config.ts`, which both `vite.config.ts` and the rule tests import.
+
 ## The one command
 
 ```sh
-bun run check   # typecheck && lint && test && knip
+vp run check   # vp check (format, lint, type-check) && vp test run && knip
 ```
 
 Run it before calling anything done. CI (`.github/workflows/ci.yml`) runs the same command on every
-push to `main` and every pull request. effect-factory has no CI; aobot adds it.
+push to `main` and every pull request, after `voidzero-dev/setup-vp`. effect-factory has no CI; aobot
+adds it. Note that `vp check` alone is the built-in static check; `vp run check` runs the full script.
 
-| Script | What it runs | In `check`? |
-| --- | --- | --- |
-| `typecheck` | `tsc --noEmit` over every workspace and `tools/` | yes |
-| `lint` | `oxlint --deny-warnings` with the plugins below | yes |
-| `test` | Vitest projects `unit` (every workspace's tests) and `architecture` (lint rules and backlog) | yes |
-| `knip` | unused files, exports and dependencies | yes |
-| `test:contract` | tier 3, needs Docker (arrives with E1-1) | no, CI job |
-| `verify <ticket>` | tier 4: the ticket's demo in a real browser through `agent-browser` (arrives with E0-1) | no, CI job |
+| Command                  | What it runs                                                                                                  | In `check`? |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------- | ----------- |
+| `vp check`               | oxfmt formatting, oxlint with the plugins below, and type-checking (`lint.options.typeAware` and `typeCheck`) | yes         |
+| `vp test run`            | Vitest projects `unit` (every workspace's tests) and `architecture` (lint rules and backlog)                  | yes         |
+| `knip`                   | unused files, exports and dependencies                                                                        | yes         |
+| `vp check --fix`         | formats and applies autofixes                                                                                 | no          |
+| `vp run test:contract`   | tier 3, needs Docker (arrives with E1-1)                                                                      | no, CI job  |
+| `vp run verify <ticket>` | tier 4: the ticket's demo in a real browser through `agent-browser` (arrives with E0-1)                       | no, CI job  |
 
-Versions are pinned: oxlint 1.90.0, TypeScript 7.0.2, Vitest 5.0.5, knip 6.44.0, Effect 4.1.0.
+Pinned versions: Vite+ 1.4.0 (oxlint 1.89, Vitest 5.0.5), pnpm 11.28.10, knip 6.44.0, Effect 4.1.0.
+pnpm 12 failed to install on macOS through Vite+ (`ENOEXEC`), so the project stays on pnpm 11 for now.
+
+Imports follow Vite+: tests import from `vite-plus/test`, lint plugins from `vite-plus/lint/plugins`.
+The `vite-plus/prefer-vite-plus-imports` rule enforces it.
 
 ## TypeScript
 
-The same compiler options as effect-factory: `strict`, `noUnusedLocals`, `noUnusedParameters`,
+`vp check` type-checks with the options in `tsconfig.json`, the same as effect-factory: `strict`, `noUnusedLocals`, `noUnusedParameters`,
 `noFallthroughCasesInSwitch`, `verbatimModuleSyntax`, `noUncheckedSideEffectImports`,
 `allowImportingTsExtensions`, `moduleResolution: "bundler"`.
 
 ## oxlint
 
-`.oxlintrc.json` loads four JS plugin sets. Every rule is `error`; there are no warnings.
+`tools/oxlint/config.ts` loads four JS plugin sets plus Vite+'s own plugin. Every rule is `error`; there are no warnings.
 
-| Plugin | Source | What it enforces |
-| --- | --- | --- |
-| `anti-slop` | Vendored from [dmmulroy/anti-slop](https://github.com/dmmulroy/anti-slop) at `c44ef22`, via effect-factory. See `tools/oxlint/anti-slop/UPSTREAM.md` | 18 generic rules: no `unknown` parameters or returns, no chained or widening type assertions, a `SAFETY:` comment on every assertion, no module mocking, no object parameters, readable spacing |
-| `anti-slop-effect` | Same repository | No hand-written `_tag` errors, comparisons or objects (use `.make`); no service constructor imports; prefer `Effect.match` |
-| `aobot-standards` | Copied from effect-factory's `factory-standards` | Import Effect modules from `"effect"`, optional values as `Option`, narrow tagged errors by tag not `instanceof`, a `SAFETY:` comment on every `!`, JSDoc on every export |
-| `aobot-architecture` | Rewritten from effect-factory's `factory-architecture` for our layout | Workspace and feature boundaries, public entry points, a pure domain package. See below |
+| Plugin               | Source                                                                                                                                               | What it enforces                                                                                                                                                                                |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `anti-slop`          | Vendored from [dmmulroy/anti-slop](https://github.com/dmmulroy/anti-slop) at `c44ef22`, via effect-factory. See `tools/oxlint/anti-slop/UPSTREAM.md` | 18 generic rules: no `unknown` parameters or returns, no chained or widening type assertions, a `SAFETY:` comment on every assertion, no module mocking, no object parameters, readable spacing |
+| `anti-slop-effect`   | Same repository                                                                                                                                      | No hand-written `_tag` errors, comparisons or objects (use `.make`); no service constructor imports; prefer `Effect.match`                                                                      |
+| `aobot-standards`    | Copied from effect-factory's `factory-standards`                                                                                                     | Import Effect modules from `"effect"`, optional values as `Option`, narrow tagged errors by tag not `instanceof`, a `SAFETY:` comment on every `!`, JSDoc on every export                       |
+| `aobot-architecture` | Rewritten from effect-factory's `factory-architecture` for our layout                                                                                | Workspace and feature boundaries, public entry points, a pure domain package. See below                                                                                                         |
 
-Built-in rules on top: `typescript/no-explicit-any`, `oxc/no-accumulating-spread`.
+Built-in rules on top: `typescript/no-explicit-any`, `oxc/no-accumulating-spread`, and `vite-plus/prefer-vite-plus-imports`.
 
 ### Feature-based architecture
 
@@ -61,39 +73,39 @@ name (`@aobot/domain`), never by relative path or deep path.
 The allowed dependencies live in `tools/oxlint/aobot-architecture/policy.ts`. Register a feature there
 before creating its directory. The server graph today:
 
-| Feature | May depend on |
-| --- | --- |
-| `bots`, `audit`, `policy`, `computers`, `auth` | nothing |
-| `gateway` | `bots`, `policy`, `audit`, `computers` |
-| `agent` | `bots`, `gateway` |
-| `chat` | `bots`, `agent` |
-| `approvals` | `gateway` |
+| Feature                                        | May depend on                          |
+| ---------------------------------------------- | -------------------------------------- |
+| `bots`, `audit`, `policy`, `computers`, `auth` | nothing                                |
+| `gateway`                                      | `bots`, `policy`, `audit`, `computers` |
+| `agent`                                        | `bots`, `gateway`                      |
+| `chat`                                         | `bots`, `agent`                        |
+| `approvals`                                    | `gateway`                              |
 
 Only `gateway` depends on `computers`, so "every action goes through the gateway" is enforced by the
 graph itself, and a test checks that it stays that way.
 
-| Rule | Rejects |
-| --- | --- |
-| `boundaries` | An undeclared feature or workspace dependency, a file outside `app/`, `features/<name>/` or `shared/`, an unregistered feature, `shared/` importing a feature, a feature importing `app/`, a relative import into another workspace |
-| `public-api` | Importing another feature's internals instead of its `public.ts`; `@aobot/x/deep/path` instead of `@aobot/x` |
-| `domain-purity` | Node built-ins, React or Electron in `packages/domain` |
-| `context-leaf` | A module that creates a React context and imports anything but `react` at runtime |
+| Rule            | Rejects                                                                                                                                                                                                                             |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `boundaries`    | An undeclared feature or workspace dependency, a file outside `app/`, `features/<name>/` or `shared/`, an unregistered feature, `shared/` importing a feature, a feature importing `app/`, a relative import into another workspace |
+| `public-api`    | Importing another feature's internals instead of its `public.ts`; `@aobot/x/deep/path` instead of `@aobot/x`                                                                                                                        |
+| `domain-purity` | Node built-ins, React or Electron in `packages/domain`                                                                                                                                                                              |
+| `context-leaf`  | A module that creates a React context and imports anything but `react` at runtime                                                                                                                                                   |
 
 ### Restricted properties
 
-| Where | Rejects | Why |
-| --- | --- | --- |
-| all workspaces, except `src/**/config.ts` | `process.env` | Settings go through Effect `Config` |
-| `apps/server` | `console.*` | Logs go through Effect's logger so they carry the `trace_id` |
-| `packages/domain`, `features/policy`, `redact.ts` | `Date.now`, `Math.random`, `performance.now` | Decisions and redaction are pure and repeatable in tests |
+| Where                                             | Rejects                                      | Why                                                          |
+| ------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------ |
+| all workspaces, except `src/**/config.ts`         | `process.env`                                | Settings go through Effect `Config`                          |
+| `apps/server`                                     | `console.*`                                  | Logs go through Effect's logger so they carry the `trace_id` |
+| `packages/domain`, `features/policy`, `redact.ts` | `Date.now`, `Math.random`, `performance.now` | Decisions and redaction are pure and repeatable in tests     |
 
 Tests, `testing/` folders, `e2e/` and `verify/` are exempt from these, as in effect-factory.
 
 ### The lint rules have tests
 
 Custom rules are code, so they are tested. `tools/oxlint/aobot-architecture/architecture.test.ts` and
-`tools/oxlint/aobot-standards/standards.test.ts` lint fixture files with the real oxlint binary and
-the real `.oxlintrc.json`, for both what must be rejected and what must pass. They also check that every
+`tools/oxlint/aobot-standards/standards.test.ts` lint fixture files with `vp lint` and the real
+config from `tools/oxlint/config.ts`, for both what must be rejected and what must pass. They also check that every
 declared graph is acyclic and that only the gateway reaches computers.
 
 ## knip

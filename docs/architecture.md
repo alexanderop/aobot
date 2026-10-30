@@ -5,11 +5,11 @@
 A chatbot answers. A coworker acts: it opens pages, fills in forms, runs scripts. aobot gives each Bot
 three things:
 
-| | What it means | Where it lives |
-| --- | --- | --- |
-| **A role** | A name, instructions, and the tools it is granted | `bots.yaml`, later the admin UI |
-| **A computer** | Its own Chromium, bash and `/workspace`, in a container | `apps/computer` |
-| **Guardrails** | Grants, rules that fail closed, an audit trail, a person who can take over | `apps/server` gateway |
+|                | What it means                                                              | Where it lives                  |
+| -------------- | -------------------------------------------------------------------------- | ------------------------------- |
+| **A role**     | A name, instructions, and the tools it is granted                          | `bots.yaml`, later the admin UI |
+| **A computer** | Its own Chromium, bash and `/workspace`, in a container                    | `apps/computer`                 |
+| **Guardrails** | Grants, rules that fail closed, an audit trail, a person who can take over | `apps/server` gateway           |
 
 ## The five parts
 
@@ -23,14 +23,14 @@ three things:
                                                  Computer (container: Chromium, bash, /workspace)
 ```
 
-| Part | Its one job | Built with |
-| --- | --- | --- |
-| `apps/web` | Show the conversation and the live screen, let a person take the mouse | React |
-| `apps/desktop` | Wrap `apps/web`, keep the sign-in token safe, send notifications | Electron |
-| `apps/server` | Know Bots and people, run agent turns, stream answers | Effect on Bun |
-| Gateway (in server) | Decide if a tool call may happen, record it, then forward it | Effect service + Postgres |
-| `apps/computer` | Actually do it: browse, click, type, run commands | Bun + Playwright in Docker |
-| `packages/domain` | Schemas shared by all of the above: Bot, ToolCall, AuditRow, ChatEvent | Effect Schema |
+| Part                | Its one job                                                            | Built with                  |
+| ------------------- | ---------------------------------------------------------------------- | --------------------------- |
+| `apps/web`          | Show the conversation and the live screen, let a person take the mouse | React                       |
+| `apps/desktop`      | Wrap `apps/web`, keep the sign-in token safe, send notifications       | Electron                    |
+| `apps/server`       | Know Bots and people, run agent turns, stream answers                  | Effect on Node              |
+| Gateway (in server) | Decide if a tool call may happen, record it, then forward it           | Effect service + Postgres   |
+| `apps/computer`     | Actually do it: browse, click, type, run commands                      | Node + Playwright in Docker |
+| `packages/domain`   | Schemas shared by all of the above: Bot, ToolCall, AuditRow, ChatEvent | Effect Schema               |
 
 ### Inside each app: features
 
@@ -56,29 +56,29 @@ enforces this: only the `gateway` feature may depend on `computers`.
 
 ## Decisions
 
-| # | Decision | Why |
-| --- | --- | --- |
-| 1 | **No CopilotKit Intelligence.** Threads, messages and audit live in our Postgres | No external licence, no data outside our account |
-| 2 | **Claude Agent SDK** runs the think-act loop | It handles tool calls, sessions and streaming. Runs on an Anthropic API key or on AWS Bedrock |
-| 3 | **Effect v4** on the server | Typed errors make every gateway path visible, layers make providers swappable, `Effect.fn` gives tracing for free |
-| 4 | **Web first, Electron as a wrapper** | The agents run in the cloud, so the desktop app adds safe token storage and notifications, not core logic |
-| 5 | **The page as text, not screenshots** | `ariaSnapshot({ mode: "ai" })` with refs is cheap and needs no vision model. Snapshots are capped at 12,000 characters |
-| 6 | **A computer is only ever "a URL and a token"** | The server never uses `docker exec` or shared files, so where a computer runs can change freely |
-| 7 | **Fail closed** | A missing rule permits nothing, a crashing rule denies, a missing grant is refused before any rule runs |
-| 8 | **Never log what a Bot typed** | The audit row keeps `"[14 chars]"`, not the value. It may be a password |
-| 9 | **OpenTelemetry from day one** | One trace per chat turn, with the `trace_id` stored on every audit row |
+| #   | Decision                                                                         | Why                                                                                                                    |
+| --- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| 1   | **No CopilotKit Intelligence.** Threads, messages and audit live in our Postgres | No external licence, no data outside our account                                                                       |
+| 2   | **Claude Agent SDK** runs the think-act loop                                     | It handles tool calls, sessions and streaming. Runs on an Anthropic API key or on AWS Bedrock                          |
+| 3   | **Effect v4** on the server                                                      | Typed errors make every gateway path visible, layers make providers swappable, `Effect.fn` gives tracing for free      |
+| 4   | **Web first, Electron as a wrapper**                                             | The agents run in the cloud, so the desktop app adds safe token storage and notifications, not core logic              |
+| 5   | **The page as text, not screenshots**                                            | `ariaSnapshot({ mode: "ai" })` with refs is cheap and needs no vision model. Snapshots are capped at 12,000 characters |
+| 6   | **A computer is only ever "a URL and a token"**                                  | The server never uses `docker exec` or shared files, so where a computer runs can change freely                        |
+| 7   | **Fail closed**                                                                  | A missing rule permits nothing, a crashing rule denies, a missing grant is refused before any rule runs                |
+| 8   | **Never log what a Bot typed**                                                   | The audit row keeps `"[14 chars]"`, not the value. It may be a password                                                |
+| 9   | **OpenTelemetry from day one**                                                   | One trace per chat turn, with the `trace_id` stored on every audit row                                                 |
 
 ## Local now, AWS later
 
 Two switches decide where things run. Code never checks which one is active.
 
-| Switch | Local (now) | AWS (later) |
-| --- | --- | --- |
-| `COMPUTER_PROVIDER` | `docker`: one container per person, a named volume for its logins | `ecs` (RunTask in a private subnet), later `k8s` (agent-sandbox) |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | the `grafana/otel-lgtm` container | the AWS OpenTelemetry collector (ADOT) or Grafana Cloud |
-| `DATABASE_URL` | Postgres in Docker Compose | RDS Postgres with pgvector |
-| Secrets | `.env` through Effect `Config` | AWS Secrets Manager |
-| Model | Anthropic API key | Bedrock through an IAM role |
+| Switch                        | Local (now)                                                       | AWS (later)                                                      |
+| ----------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `COMPUTER_PROVIDER`           | `docker`: one container per person, a named volume for its logins | `ecs` (RunTask in a private subnet), later `k8s` (agent-sandbox) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | the `grafana/otel-lgtm` container                                 | the AWS OpenTelemetry collector (ADOT) or Grafana Cloud          |
+| `DATABASE_URL`                | Postgres in Docker Compose                                        | RDS Postgres with pgvector                                       |
+| Secrets                       | `.env` through Effect `Config`                                    | AWS Secrets Manager                                              |
+| Model                         | Anthropic API key                                                 | Bedrock through an IAM role                                      |
 
 Rules that keep the move cheap:
 
@@ -92,10 +92,10 @@ The `Computers` service has four operations, the same as OpenBot's supervisor:
 
 ```ts
 export interface Interface {
-  readonly ensure: (person: PersonId) => Effect.Effect<Handle, Unavailable> // start if needed, wait until healthy
-  readonly stop: (person: PersonId) => Effect.Effect<void, Unavailable>
-  readonly reset: (person: PersonId) => Effect.Effect<void, Unavailable>
-  readonly list: Effect.Effect<ReadonlyArray<ComputerStatus>, Unavailable>
+  readonly ensure: (person: PersonId) => Effect.Effect<Handle, Unavailable>; // start if needed, wait until healthy
+  readonly stop: (person: PersonId) => Effect.Effect<void, Unavailable>;
+  readonly reset: (person: PersonId) => Effect.Effect<void, Unavailable>;
+  readonly list: Effect.Effect<ReadonlyArray<ComputerStatus>, Unavailable>;
 }
 ```
 

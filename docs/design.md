@@ -66,27 +66,27 @@ characters from the reference.
 
 ## Tokens (starting point)
 
-| Token | Value | Use |
-| --- | --- | --- |
-| `--bg` | `#0f0f10` | app background |
-| `--sidebar` | `#141415` | sidebar |
-| `--bubble` | `#1f1f21` | Bot bubbles, cards, composer |
-| `--row-active` | `#232325` | selected sidebar row |
-| `--fg` | `#ececed` | text |
-| `--muted` | `#8a8a8f` | previews, group headings, times |
-| `--accent` | `#3fa592` | your bubbles, voice button, answer keys |
-| `--unread` | `#3b82f6` | unread dots |
-| radius | 18px bubbles, 12px rows, full for icon buttons | |
-| font | system sans, 15–16px body | |
+| Token          | Value                                          | Use                                     |
+| -------------- | ---------------------------------------------- | --------------------------------------- |
+| `--bg`         | `#0f0f10`                                      | app background                          |
+| `--sidebar`    | `#141415`                                      | sidebar                                 |
+| `--bubble`     | `#1f1f21`                                      | Bot bubbles, cards, composer            |
+| `--row-active` | `#232325`                                      | selected sidebar row                    |
+| `--fg`         | `#ececed`                                      | text                                    |
+| `--muted`      | `#8a8a8f`                                      | previews, group headings, times         |
+| `--accent`     | `#3fa592`                                      | your bubbles, voice button, answer keys |
+| `--unread`     | `#3b82f6`                                      | unread dots                             |
+| radius         | 18px bubbles, 12px rows, full for icon buttons |                                         |
+| font           | system sans, 15–16px body                      |                                         |
 
 Dark is the main theme. A light theme is a later ticket.
 
 ## Where this lands in the backlog
 
-| Ticket | Design work |
-| --- | --- |
-| [E0-1](backlog/E0-walking-skeleton/E0-1-chat-with-a-bot-locally.md) | Tokens, conversation view, composer (text only) |
-| [E1-4](backlog/E1-a-computer/E1-4-watch-the-live-screen.md) | Live screen as a side panel |
-| [E2-1](backlog/E2-roles-and-guardrails/E2-1-bots-from-a-file-with-granted-tools.md) | Sidebar with groups, pinned Bots, avatars |
-| [E2-5](backlog/E2-roles-and-guardrails/E2-5-ask-before-risky-actions.md) | Approval card |
-| [E3-2](backlog/E3-people/E3-2-my-conversations-only-mine.md) | Last-message previews and unread dots |
+| Ticket                                                                              | Design work                                     |
+| ----------------------------------------------------------------------------------- | ----------------------------------------------- |
+| [E0-1](backlog/E0-walking-skeleton/E0-1-chat-with-a-bot-locally.md)                 | Tokens, conversation view, composer (text only) |
+| [E1-4](backlog/E1-a-computer/E1-4-watch-the-live-screen.md)                         | Live screen as a side panel                     |
+| [E2-1](backlog/E2-roles-and-guardrails/E2-1-bots-from-a-file-with-granted-tools.md) | Sidebar with groups, pinned Bots, avatars       |
+| [E2-5](backlog/E2-roles-and-guardrails/E2-5-ask-before-risky-actions.md)            | Approval card                                   |
+| [E3-2](backlog/E3-people/E3-2-my-conversations-only-mine.md)                        | Last-message previews and unread dots           |

@@ -9,7 +9,7 @@ OpenTelemetry for traces, logs and metrics, from the first ticket.
   call without extra code.
 
   ```ts
-  Otlp.layer({ baseUrl: otelUrl, resource: { serviceName: "aobot-server" } })
+  Otlp.layer({ baseUrl: otelUrl, resource: { serviceName: "aobot-server" } });
   ```
 
 - **Computer.** The server sends a `traceparent` header with every request, so browser actions appear
@@ -25,10 +25,10 @@ trace, so "the Bot did X" leads straight to everything that happened around it.
 
 ## Where it goes
 
-| | Local | AWS |
-| --- | --- | --- |
+|                       | Local                                                                                    | AWS                                                                          |
+| --------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | Collector and storage | `grafana/otel-lgtm`, one container with the collector, traces, logs, metrics and Grafana | AWS OpenTelemetry collector (ADOT) to X-Ray and CloudWatch, or Grafana Cloud |
-| Switch | `OTEL_EXPORTER_OTLP_ENDPOINT` | the same variable |
+| Switch                | `OTEL_EXPORTER_OTLP_ENDPOINT`                                                            | the same variable                                                            |
 
 ## Never in telemetry
 

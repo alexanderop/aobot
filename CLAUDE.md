@@ -4,13 +4,15 @@ AI coworkers with their own computer and guardrails. Read `docs/README.md` first
 
 ## Status
 
-Quality gates are in place (`bun run check`, E0-4). No app code yet. The next ticket is `docs/backlog/E0-walking-skeleton/E0-1-chat-with-a-bot-locally.md`.
+Quality gates are in place (`vp run check`, E0-4). No app code yet. The next ticket is `docs/backlog/E0-walking-skeleton/E0-1-chat-with-a-bot-locally.md`.
 
 ## Commands
 
-- `bun run check`: typecheck, oxlint with our plugins, Vitest (`unit`, `architecture`), knip. Run it before calling anything done. Works today.
-- `bun run test:contract` (from E1-1): computer provider contract suite. Needs Docker.
-- `bun run verify <ticket-id>` (from E0-1): the ticket's demo in a real browser with `agent-browser`. A slice is done only when this passes.
+- `vp run check`: `vp check` (format, lint with our plugins, type-check), then `vp test run` (`unit`, `architecture`), then knip. Run it before calling anything done. Works today.
+- `vp install`: installs with the pinned pnpm. `vp fmt` formats. `vp check --fix` formats and autofixes.
+- Imports: tests use `vite-plus/test`, lint plugins use `vite-plus/lint/plugins` (enforced by `vite-plus/prefer-vite-plus-imports`).
+- `vp run test:contract` (from E1-1): computer provider contract suite. Needs Docker.
+- `vp run verify <ticket-id>` (from E0-1): the ticket's demo in a real browser with `agent-browser`. A slice is done only when this passes.
 - `docker compose up` (from E0-1): Postgres, the server, `grafana/otel-lgtm` (Grafana on http://localhost:3300).
 
 ## Rules

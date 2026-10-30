@@ -17,36 +17,51 @@ Add a feature here before creating its directory.
 The server graph is where "every action goes through the gateway" lives: only `gateway` depends on
 `computers`, so nothing else can reach a computer.
 */
-export const featureDependencies: ReadonlyMap<string, ReadonlyMap<string, readonly string[]>> = new Map([
-  ["server", new Map([
-    ["bots", []],
-    ["audit", []],
-    ["policy", []],
-    ["computers", []],
-    ["gateway", ["bots", "policy", "audit", "computers"]],
-    ["agent", ["bots", "gateway"]],
-    ["chat", ["bots", "agent"]],
-    ["auth", []],
-    ["approvals", ["gateway"]],
-  ])],
-  ["web", new Map([
-    ["chat", []],
-    ["bots", []],
-    ["screen", []],
-    ["audit", []],
-    ["approvals", ["chat"]],
-  ])],
-  ["computer", new Map([
-    ["browser", []],
-    ["shell", []],
-    ["screen", ["browser"]],
-    ["control", ["browser"]],
-  ])],
+export const featureDependencies: ReadonlyMap<
+  string,
+  ReadonlyMap<string, readonly string[]>
+> = new Map([
+  [
+    "server",
+    new Map([
+      ["bots", []],
+      ["audit", []],
+      ["policy", []],
+      ["computers", []],
+      ["gateway", ["bots", "policy", "audit", "computers"]],
+      ["agent", ["bots", "gateway"]],
+      ["chat", ["bots", "agent"]],
+      ["auth", []],
+      ["approvals", ["gateway"]],
+    ]),
+  ],
+  [
+    "web",
+    new Map([
+      ["chat", []],
+      ["bots", []],
+      ["screen", []],
+      ["audit", []],
+      ["approvals", ["chat"]],
+    ]),
+  ],
+  [
+    "computer",
+    new Map([
+      ["browser", []],
+      ["shell", []],
+      ["screen", ["browser"]],
+      ["control", ["browser"]],
+    ]),
+  ],
   ["desktop", new Map<string, readonly string[]>()],
 ]);
 
 /** Every dependency must exist and each graph must stay acyclic. */
-export function policyProblems(graph: ReadonlyMap<string, readonly string[]>, label: string): string[] {
+export function policyProblems(
+  graph: ReadonlyMap<string, readonly string[]>,
+  label: string,
+): string[] {
   const problems: string[] = [];
   const finished = new Set<string>();
   const active = new Set<string>();

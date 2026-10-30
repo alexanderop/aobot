@@ -4,7 +4,8 @@
     ".": {
       "entry": ["tools/oxlint/*/index.ts", "tools/**/*.test.ts"],
       "project": ["tools/**/*.ts", "*.ts"],
-      "ignore": ["tools/oxlint/anti-slop/**"]
+      "ignore": ["tools/oxlint/anti-slop/**"],
+      "ignoreDependencies": ["vite", "vitest"]
     },
     "packages/*": {
       "entry": ["src/**/*.test.ts"],

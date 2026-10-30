@@ -15,7 +15,7 @@ estimate: 3d
 
 In:
 
-- `apps/computer`: Bun + Playwright in Docker, `POST /act` for `navigate` and `snapshot`, bearer token, `/health`
+- `apps/computer`: Node + Playwright in Docker, `POST /act` for `navigate` and `snapshot`, bearer token, `/health`
 - Snapshot as `ariaSnapshot({ mode: "ai" })`, capped at 12,000 characters with `truncated: true`
 - `Computers` service with the `docker` provider: `ensure`, `stop`, `reset`, `list`. One shared computer for now
 - Gateway: allow everything for now, but write an audit row for every call, with `trace_id`

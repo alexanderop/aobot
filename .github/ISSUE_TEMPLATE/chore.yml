@@ -23,6 +23,6 @@ body:
     id: done
     attributes:
       label: Done when
-      description: The check that proves it, for example `bun run check` passes and the new lint rule fails on a violation.
+      description: The check that proves it, for example `vp run check` passes and the new lint rule fails on a violation.
     validations:
       required: true

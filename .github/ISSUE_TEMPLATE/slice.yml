@@ -33,7 +33,7 @@ body:
     id: demo
     attributes:
       label: Demo
-      description: The exact steps that show it working. They become the `bun run verify` scenario.
+      description: The exact steps that show it working. They become the `vp run verify` scenario.
       value: |
         1.
     validations:

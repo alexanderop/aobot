@@ -2,7 +2,7 @@
 id: E0-1
 title: Short title in plain words
 epic: E0
-status: todo        # todo | doing | done
+status: todo # todo | doing | done
 depends_on: []
 estimate: 1d
 ---
