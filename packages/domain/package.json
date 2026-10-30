@@ -1,0 +1,9 @@
+{
+  "name": "@aobot/domain",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "effect": "4.1.0"
+  }
+}

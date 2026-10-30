@@ -2,12 +2,14 @@
 id: E0-4
 title: Quality gates and CI
 epic: E0
-status: todo
+status: doing
 depends_on: [E0-1]
 estimate: 2d
 ---
 
 # E0-4 · Quality gates and CI
+
+> **Progress:** `bun run check` and every plugin are in place and green locally. Left: the CI run on GitHub (needs the remote) and the `verify` scenario for this ticket's demo.
 
 **Story:** As a developer, I get a failing pull request when I break one of our rules, instead of a review comment.
 

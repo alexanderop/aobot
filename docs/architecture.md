@@ -32,8 +32,16 @@ three things:
 | `apps/computer` | Actually do it: browse, click, type, run commands | Bun + Playwright in Docker |
 | `packages/domain` | Schemas shared by all of the above: Bot, ToolCall, AuditRow, ChatEvent | Effect Schema |
 
-The agent never talks to a computer directly. It can only ask, and the gateway answers. A lint rule
-enforces this: only the gateway may import the computer client.
+### Inside each app: features
+
+Each app is split by feature, not by technical layer: `src/app` wires things together,
+`src/features/<feature>` holds one capability end to end with `public.ts` as its only entry point, and
+`src/shared` holds generic helpers. Which feature may use which is declared in
+`tools/oxlint/aobot-architecture/policy.ts` and enforced by oxlint. See
+[quality-gates.md § Feature-based architecture](quality-gates.md#feature-based-architecture).
+
+The agent never talks to a computer directly. It can only ask, and the gateway answers. The feature graph
+enforces this: only the `gateway` feature may depend on `computers`.
 
 ## Life of one request
 
