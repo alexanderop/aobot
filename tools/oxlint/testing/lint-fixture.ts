@@ -33,7 +33,7 @@ export function lint(path: string, code: string, setup?: (root: string) => void)
   fixtureFile(root, ".oxlintrc.json", JSON.stringify(config));
   fixtureFile(root, path, code);
   setup?.(root);
-  const result = spawnSync(resolve(project, "node_modules/.bin/oxlint"), ["--config", join(root, ".oxlintrc.json"), path], {
+  const result = spawnSync(resolve(project, "node_modules/.bin/oxlint"), ["--format", "default", "--config", join(root, ".oxlintrc.json"), path], {
     cwd: root, encoding: "utf8",
   });
   if (result.error) throw result.error;
