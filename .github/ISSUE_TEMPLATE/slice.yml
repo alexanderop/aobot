@@ -1,0 +1,64 @@
+name: Slice
+description: A vertical slice that ends in a demo. Follows docs/ticket-template.md.
+title: "<Epic id>-<n>: <what a person can do>"
+labels: [slice]
+body:
+  - type: input
+    id: epic
+    attributes:
+      label: Epic
+      placeholder: E1 · A computer
+    validations:
+      required: true
+  - type: textarea
+    id: story
+    attributes:
+      label: Story
+      placeholder: As a <person>, I can <do something>, so that <why it matters>.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      value: |
+        In:
+        -
+
+        Out:
+        -
+    validations:
+      required: true
+  - type: textarea
+    id: demo
+    attributes:
+      label: Demo
+      description: The exact steps that show it working. They become the `bun run verify` scenario.
+      value: |
+        1.
+    validations:
+      required: true
+  - type: input
+    id: layers
+    attributes:
+      label: Layers
+      placeholder: web · server · gateway · computer · database · infra
+  - type: textarea
+    id: audit
+    attributes:
+      label: Audit and telemetry
+      description: Which audit rows and spans the demo must produce.
+  - type: textarea
+    id: tests
+    attributes:
+      label: Tests
+      value: |
+        - Tier 1:
+        - Tier 2:
+        - Tier 3:
+        - Tier 4: the demo
+  - type: input
+    id: depends
+    attributes:
+      label: Depends on
+      placeholder: E1-1, E2-2

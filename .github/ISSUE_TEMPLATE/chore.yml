@@ -1,0 +1,28 @@
+name: Chore
+description: Refactor, tooling, tests, docs or performance work with no behaviour change.
+title: "<Area>: <what changes>"
+labels: [chore]
+body:
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: What hurts today. Link the code.
+    validations:
+      required: true
+  - type: textarea
+    id: work
+    attributes:
+      label: Work
+      description: One checkbox per bounded step.
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: The check that proves it, for example `bun run check` passes and the new lint rule fails on a violation.
+    validations:
+      required: true

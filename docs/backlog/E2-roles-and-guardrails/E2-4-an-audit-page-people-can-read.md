@@ -3,7 +3,7 @@ id: E2-4
 title: An audit page people can read
 epic: E2
 status: todo
-depends_on: [E2-2, E2-3]
+depends_on: [E2-2, E2-3, E2-5]
 estimate: 2d
 ---
 

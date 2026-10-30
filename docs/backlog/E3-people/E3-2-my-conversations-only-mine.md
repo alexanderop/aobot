@@ -18,6 +18,7 @@ In:
 - Conversations list per person
 - Continue a conversation with the Agent SDK's `resume` plus our stored messages
 - Every conversation route checks ownership
+- Last-message previews and unread dots in the sidebar
 
 Out:
 

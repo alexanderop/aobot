@@ -16,7 +16,7 @@ estimate: 2d
 In:
 
 - `bots.yaml` decoded with Effect Schema at boot; an invalid file stops startup with the reason
-- Bot picker in the web page
+- The sidebar from [design.md](../../design.md): pinned Bots, groups, avatars (generated, our own characters)
 - The gateway checks the grant before any rule; a refusal reads `not granted to <bot>`
 
 Out:

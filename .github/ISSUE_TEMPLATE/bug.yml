@@ -1,0 +1,34 @@
+name: Bug
+description: Something aobot does that it should not, or does not do that it should.
+title: "<Area>: <what goes wrong>"
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should happen
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Trace id, audit rows, screenshot, logs. Never paste secrets.
+  - type: input
+    id: commit
+    attributes:
+      label: Commit

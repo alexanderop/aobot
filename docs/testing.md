@@ -19,10 +19,8 @@ One nightly smoke test runs against the real model, so a model or SDK change sho
 
 ## Rules the tooling enforces
 
-- Only the gateway may import the computer client (`oxlint` `no-restricted-imports`).
-- No `process.env` outside `Config` layers (`oxlint` rule).
-- Unused exports and files fail CI (`knip`).
-- Type-aware lint runs in CI, not only in editors.
+See [quality-gates.md](quality-gates.md): `bun run check`, the oxlint plugins, the architecture
+rules and the tests that keep the docs honest.
 
 ## Definition of done for a ticket
 

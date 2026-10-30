@@ -21,6 +21,7 @@ In:
 - One hard-coded Bot running on the Claude Agent SDK with `tools: []` and `settingSources: []`
 - Answer streamed as `ChatEvent`s defined with Effect Schema in `packages/domain`
 - Messages stored in Postgres, so a reload keeps the conversation
+- The conversation view and composer from [design.md](../../design.md): tokens, bubbles, Bot name pill
 
 Out:
 

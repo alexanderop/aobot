@@ -5,7 +5,9 @@ Start with the architecture, then pick the next ticket from the backlog.
 | Doc | What it answers |
 | --- | --- |
 | [architecture.md](architecture.md) | What aobot is, the five parts, how one request flows, and the decisions behind it |
+| [design.md](design.md) | How the app looks: sidebar of Bots, chat bubbles, approval cards, tokens |
 | [testing.md](testing.md) | The four test tiers and what each ticket must prove |
+| [quality-gates.md](quality-gates.md) | `bun run check`, the oxlint plugins and architecture rules, knip, CI |
 | [observability.md](observability.md) | How traces, logs and metrics work locally and on AWS |
 | [ticket-template.md](ticket-template.md) | The shape every ticket follows |
 | [backlog/](backlog/README.md) | Epics and tickets, in build order |

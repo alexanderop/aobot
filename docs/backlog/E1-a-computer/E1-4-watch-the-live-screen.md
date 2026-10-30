@@ -17,7 +17,7 @@ In:
 
 - Chrome DevTools `Page.startScreencast` in the computer, frames over a WebSocket
 - The server relays frames to the page; the computer's token never reaches the browser
-- The screen sits beside the chat
+- The screen is a side panel beside the chat that folds away when the Bot is idle ([design.md](../../design.md))
 
 Out:
 
