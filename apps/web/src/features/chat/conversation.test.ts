@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { BotId, ChatRpcs, ConversationBusy, ConversationId, MessageId, RunId } from "@aobot/domain";
-import type { ChatEvent } from "@aobot/domain";
+import type { ChatEvent, ConversationSnapshot } from "@aobot/domain";
 import { Deferred, Effect, Layer, Option, Stream } from "effect";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { RpcTest } from "effect/rpc";
@@ -25,11 +25,12 @@ const started: ChatEvent[] = [
 
 const fakeServer = (script: {
   readonly send: (stopped: Deferred.Deferred<void>) => Stream.Stream<ChatEvent, ConversationBusy>;
+  readonly open?: Effect.Effect<ConversationSnapshot>;
 }) => {
   const stopped = Deferred.makeUnsafe<void>();
 
   const handlers = ChatRpcs.toLayer({
-    "Chat.open": () => Effect.succeed({ bot, messages: [], isRunning: false }),
+    "Chat.open": () => script.open ?? Effect.succeed({ bot, messages: [], isRunning: false }),
     "Chat.send": () => script.send(stopped),
     "Chat.stop": () => Deferred.succeed(stopped, undefined).pipe(Effect.asVoid),
   });
@@ -46,7 +47,7 @@ const registries: AtomRegistry.AtomRegistry[] = [];
 function start(script: Parameters<typeof fakeServer>[0]) {
   const registry = AtomRegistry.make();
 
-  const conversations = makeConversations(fakeServer(script));
+  const conversations = makeConversations(fakeServer(script), "10 millis");
 
   const atoms = {
     state: conversations.state(conversationId),
@@ -166,5 +167,34 @@ describe("given a conversation served by an in-memory Bot", () => {
 
     expect(state.status).toMatchObject({ code: "busy" });
     expect(state.messages).toEqual([]);
+  });
+});
+
+describe("given a server that crashes while opening the conversation once", () => {
+  it("reports it, then reconnects and loads the Bot", async () => {
+    const reconnect = Deferred.makeUnsafe<void>();
+    let opens = 0;
+
+    const { registry, atoms } = start({
+      send: () => Stream.empty,
+      open: Effect.suspend(() =>
+        opens++ === 0
+          ? Effect.die("database is locked")
+          : Deferred.await(reconnect).pipe(Effect.as({ bot, messages: [], isRunning: false })),
+      ),
+    });
+
+    const failed = await until(registry, atoms.state, (current) =>
+      ConversationStatus.$is("Failed")(current.status),
+    );
+
+    expect(failed.status).toMatchObject({ code: "connection" });
+    expect(Option.isNone(failed.bot)).toBe(true);
+
+    Deferred.doneUnsafe(reconnect, Effect.void);
+
+    const recovered = await until(registry, atoms.state, (current) => Option.isSome(current.bot));
+
+    expect(ConversationStatus.$is("Idle")(recovered.status)).toBe(true);
   });
 });

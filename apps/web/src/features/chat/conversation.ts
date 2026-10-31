@@ -1,4 +1,5 @@
-import { Effect, Schedule, Stream } from "effect";
+import { Effect, Schedule, Schema, Stream } from "effect";
+import type { Duration } from "effect";
 import { Atom } from "effect/reactivity";
 import type { ConversationId, MessageId } from "@aobot/domain";
 import { ChatClient } from "./chat-client.ts";
@@ -18,13 +19,19 @@ export interface Outgoing {
   readonly text: string;
 }
 
+/** The server crashed while opening a conversation. A defect would skip `tapError` and `retry`, so it is carried as a failure. */
+class OpenCrashed extends Schema.TaggedError<OpenCrashed>()("OpenCrashed", {}) {}
+
 /**
 The conversation atoms, one family per atom. `state` is the single source of truth, and `open`, `send`
 and `stop` are the only things that write it. Each family returns an atom, never a wrapper object:
 `Atom.family` holds its values weakly, so a plain object would be collected between renders and the
 page would silently start a second conversation state.
 */
-export function makeConversations(runtime: Atom.AtomRuntime<ChatClient>) {
+export function makeConversations(
+  runtime: Atom.AtomRuntime<ChatClient>,
+  reconnectEvery: Duration.Input = "2 seconds",
+) {
   const state = Atom.family((_id: ConversationId) => Atom.keepAlive(Atom.make(initialState)));
 
   const open = Atom.family((id: ConversationId) =>
@@ -36,13 +43,14 @@ export function makeConversations(runtime: Atom.AtomRuntime<ChatClient>) {
 
           yield* Atom.set(state(id), seedFromSnapshot(snapshot));
         }).pipe(
+          Effect.catchDefect(() => Effect.fail(new OpenCrashed())),
           Effect.timeout("5 seconds"),
           Effect.tapError(() =>
             Atom.update(state(id), (current) =>
               failConnection(current, "Cannot reach the server."),
             ),
           ),
-          Effect.retry(Schedule.spaced("2 seconds")),
+          Effect.retry(Schedule.spaced(reconnectEvery)),
         ),
       ),
     ),
