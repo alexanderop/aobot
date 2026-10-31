@@ -141,7 +141,9 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
 
     return ChatRpcs.of({
       "Chat.open": open,
-      "Chat.send": (message) => Stream.unwrap(startTurn(message)),
+      // A new root, so the trace is named after the turn rather than the socket or RPC call it came in on.
+      "Chat.send": (message) =>
+        Stream.unwrap(startTurn(message)).pipe(Stream.withSpan("Chat.turn", { root: true })),
       "Chat.stop": stop,
     });
   }),
