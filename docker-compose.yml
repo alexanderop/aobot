@@ -1,0 +1,58 @@
+name: aobot
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: aobot
+      POSTGRES_PASSWORD: aobot
+      POSTGRES_DB: aobot
+    volumes:
+      - postgres:/var/lib/postgresql
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aobot -d aobot"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  server:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgres://aobot:aobot@postgres:5432/aobot
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-anthropic}
+      MODEL_NAME: ${MODEL_NAME:-claude-sonnet-5-5}
+      MODEL_API_KEY: ${MODEL_API_KEY:-}
+      MODEL_BASE_URL: ${MODEL_BASE_URL:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+    ports:
+      - "3000:3000"
+    networks: [data, default]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  otel-lgtm:
+    image: grafana/otel-lgtm
+    ports:
+      - "3300:3000"
+
+  mock-model:
+    profiles: [verify]
+    build: .
+    command: ["node", "verify/mock-model.ts"]
+
+volumes:
+  postgres:
+
+networks:
+  data:
+  default:
