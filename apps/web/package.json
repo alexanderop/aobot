@@ -2,6 +2,9 @@
   "name": "@aobot/web",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./src/public.ts"
+  },
   "scripts": {
     "dev": "vp dev",
     "build": "vp build"

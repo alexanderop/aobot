@@ -1,0 +1,111 @@
+/*
+The design page's screens. Each is the app in its own iframe at its real size, scaled down to the column,
+inside a window frame. The frame is dark in both themes because the app is.
+*/
+:root {
+  --screen-planned: #d9a441;
+  --screen-frame: #1b1b1d;
+}
+
+:root[data-theme="light"] {
+  --screen-planned: #946400;
+}
+
+.screen {
+  --screen-max: calc(var(--screen-w) * 1px);
+  margin: 1.5rem 0;
+}
+
+/* Starlight spaces every sibling in a page by margin; the frame's own parts must not inherit that. */
+.screen__bar,
+.screen__viewport,
+.screen__lights i {
+  margin: 0;
+}
+
+.screen__bar,
+.screen__viewport {
+  width: min(100%, var(--screen-max));
+}
+
+.screen__bar {
+  display: flex;
+  align-items: center;
+  height: 1.75rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--sl-color-gray-5);
+  border-bottom: 0;
+  border-radius: 0.6rem 0.6rem 0 0;
+  background: var(--screen-frame);
+}
+
+.screen__lights {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.screen__lights i {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: #4a4a4f;
+}
+
+.screen__viewport {
+  position: relative;
+  container-type: inline-size;
+  aspect-ratio: var(--screen-w) / var(--screen-h);
+  overflow: hidden;
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0 0 0.6rem 0.6rem;
+  background: #0f0f10;
+  box-shadow: 0 12px 32px -16px rgb(0 0 0 / 0.5);
+}
+
+.screen__viewport iframe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--screen-max);
+  max-width: none;
+  height: calc(var(--screen-h) * 1px);
+  margin: 0;
+  border: 0;
+  color-scheme: dark;
+  transform-origin: 0 0;
+  transform: scale(min(1, tan(atan2(100cqw, var(--screen-max)))));
+}
+
+.screen figcaption {
+  margin-top: 0.6rem;
+  color: var(--sl-color-gray-3);
+  font-size: var(--sl-text-sm);
+}
+
+.screen__badge {
+  display: inline-block;
+  margin-inline-end: 0.35rem;
+  padding: 0.05rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: var(--sl-text-xs);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.screen__badge--built {
+  background: var(--sl-color-accent-low);
+  color: var(--sl-color-accent-high);
+}
+
+.screen__badge--planned {
+  border-color: var(--screen-planned);
+  border-style: dashed;
+  color: var(--screen-planned);
+}
+
+.screen__open {
+  margin-inline-start: 0.4rem;
+  white-space: nowrap;
+}

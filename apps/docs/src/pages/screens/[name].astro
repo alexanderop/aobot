@@ -1,0 +1,43 @@
+---
+// One screen of the design page, alone in its own document, the way the app is alone in its tab.
+// The design page frames this page in an iframe, so the app's CSS and Starlight's never meet.
+import {
+  InteractiveScreen,
+  StaticScreen,
+  isInteractiveName,
+  isScreenName,
+  screens,
+} from "../../features/design/public.ts";
+
+/** One page per screen in the registry. */
+export function getStaticPaths() {
+  return Object.keys(screens).map((name) => ({ params: { name } }));
+}
+
+const { name } = Astro.params;
+
+if (name === undefined || !isScreenName(name)) throw new Error(`No screen named ${name}`);
+
+const { title } = screens[name];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>{title} · aobot screens</title>
+  </head>
+  <body data-pagefind-ignore>
+    <div id="root">
+      {
+        isInteractiveName(name) ? (
+          <InteractiveScreen name={name} client:load />
+        ) : (
+          <StaticScreen name={name} />
+        )
+      }
+    </div>
+  </body>
+</html>

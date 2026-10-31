@@ -8,7 +8,7 @@ export const workspaceDependencies: ReadonlyMap<string, readonly string[]> = new
   ["server", ["domain"]],
   ["web", ["domain"]],
   ["desktop", ["domain"]],
-  ["docs", []],
+  ["docs", ["domain", "web"]],
 ]);
 
 /**
@@ -56,6 +56,7 @@ export const featureDependencies: ReadonlyMap<
     ]),
   ],
   ["desktop", new Map<string, readonly string[]>()],
+  ["docs", new Map([["design", []]])],
 ]);
 
 /** Every dependency must exist and each graph must stay acyclic. */
