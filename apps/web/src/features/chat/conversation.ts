@@ -4,6 +4,7 @@ import { Atom } from "effect/reactivity";
 import type { ConversationId, MessageId } from "@aobot/domain";
 import { ChatClient } from "./chat-client.ts";
 import {
+  acknowledgeDuplicate,
   appendUserMessage,
   failConnection,
   failIfStillRunning,
@@ -75,6 +76,11 @@ export function makeConversations(
             ),
             Effect.catchTag("ConversationBusy", () =>
               Atom.update(state(id), (current) => refuseMessage(current, outgoing.messageId)),
+            ),
+            Effect.catchTag("MessageAlreadySent", () =>
+              Atom.update(state(id), (current) =>
+                acknowledgeDuplicate(current, outgoing.messageId),
+              ),
             ),
             Effect.catch(() =>
               Atom.update(state(id), (current) =>

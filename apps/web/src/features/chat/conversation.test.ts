@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it } from "vite-plus/test";
-import { BotId, ChatRpcs, ConversationBusy, ConversationId, MessageId, RunId } from "@aobot/domain";
+import {
+  BotId,
+  ChatRpcs,
+  ConversationBusy,
+  ConversationId,
+  MessageAlreadySent,
+  MessageId,
+  RunId,
+} from "@aobot/domain";
 import type { ChatEvent, ConversationSnapshot } from "@aobot/domain";
 import { Deferred, Effect, Layer, Option, Stream } from "effect";
 import { Atom, AtomRegistry } from "effect/reactivity";
@@ -24,7 +32,9 @@ const started: ChatEvent[] = [
 ];
 
 const fakeServer = (script: {
-  readonly send: (stopped: Deferred.Deferred<void>) => Stream.Stream<ChatEvent, ConversationBusy>;
+  readonly send: (
+    stopped: Deferred.Deferred<void>,
+  ) => Stream.Stream<ChatEvent, ConversationBusy | MessageAlreadySent>;
   readonly open?: Effect.Effect<ConversationSnapshot>;
 }) => {
   const stopped = Deferred.makeUnsafe<void>();
@@ -167,6 +177,23 @@ describe("given a conversation served by an in-memory Bot", () => {
 
     expect(state.status).toMatchObject({ code: "busy" });
     expect(state.messages).toEqual([]);
+  });
+
+  it("goes idle and keeps one bubble when the server says it already had the message", async () => {
+    const { registry, atoms } = start({
+      send: () => Stream.fail(new MessageAlreadySent({ messageId: userMessage.messageId })),
+    });
+
+    await until(registry, atoms.state, (current) => Option.isSome(current.bot));
+    registry.set(atoms.send, userMessage);
+
+    const state = await until(
+      registry,
+      atoms.state,
+      (current) => current.messages.length === 1 && !isRunning(current),
+    );
+
+    expect(ConversationStatus.$is("Idle")(state.status)).toBe(true);
   });
 });
 

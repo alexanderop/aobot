@@ -74,6 +74,22 @@ export function refuseMessage(state: ConversationState, messageId: MessageId): C
   };
 }
 
+/** The server already had this message, so no run started: keep one bubble for it and stop waiting. */
+export function acknowledgeDuplicate(
+  state: ConversationState,
+  messageId: MessageId,
+): ConversationState {
+  const first = state.messages.findIndex((message) => message.id === messageId);
+
+  return {
+    ...state,
+    messages: state.messages.filter(
+      (message, index) => message.id !== messageId || index === first,
+    ),
+    status: ConversationStatus.Idle(),
+  };
+}
+
 /** The socket dropped or the call failed. Text that already arrived stays. */
 export function failConnection(state: ConversationState, message: string): ConversationState {
   return { ...state, status: ConversationStatus.Failed({ code: "connection", message }) };

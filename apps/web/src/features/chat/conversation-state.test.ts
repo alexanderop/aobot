@@ -4,6 +4,7 @@ import type { ChatEvent } from "@aobot/domain";
 import { Option } from "effect";
 import {
   ConversationStatus,
+  acknowledgeDuplicate,
   appendUserMessage,
   failIfStillRunning,
   foldChatEvent,
@@ -81,6 +82,22 @@ describe("given a message the person just sent", () => {
     expect(refused.messages).toEqual([]);
     expect(ConversationStatus.$is("Failed")(refused.status)).toBe(true);
     expect(refused.status).toMatchObject({ code: "busy" });
+  });
+
+  it("keeps one bubble and goes idle when the server already had the message", () => {
+    const seeded = seedFromSnapshot({
+      bot: { id: BotId.make("bot"), name: "Chief" },
+      messages: [{ id: userId, role: "user", text: "Say hi in five words" }],
+      isRunning: false,
+    });
+
+    const resent = acknowledgeDuplicate(
+      appendUserMessage(seeded, userId, "Say hi in five words"),
+      userId,
+    );
+
+    expect(resent.messages).toEqual(seeded.messages);
+    expect(isRunning(resent)).toBe(false);
   });
 
   it("fails when the stream ends without a finish or an error", () => {
