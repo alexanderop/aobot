@@ -114,6 +114,11 @@ function advance(ids: TurnIds, state: TurnState, step: TurnStep): Transition {
   });
 }
 
+/** The last event of a turn: after it the client treats the run as over. */
+export function isTerminal(event: ChatEvent): boolean {
+  return event.type === "RUN_FINISHED" || event.type === "RUN_ERROR";
+}
+
 /**
 One turn as AG-UI events: `RUN_STARTED`, then the Bot's message as `TEXT_MESSAGE_START`, `…_CONTENT` and
 `…_END`, then `RUN_FINISHED`, or `RUN_ERROR` saying why the turn ended early.
