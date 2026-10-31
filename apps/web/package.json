@@ -1,0 +1,23 @@
+{
+  "name": "@aobot/web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "vp build"
+  },
+  "dependencies": {
+    "@aobot/domain": "workspace:*",
+    "@effect/atom-react": "4.1.0",
+    "@effect/platform-browser": "4.1.0",
+    "effect": "4.1.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.1.0",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2"
+  }
+}

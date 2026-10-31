@@ -10,6 +10,14 @@
     "packages/*": {
       "entry": ["src/**/*.test.ts"],
       "project": ["src/**/*.ts"]
+    },
+    "apps/server": {
+      "entry": ["src/app/main.ts", "src/**/*.test.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "apps/web": {
+      "entry": ["src/app/main.tsx", "src/**/*.test.ts"],
+      "project": ["src/**/*.{ts,tsx}"]
     }
   }
 }
