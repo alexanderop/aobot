@@ -1,6 +1,7 @@
 ---
 id: E2-1
 title: Bots from a file, with granted tools
+description: As an admin, I define Bots in bots.yaml and each one can only use the tools I granted.
 epic: E2
 status: todo
 depends_on: [E1-3]
@@ -49,4 +50,4 @@ None new.
 
 ## Reference
 
-Decision 7 in [architecture.md](../../architecture.md#decisions).
+[ADR-7 · Fail closed](../../arc42/09-architecture-decisions.md#adr-7--fail-closed).

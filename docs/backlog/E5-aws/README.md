@@ -1,3 +1,8 @@
+---
+title: E5 · AWS
+description: Move from laptop to our AWS account by swapping configuration and providers. Code paths stay the same.
+---
+
 # E5 · AWS
 
 Move from laptop to our AWS account by swapping configuration and providers. Code paths stay the same.

@@ -1,3 +1,8 @@
+---
+title: Observability
+description: OpenTelemetry for traces, logs and metrics, from the first ticket.
+---
+
 # Observability
 
 OpenTelemetry for traces, logs and metrics, from the first ticket.

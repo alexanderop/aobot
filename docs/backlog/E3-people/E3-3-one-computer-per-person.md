@@ -1,6 +1,7 @@
 ---
 id: E3-3
 title: One computer per person
+description: As a colleague, my Bots use my own computer, so my logins and files are never shared.
 epic: E3
 status: todo
 depends_on: [E3-1]

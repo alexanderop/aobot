@@ -1,3 +1,8 @@
+---
+title: E3 · People
+description: Real sign-in, conversations that belong to a person, and one computer per person that stops when idle.
+---
+
 # E3 · People
 
 Real sign-in, conversations that belong to a person, and one computer per person that stops when idle.

@@ -1,6 +1,7 @@
 ---
 id: E4-4
 title: My Bot uses Chrome on my Mac
+description: As a colleague, my Bot can use a browser window on my Mac for sites that only work from my machine, and I see it happen on my own screen.
 epic: E4
 status: todo
 depends_on: [E4-3, E1-2]

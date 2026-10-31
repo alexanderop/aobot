@@ -1,6 +1,7 @@
 ---
 id: E5-1
 title: aobot in our AWS account
+description: As a colleague, I point the desktop app at the company URL and chat with Bots running in our AWS account.
 epic: E5
 status: todo
 depends_on: [E3-1, E0-2]

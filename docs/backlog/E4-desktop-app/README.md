@@ -1,3 +1,8 @@
+---
+title: E4 · Desktop app
+description: "Electron wraps the web app and adds what a browser tab cannot: safe token storage and notifications."
+---
+
 # E4 · Desktop app
 
 Electron wraps the web app and adds what a browser tab cannot: safe token storage and notifications.

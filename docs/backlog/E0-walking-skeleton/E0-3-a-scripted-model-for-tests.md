@@ -1,6 +1,7 @@
 ---
 id: E0-3
 title: A scripted model for tests
+description: As a developer, I run every test without a real model, so tests are fast, free and give the same result every time.
 epic: E0
 status: todo
 depends_on: [E0-1]

@@ -1,6 +1,7 @@
 ---
 id: E3-1
 title: Sign in with company SSO
+description: As a colleague, I sign in with my company account and the audit trail shows it was me.
 epic: E3
 status: todo
 depends_on: [E2-1]

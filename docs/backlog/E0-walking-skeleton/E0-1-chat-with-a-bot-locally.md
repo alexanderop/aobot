@@ -1,6 +1,7 @@
 ---
 id: E0-1
 title: Chat with a Bot locally
+description: As a developer, I run docker compose up, send a message in the browser, and a Bot answers word by word.
 epic: E0
 status: done
 depends_on: []
@@ -24,7 +25,7 @@ In:
 - Answer streamed as `ChatEvent`s defined with Effect Schema in `packages/domain`, using AG-UI's event names and
   fields (`RUN_STARTED`, `TEXT_MESSAGE_CONTENT`, `RUN_FINISHED`, `RUN_ERROR`), over a streaming Effect RPC (`Chat.send`, `Chat.stop`)
 - `apps/web` in React with `@effect/atom-react`: an `AtomRpc` client, a conversation atom per id, and the
-  `useConversation(id)` hook ([architecture.md § The web app](../../architecture.md#the-web-app))
+  `useConversation(id)` hook ([building block view § apps/web](../../arc42/05-building-block-view.md#appsweb))
 - Messages stored in SQLite (`@effect/sql-sqlite-node`, one file at `DATABASE_PATH`), so a reload keeps the conversation
 - The conversation view and composer from [design.md](../../design.md): tokens, bubbles, Bot name pill
 - A stall watchdog: no event from the model or CLI for `AGENT_STALL_TIMEOUT_MS` (60 s) cancels the turn and tells the person; the clock pauses while the reader is slow

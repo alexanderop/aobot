@@ -1,6 +1,7 @@
 ---
 id: E1-6
 title: Files in and out of the workspace
+description: As a person, I download the file my Bot made and give it a file to work on, without copying text through the chat.
 epic: E1
 status: todo
 depends_on: [E1-3]

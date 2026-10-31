@@ -1,6 +1,7 @@
 ---
 id: E5-2
 title: Computers as ECS tasks
+description: As a colleague, my computer runs in AWS and keeps my logins, so the Bot works while my laptop is closed.
 epic: E5
 status: todo
 depends_on: [E5-1, E3-3]

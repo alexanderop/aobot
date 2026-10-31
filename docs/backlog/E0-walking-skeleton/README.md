@@ -1,3 +1,8 @@
+---
+title: E0 · Walking skeleton
+description: "The thinnest path through every layer: a person chats with a Bot, the turn is traced, and CI guards the rules. No tools yet."
+---
+
 # E0 · Walking skeleton
 
 The thinnest path through every layer: a person chats with a Bot, the turn is traced, and CI guards the rules. No tools yet.

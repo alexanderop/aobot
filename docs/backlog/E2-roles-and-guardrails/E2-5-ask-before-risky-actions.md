@@ -1,6 +1,7 @@
 ---
 id: E2-5
 title: Ask before risky actions
+description: As a person, my Bot asks me before a risky action, in the chat, and only acts when I say yes.
 epic: E2
 status: todo
 depends_on: [E2-2]

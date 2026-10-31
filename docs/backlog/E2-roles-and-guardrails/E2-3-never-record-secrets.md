@@ -1,6 +1,7 @@
 ---
 id: E2-3
 title: Never record secrets
+description: As security, I know nothing a Bot typed, and no password a person gave it, ends up in the chat, the audit trail or telemetry.
 epic: E2
 status: todo
 depends_on: [E1-2]

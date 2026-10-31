@@ -1,3 +1,8 @@
+---
+title: Backlog
+description: Epics in build order. Each epic ends in a demo; each ticket is a vertical slice with its own demo. Ticket files follow the template; their front-matter (id, status, depends_on) is meant to be turned into GitHub issues later.
+---
+
 # Backlog
 
 Epics in build order. Each epic ends in a demo; each ticket is a vertical slice with its own demo.

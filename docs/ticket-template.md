@@ -1,6 +1,7 @@
 ---
 id: E0-1
 title: Short title in plain words
+description: As a <person>, I can <do something>, so that <why it matters>.
 epic: E0
 status: todo # todo | doing | done
 depends_on: []

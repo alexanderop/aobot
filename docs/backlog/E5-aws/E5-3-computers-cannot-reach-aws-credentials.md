@@ -1,6 +1,7 @@
 ---
 id: E5-3
 title: Computers cannot reach AWS credentials
+description: As security, I know a Bot's shell cannot take our AWS credentials or reach internal services.
 epic: E5
 status: todo
 depends_on: [E5-2]

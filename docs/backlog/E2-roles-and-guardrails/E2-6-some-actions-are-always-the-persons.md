@@ -1,6 +1,7 @@
 ---
 id: E2-6
 title: Some actions are always the person's
+description: As security, I know a Bot never changes a password, a security setting or pays for something on its own, even if a rule says allow.
 epic: E2
 status: todo
 depends_on: [E2-5]

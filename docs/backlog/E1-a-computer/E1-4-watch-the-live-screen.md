@@ -1,6 +1,7 @@
 ---
 id: E1-4
 title: Watch the live screen
+description: As a person, I watch my Bot's browser while it works.
 epic: E1
 status: todo
 depends_on: [E1-1]

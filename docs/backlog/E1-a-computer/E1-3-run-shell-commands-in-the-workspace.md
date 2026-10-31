@@ -1,6 +1,7 @@
 ---
 id: E1-3
 title: Run shell commands in the workspace
+description: As a person, I ask a Bot to create and read files, and it uses its own folder.
 epic: E1
 status: todo
 depends_on: [E1-1]
