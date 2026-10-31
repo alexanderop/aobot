@@ -2,8 +2,8 @@ import { ConversationBusy, type ConversationId, type RunId } from "@aobot/domain
 import { Clock, Context, Duration, Effect, Layer, Schedule } from "effect";
 import { SqlClient } from "effect/sql";
 
-/** How long a lease lasts without a heartbeat, so a crashed server frees its conversations. */
-export const leaseTtl = Duration.seconds(120);
+// How long a lease lasts without a heartbeat, so a crashed server frees its conversations.
+const leaseTtl = Duration.seconds(120);
 
 const heartbeatEvery = Duration.seconds(40);
 

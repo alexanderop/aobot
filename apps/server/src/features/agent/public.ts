@@ -5,7 +5,10 @@ export {
   ModelFailed,
   Stalled,
   StepLimit,
-  type Turn,
 } from "./agent-runtime.ts";
 
-export { type AgentLimits, layerApi } from "./api-runtime.ts";
+export { layerApi } from "./api-runtime.ts";
+
+export { checkModel } from "./model-check.ts";
+
+export { languageModelLayer, ModelProvider } from "./model-providers.ts";
