@@ -29,6 +29,8 @@ flowchart LR
 | `data`      | A named volume with the SQLite file. Only the server mounts it                                                                             |                                                                                                                                                       |
 | `otel-lgtm` | `grafana/otel-lgtm`: Grafana, Tempo, Loki and an OTLP collector in one container                                                           | Grafana on http://localhost:3300                                                                                                                      |
 
+Compose publishes both ports on `127.0.0.1` only, so nothing outside the laptop reaches them.
+
 The server checks the model at boot (one request to the provider) and logs how to fix a wrong key or model
 name. It never refuses to start over it.
 

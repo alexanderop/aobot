@@ -24,6 +24,7 @@ sequenceDiagram
   Web->>Chat: Chat.send {conversationId, messageId, text}
   Chat->>Chat: take the run guard for this conversation, or fail ConversationBusy
   Chat->>Store: ensure conversation, append the person's message
+  Note over Chat,Store: a message id already stored: fail MessageAlreadySent, no run
   Store-->>Chat: history, oldest first
   Chat->>Agent: run {instructions, history}
   Chat-->>Web: RUN_STARTED
@@ -34,36 +35,41 @@ sequenceDiagram
     Chat-->>Web: TEXT_MESSAGE_START, then TEXT_MESSAGE_CONTENT per delta
   end
   Agent-->>Chat: Done
-  Chat-->>Web: TEXT_MESSAGE_END, RUN_FINISHED
+  Chat-->>Web: TEXT_MESSAGE_END
   Chat->>Store: append the Bot's message with the text it got to
   Chat->>Chat: release the run guard
+  Chat-->>Web: RUN_FINISHED
   Web->>Person: answer shown word by word, composer free again
 ```
 
 What the code guarantees along the way:
 
 - **The guard is taken before anything is stored.** The check and the insert into the in-memory map run in
-  one synchronous step, so two sends cannot both pass. It is released when the stream ends, however it ends.
-- **A retried send is stored once.** Messages are appended with `ON CONFLICT (id) DO NOTHING` on the id the
-  page picked.
-- **The Bot's message is stored when the run ends**, finished or not, with the text it got to. Nothing is
-  stored when it said nothing.
+  one synchronous step, so two sends cannot both pass.
+- **A retried send starts nothing.** The page picks the message id. If that id is already stored, the
+  insert stores nothing and `Chat.send` fails with `MessageAlreadySent`: no run, no second bubble.
+- **The reply is stored and the guard released before the terminal event.** The Bot's message is stored
+  with the text it got to (nothing when it said nothing), then the conversation is freed, and only then
+  does `RUN_FINISHED` or `RUN_ERROR` go out. A page that sees the run end can reload or send again at once.
+  A finalizer does the same for a turn cut off without a terminal event, such as a client that disconnected.
+- **A stop that lands before the model starts keeps it from speaking at all.**
 - **The server turns agent events into AG-UI events with a small state machine** (`turn.ts`: `Waiting`,
   `Writing`, `Ended`), so `TEXT_MESSAGE_END` is sent exactly when a message was started.
 
 ## How a turn ends early
 
-Every early end is one `RUN_ERROR` with a `code` the page can read. A second message is refused before any
-run starts.
+Every early end is one `RUN_ERROR` with a `code` the page can read. A second message, or a repeat of one
+already stored, is refused before any run starts.
 
-| What happened                                               | Agent side                                | Event                    | What the person sees                                                           |
-| ----------------------------------------------------------- | ----------------------------------------- | ------------------------ | ------------------------------------------------------------------------------ |
-| The model sent nothing for 60 s                             | `Stalled`                                 | `RUN_ERROR` `stalled`    | "The model sent nothing for 60 seconds…" and a hint to resend                  |
-| The Bot kept calling tools past the step cap                | `StepLimit`                               | `RUN_ERROR` `step_limit` | "The Bot took 8 steps without finishing…"                                      |
-| The provider refused or broke the request                   | `ModelFailed` (reason only in the log)    | `RUN_ERROR` `model`      | "The model provider could not answer. The server log says why."                |
-| The person pressed stop                                     | `Chat.stop` completes the turn's signal   | `RUN_ERROR` `stopped`    | The words so far stay; the conversation is idle, not failed                    |
-| A turn is already running in this conversation              | `Chat.send` fails with `ConversationBusy` | none                     | The bubble is taken back: "Bot is still answering…"                            |
-| The server could not be reached, or the stream closed early | none                                      | none                     | "Cannot reach the server." or "The connection closed before the Bot finished." |
+| What happened                                               | Agent side                                  | Event                    | What the person sees                                                           |
+| ----------------------------------------------------------- | ------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------ |
+| The model sent nothing for 60 s                             | `Stalled`                                   | `RUN_ERROR` `stalled`    | "The model sent nothing for 60 seconds…" and a hint to resend                  |
+| The Bot kept calling tools past the step cap                | `StepLimit`                                 | `RUN_ERROR` `step_limit` | "The Bot took 8 steps without finishing…"                                      |
+| The provider refused or broke the request                   | `ModelFailed` (reason only in the log)      | `RUN_ERROR` `model`      | "The model provider could not answer. The server log says why."                |
+| The person pressed stop                                     | `Chat.stop` completes the turn's signal     | `RUN_ERROR` `stopped`    | The words so far stay; the conversation is idle, not failed                    |
+| A turn is already running in this conversation              | `Chat.send` fails with `ConversationBusy`   | none                     | The bubble is taken back: "Bot is still answering…"                            |
+| The same message id was already stored (a retried send)     | `Chat.send` fails with `MessageAlreadySent` | none                     | One bubble for the message; the conversation is idle                           |
+| The server could not be reached, or the stream closed early | none                                        | none                     | "Cannot reach the server." or "The connection closed before the Bot finished." |
 
 The stall clock only measures the model. When the page reads slowly the clock waits, so a slow reader is
 never blamed for a quiet model.

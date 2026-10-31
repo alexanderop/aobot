@@ -115,7 +115,7 @@ closed tabs) and CopilotKit's provider.
 | Module          | What it defines                                                                                                                                    |
 | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `chat-event.ts` | `ChatEvent`: `RUN_STARTED`, `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END`, `RUN_FINISHED`, `RUN_ERROR`, and the `RunErrorCode`s |
-| `chat-rpcs.ts`  | `ChatRpcs` (`Chat.open`, `Chat.send`, `Chat.stop`), `Message`, `ConversationSnapshot`, `SendMessage`, `ConversationBusy`                           |
+| `chat-rpcs.ts`  | `ChatRpcs` (`Chat.open`, `Chat.send`, `Chat.stop`), `Message`, `ConversationSnapshot`, `SendMessage`, `ConversationBusy`, `MessageAlreadySent`     |
 | `ids.ts`        | Branded ids: `ConversationId`, `RunId`, `MessageId`, `BotId`                                                                                       |
 
 It runs in the server, the page and later the desktop app, so the `domain-purity` lint rule keeps Node

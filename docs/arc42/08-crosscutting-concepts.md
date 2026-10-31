@@ -17,7 +17,8 @@ passed where another is expected. The words are defined in the [glossary](12-glo
   later `Computers`) are swapped by providing a different layer.
 - Every operation is `Effect.fn("Domain.operation")`, for example `Chat.send` and `ConversationStore.append`.
   The name becomes the span name once telemetry is exported.
-- Failures are `Schema.TaggedError`s (`Stalled`, `StepLimit`, `ModelFailed`, `ConversationBusy`) and are
+- Failures are `Schema.TaggedError`s (`Stalled`, `StepLimit`, `ModelFailed`, `ConversationBusy`,
+  `MessageAlreadySent`) and are
   matched by tag, never by `instanceof`.
 - State machines are `Data.TaggedEnum`s with `$match`, not booleans: `TurnState` on the server,
   `ConversationStatus` on the page.
@@ -46,7 +47,8 @@ not a branch in every caller.
 
 One SQLite file, opened by `@effect/sql-sqlite-node`. Migrations run at every boot and are safe to repeat.
 Today there are two tables, `conversations` and `messages`, with messages ordered by an autoincrement
-`seq`. Writes are idempotent where a retry can happen: a message id seen before is ignored. SQL stays inside
+`seq`. A retry cannot duplicate anything: a message id seen before stores nothing, and a send that repeats
+one is refused with `MessageAlreadySent`. SQL stays inside
 the feature's store (`ConversationStore`), so the move to Postgres touches one place per feature
 ([ADR-13](09-architecture-decisions.md#adr-13--sqlite-for-the-proof-of-concept)).
 
