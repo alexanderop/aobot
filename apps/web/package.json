@@ -2,6 +2,12 @@
   "name": "@aobot/web",
   "private": true,
   "type": "module",
+  "sideEffects": [
+    "*.css"
+  ],
+  "exports": {
+    ".": "./src/public.ts"
+  },
   "scripts": {
     "dev": "vp dev",
     "build": "vp build"

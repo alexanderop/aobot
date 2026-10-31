@@ -56,7 +56,7 @@ export function resolveLocal(root: string, importer: string, source: string): st
 }
 
 /**
-Where a file sits. Apps use `src/app` (composition), `src/features/<name>` and `src/shared`;
+Where a file sits. Apps use `src/app` (composition), `src/features/<name>` and `src/shared`; Astro's `src/pages` routes are composition too;
 packages are one layer. Anything else under an app's `src` is `unknown`, which the boundaries rule reports.
 */
 export function ownerOf(root: string, filename: string): Owner {
@@ -87,7 +87,7 @@ export function ownerOf(root: string, filename: string): Owner {
     }
 
     if (area === "shared") return { ...base, workspace, workspaceDir, layer: "shared" };
-    if (area === "app" || parts.length === 4)
+    if (area === "app" || area === "pages" || parts.length === 4)
       return { ...base, workspace, workspaceDir, layer: "app" };
     return { ...base, workspace, workspaceDir, layer: "unknown" };
   }

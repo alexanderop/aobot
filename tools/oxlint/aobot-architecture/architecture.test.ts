@@ -58,6 +58,12 @@ describe("aobot architecture enforced by Oxlint", () => {
       feature("server", "gateway"),
     ],
     [
+      "an Astro page route wiring a feature",
+      "apps/docs/src/pages/screens.ts",
+      `import "#/features/design/public";\n`,
+      feature("docs", "design"),
+    ],
+    [
       "a feature using shared code",
       "apps/server/src/features/chat/run.ts",
       `import "#/shared/ids";\n`,
