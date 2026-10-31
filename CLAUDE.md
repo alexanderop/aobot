@@ -25,6 +25,7 @@ E0-1 is done: chat with one Bot over `docker compose up`, proven by `vp run veri
 - Effect v4 conventions: `Context.Service`, `Layer.effect`, `Effect.fn("Domain.operation")`, `Schema.TaggedError`. See the `effect` skill.
 - When a ticket is done, set `status: done` in its front-matter and add its `verify` scenario in the same change.
 - The UI follows `docs/design.md`.
+- Every PR description follows the `pr` skill (`.claude/skills/pr/SKILL.md`): Summary, Evidence, Merge Danger.
 - The web app is React with `@effect/atom-react`: state in atoms, read through a few hooks. See `docs/architecture.md` § The web app.
 
 ## Reference repositories
