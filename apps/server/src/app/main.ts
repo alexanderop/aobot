@@ -1,14 +1,30 @@
 import { createServer } from "node:http";
+import { isIPv6 } from "node:net";
 import { ChatRpcs } from "@aobot/domain";
-import { NodeFileSystem, NodeHttpServer, NodePath, NodeRuntime } from "@effect/platform-node";
+import {
+  NodeChildProcessSpawner,
+  NodeFileSystem,
+  NodeHttpServer,
+  NodePath,
+  NodeRuntime,
+} from "@effect/platform-node";
 import { SqliteClient } from "@effect/sql-sqlite-node";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import { FetchHttpClient, HttpMiddleware, HttpRouter, HttpStaticServer } from "effect/http";
 import { Otlp } from "effect/observability";
 import { RpcSerialization, RpcServer } from "effect/rpc";
-import { checkModel, languageModelLayer, layerApi } from "../features/agent/public.ts";
+import {
+  acpAgents,
+  AgentRuntimeSettings,
+  checkModel,
+  languageModelLayer,
+  layerAcp,
+  layerApi,
+} from "../features/agent/public.ts";
+import { auditLogLayer, migrateAudit } from "../features/audit/public.ts";
 import { botToolkit } from "../features/bots/public.ts";
 import { chatLayer, migrateChat } from "../features/chat/public.ts";
+import { gatewayLayer, gatewayMcpLayer } from "../features/gateway/public.ts";
 import { serverConfig } from "./config.ts";
 
 const server = Layer.unwrap(
@@ -24,15 +40,42 @@ const server = Layer.unwrap(
       }),
     ).pipe(Layer.provide([NodeFileSystem.layer, NodePath.layer]));
 
-    const database = Layer.effectDiscard(migrateChat).pipe(
+    const database = Layer.effectDiscard(Effect.andThen(migrateChat, migrateAudit)).pipe(
       Layer.provideMerge(SqliteClient.layer({ filename: config.databasePath })),
       Layer.provide(databaseFolder),
     );
 
-    const agent = layerApi(botToolkit, config.limits).pipe(
-      Layer.provide(languageModelLayer(config.model)),
-      Layer.provide(FetchHttpClient.layer),
-    );
+    const ownAddress = isIPv6(config.host) ? `[${config.host}]` : config.host;
+
+    // Each runtime brings its agent, what runs beside it, and the routes it serves.
+    const runtime = AgentRuntimeSettings.$match(config.runtime, {
+      Api: ({ model }) => ({
+        agent: layerApi(botToolkit, config.limits).pipe(
+          Layer.provide(languageModelLayer(model)),
+          Layer.provide(FetchHttpClient.layer),
+        ),
+        beside: Layer.effectDiscard(
+          checkModel(model).pipe(Effect.provide(FetchHttpClient.layer), Effect.forkScoped),
+        ),
+        routes: Layer.empty,
+      }),
+      Acp: ({ agent, home }) => ({
+        agent: layerAcp({
+          agent,
+          launcher: acpAgents[agent],
+          home,
+          gatewayMcpUrl: `http://${ownAddress}:${config.port}/mcp`,
+          stallTimeout: config.limits.stallTimeout,
+        }).pipe(
+          Layer.provide(gatewayLayer),
+          Layer.provide(auditLogLayer),
+          Layer.provide(NodeChildProcessSpawner.layer),
+          Layer.provide([NodeFileSystem.layer, NodePath.layer]),
+        ),
+        beside: Layer.empty,
+        routes: gatewayMcpLayer,
+      }),
+    });
 
     // Off because the handlers name their own spans and `Chat.turn` starts its own trace. The RPC span
     // around each call would only add a second trace of one span.
@@ -40,16 +83,13 @@ const server = Layer.unwrap(
       Layer.provide(RpcServer.layerProtocolWebsocket({ path: "/rpc" })),
       Layer.provide(RpcSerialization.layerJson),
       Layer.provide(chatLayer),
-      Layer.provide([agent, database]),
+      Layer.provide(runtime.agent),
+      Layer.provide(database),
     );
 
     const webApp = HttpStaticServer.layer({ root: config.webDistDir, spa: true });
 
-    const modelCheck = Layer.effectDiscard(
-      checkModel(config.model).pipe(Effect.provide(FetchHttpClient.layer), Effect.forkScoped),
-    );
-
-    const listener = NodeHttpServer.layer(createServer, { port: config.port });
+    const listener = NodeHttpServer.layer(createServer, { port: config.port, host: config.host });
 
     const telemetry = Option.match(config.otlpEndpoint, {
       onNone: () => Layer.empty,
@@ -59,12 +99,12 @@ const server = Layer.unwrap(
         ),
     });
 
-    // HTTP carries only the web app's files, the health check and the RPC socket. None of it is worth
-    // a trace, and the health check every two seconds would bury the turns.
+    // HTTP carries only the web app's files, the health check, the RPC socket and the gateway's MCP
+    // server. None of it is worth a trace, and the health check every two seconds would bury the turns.
     const untracedHttp = Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true);
 
-    return HttpRouter.serve(Layer.mergeAll(rpc, webApp)).pipe(
-      Layer.merge(modelCheck),
+    return HttpRouter.serve(Layer.mergeAll(rpc, webApp, runtime.routes)).pipe(
+      Layer.merge(runtime.beside),
       Layer.provide(listener),
       Layer.provide([telemetry, untracedHttp]),
     );
