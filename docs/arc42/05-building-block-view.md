@@ -7,30 +7,41 @@ description: The workspaces, the features inside each app, and the services that
 
 ## Level 1: the parts
 
-```mermaid
-flowchart LR
-  web["apps/web<br/>React + atoms"]
-  desktop["apps/desktop<br/>Electron (planned E4-1)"]
-  subgraph server ["apps/server"]
-    chat[chat]
-    agent["agent<br/>AgentRuntime"]
-    gateway["gateway (planned E1-1)<br/>grant → rules → audit row → forward"]
-  end
-  computer["apps/computer<br/>Chromium · bash · /workspace<br/>(planned E1-1)"]
-  domain[["packages/domain<br/>ChatEvent · ChatRpcs · ids"]]
-  db[("SQLite file")]
-  model[(Model provider)]
+This C4 container diagram shows what runs and what each part talks to. `packages/domain` is a library the
+containers import, not a container, so it appears only in the table below.
 
-  desktop -. wraps .-> web
-  web -- "WebSocket /rpc" --> chat
-  chat --> agent
-  agent --> model
-  agent -. "tool call" .-> gateway
-  gateway -. "a URL and a token" .-> computer
-  chat --> db
-  web --- domain
-  server --- domain
+```mermaid
+---
+title: Containers
+---
+flowchart TB
+  person["fa:fa-user <b>Person</b><br/><small>[Person]</small><br/>Chats with their Bots"]
+  subgraph aobot ["aobot [Software system]"]
+    desktop["fa:fa-desktop <b>apps/desktop</b><br/><small>[Container: Electron]</small><br/>Planned, E4-1"]
+    web["fa:fa-window-maximize <b>apps/web</b><br/><small>[Container: React + atoms]</small><br/>Shows the conversation"]
+    server["fa:fa-server <b>apps/server</b><br/><small>[Container: Effect on Node]</small><br/>Knows Bots, runs agent turns, streams answers"]
+    db[("fa:fa-database <b>SQLite file</b><br/><small>[Database]</small><br/>Conversations and messages")]
+    computer["fa:fa-terminal <b>apps/computer</b><br/><small>[Container: Playwright in Docker]</small><br/>Planned, E1-1"]
+  end
+  model["fa:fa-brain <b>Model provider</b><br/><small>[External system]</small><br/>Anthropic, OpenAI or compatible"]
+  grafana["fa:fa-chart-line <b>Telemetry backend</b><br/><small>[External system]</small><br/>grafana/otel-lgtm locally"]
+
+  person -- "chats" --> web
+  desktop -. "wraps" .-> web
+  web -- "Chat.open, send, stop [WebSocket /rpc]" --> server
+  server -- "reads, writes [SQL]" --> db
+  server -- "prompt and tools [HTTPS]" --> model
+  server -. "tool calls through the gateway [URL + token]" .-> computer
+  server -. "spans and logs [OTLP], E0-2" .-> grafana
+
+  class web,server,db built
+  class desktop,computer planned
+  class person,model,grafana external
+  class aobot boundary
 ```
+
+Teal boxes are aobot, grey boxes are outside it. Dashed means planned. The server also serves the built
+`apps/web` as static files on the same port.
 
 | Part                | Its one job                                                            | Built with                   | Status                                                                                      |
 | ------------------- | ---------------------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------- |
@@ -57,22 +68,52 @@ enforces this: only the `gateway` feature may depend on `computers`.
 
 ### `apps/server`
 
+This C4 component diagram shows the server's features. Each arrow between two features is a dependency
+`policy.ts` allows; any other import across features fails lint.
+
 ```mermaid
+---
+title: Components of apps/server
+---
 flowchart TB
+  web["fa:fa-window-maximize <b>apps/web</b><br/><small>[Container]</small>"]
+  subgraph server ["apps/server [Container]"]
+    chat["fa:fa-comments <b>chat</b><br/><small>[Component]</small><br/>RPC handlers, ConversationStore, turnEvents"]
+    approvals["fa:fa-circle-check <b>approvals</b><br/><small>[Component]</small><br/>Planned, E2-5"]
+    auth["fa:fa-lock <b>auth</b><br/><small>[Component]</small><br/>Planned, E3-1"]
+    agent["fa:fa-gears <b>agent</b><br/><small>[Component]</small><br/>AgentRuntime, model providers"]
+    gateway["fa:fa-shield-halved <b>gateway</b><br/><small>[Component]</small><br/>Planned, E1-1"]
+    bots["fa:fa-id-badge <b>bots</b><br/><small>[Component]</small><br/>The Assistant Bot, its Toolkit"]
+    policy["fa:fa-scale-balanced <b>policy</b><br/><small>[Component]</small><br/>Planned, E2-2"]
+    audit["fa:fa-clipboard-list <b>audit</b><br/><small>[Component]</small><br/>Planned, E2-4"]
+    computers["fa:fa-cube <b>computers</b><br/><small>[Component]</small><br/>Planned, E1-1"]
+  end
+  db[("fa:fa-database <b>SQLite file</b><br/><small>[Database]</small>")]
+  model["fa:fa-brain <b>Model provider</b><br/><small>[External system]</small>"]
+  computer["fa:fa-terminal <b>apps/computer</b><br/><small>[Container]</small><br/>Planned, E1-1"]
+
+  web -- "Chat RPCs" --> chat
   chat --> agent
   chat --> bots
+  chat -- "SQL" --> db
+  agent -- "HTTPS" --> model
   agent -.-> bots
   agent -.-> gateway
+  approvals -.-> gateway
   gateway -.-> bots
   gateway -.-> policy
   gateway -.-> audit
   gateway -.-> computers
-  approvals -.-> gateway
-  auth
+  computers -. "URL + token" .-> computer
+
+  class web,chat,agent,bots,db built
+  class approvals,auth,gateway,policy,audit,computers,computer planned
+  class model external
+  class server boundary
 ```
 
-Each arrow is a dependency `policy.ts` allows. Solid arrows are imports that exist today; dotted ones
-arrive with their tickets.
+Solid arrows are imports or calls that exist today; dashed ones arrive with their tickets. `computers` is
+reached only through `gateway`, which is how "every action goes through the gateway" is enforced.
 
 | Feature     | What it holds today                                                                                                                                                        | Status                                                                                                           |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
