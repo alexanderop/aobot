@@ -45,7 +45,15 @@ const registries: AtomRegistry.AtomRegistry[] = [];
 
 function start(script: Parameters<typeof fakeServer>[0]) {
   const registry = AtomRegistry.make();
-  const atoms = makeConversations(fakeServer(script))(conversationId);
+
+  const conversations = makeConversations(fakeServer(script));
+
+  const atoms = {
+    state: conversations.state(conversationId),
+    open: conversations.open(conversationId),
+    send: conversations.send(conversationId),
+    stop: conversations.stop(conversationId),
+  };
 
   registries.push(registry);
   registry.mount(atoms.open);

@@ -25,13 +25,11 @@ export interface UseConversation {
 
 /** Open a conversation and follow it. Shaped like CopilotKit's `useAgent`: components read nothing else. */
 export function useConversation(id: ConversationId): UseConversation {
-  const atoms = conversation(id);
+  useAtomMount(conversation.open(id));
 
-  useAtomMount(atoms.open);
-
-  const state = useAtomValue(atoms.state);
-  const sendMessage = useAtomSet(atoms.send);
-  const stopRun = useAtomSet(atoms.stop);
+  const state = useAtomValue(conversation.state(id));
+  const sendMessage = useAtomSet(conversation.send(id));
+  const stopRun = useAtomSet(conversation.stop(id));
   const running = isRunning(state);
   const ready = Option.isSome(state.bot);
 
