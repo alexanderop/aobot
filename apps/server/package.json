@@ -15,6 +15,7 @@
     "effect": "4.1.0"
   },
   "devDependencies": {
+    "@effect/sql-pglite": "4.1.0",
     "@effect/vitest": "4.1.0"
   }
 }
