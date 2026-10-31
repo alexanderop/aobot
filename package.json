@@ -9,7 +9,8 @@
     "test": "vp test run",
     "test:watch": "vp test watch",
     "knip": "knip",
-    "verify": "node verify/run.ts"
+    "verify": "node verify/run.ts",
+    "docs": "vp run @aobot/docs#dev"
   },
   "dependencies": {
     "effect": "4.1.0"

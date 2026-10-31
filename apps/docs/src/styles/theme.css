@@ -1,0 +1,24 @@
+/* The app's dark tokens from docs/design.md, mapped onto Starlight's. */
+:root {
+  --sl-color-accent-low: #12352f;
+  --sl-color-accent: #3fa592;
+  --sl-color-accent-high: #a8e0d4;
+  --sl-color-white: #ececed;
+  --sl-color-gray-1: #ececed;
+  --sl-color-gray-3: #8a8a8f;
+  --sl-color-gray-5: #232325;
+  --sl-color-gray-6: #141415;
+  --sl-color-black: #0f0f10;
+}
+
+:root[data-theme="light"] {
+  --sl-color-accent-low: #d3eee8;
+  --sl-color-accent: #2c8574;
+  --sl-color-accent-high: #1b5247;
+  --sl-color-white: #0f0f10;
+  --sl-color-gray-1: #232325;
+  --sl-color-gray-3: #5c5c61;
+  --sl-color-gray-5: #d9d9dc;
+  --sl-color-gray-6: #f3f3f4;
+  --sl-color-black: #ffffff;
+}
