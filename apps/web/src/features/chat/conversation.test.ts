@@ -36,13 +36,15 @@ const fakeServer = (script: {
     stopped: Deferred.Deferred<void>,
   ) => Stream.Stream<ChatEvent, ConversationBusy | MessageAlreadySent>;
   readonly open?: Effect.Effect<ConversationSnapshot>;
+  readonly stop?: (stopped: Deferred.Deferred<void>) => Effect.Effect<void>;
 }) => {
   const stopped = Deferred.makeUnsafe<void>();
 
   const handlers = ChatRpcs.toLayer({
     "Chat.open": () => script.open ?? Effect.succeed({ bot, messages: [], isRunning: false }),
     "Chat.send": () => script.send(stopped),
-    "Chat.stop": () => Deferred.succeed(stopped, undefined).pipe(Effect.asVoid),
+    "Chat.stop": () =>
+      script.stop?.(stopped) ?? Deferred.succeed(stopped, undefined).pipe(Effect.asVoid),
   });
 
   return Atom.runtime(
@@ -100,6 +102,66 @@ describe("given a conversation served by an in-memory Bot", () => {
     const state = await until(registry, atoms.state, (current) => Option.isSome(current.bot));
 
     expect(isRunning(state)).toBe(false);
+  });
+
+  describe("when the person presses stop before the server has started the run", () => {
+    it("holds the stop until the run starts, so the Bot says nothing", async () => {
+      const pickedUp = Deferred.makeUnsafe<void>();
+      const runStarted = Deferred.makeUnsafe<void>();
+
+      const { registry, atoms } = start({
+        send: (stopped) =>
+          Stream.unwrap(
+            Deferred.await(pickedUp).pipe(
+              Effect.andThen(Deferred.succeed(runStarted, undefined)),
+              Effect.as(
+                Stream.concat(
+                  Stream.fromIterable<ChatEvent>([
+                    { type: "RUN_STARTED", threadId: conversationId, runId },
+                  ]),
+                  Stream.unwrap(
+                    Effect.raceFirst(
+                      Deferred.await(stopped).pipe(
+                        Effect.as(
+                          Stream.fromIterable<ChatEvent>([
+                            { type: "RUN_ERROR", message: "Stopped.", code: "stopped" },
+                          ]),
+                        ),
+                      ),
+                      Effect.sleep("100 millis").pipe(
+                        Effect.as(
+                          Stream.fromIterable<ChatEvent>([
+                            ...started.slice(1),
+                            { type: "TEXT_MESSAGE_END", messageId: botMessage },
+                            { type: "RUN_FINISHED", threadId: conversationId, runId },
+                          ]),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        stop: (stopped) =>
+          Deferred.isDone(runStarted).pipe(
+            Effect.flatMap((isStarted) =>
+              isStarted ? Deferred.succeed(stopped, undefined) : Effect.succeed(false),
+            ),
+            Effect.asVoid,
+          ),
+      });
+
+      await until(registry, atoms.state, (current) => Option.isSome(current.bot));
+      registry.set(atoms.send, userMessage);
+      registry.set(atoms.stop, undefined);
+      Deferred.doneUnsafe(pickedUp, Effect.void);
+
+      const state = await until(registry, atoms.state, (current) => !isRunning(current));
+
+      expect(state.messages.map((message) => message.text)).toEqual([userMessage.text]);
+      expect(ConversationStatus.$is("Idle")(state.status)).toBe(true);
+    });
   });
 
   describe("when the person sends a message and the Bot is still talking", () => {

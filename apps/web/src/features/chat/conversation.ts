@@ -8,9 +8,10 @@ import {
   appendUserMessage,
   failConnection,
   failIfStillRunning,
-  foldChatEvent,
   initialState,
+  receiveEvent,
   refuseMessage,
+  requestStop,
   seedFromSnapshot,
 } from "./conversation-state.ts";
 
@@ -72,7 +73,11 @@ export function makeConversations(
             text: outgoing.text,
           }).pipe(
             Stream.runForEach((event) =>
-              Atom.update(state(id), (current) => foldChatEvent(current, event)),
+              Atom.modify(state(id), (current) => receiveEvent(current, event)).pipe(
+                Effect.flatMap((stopNow) =>
+                  stopNow ? client("Chat.stop", { conversationId: id }) : Effect.void,
+                ),
+              ),
             ),
             Effect.catchTag("ConversationBusy", () =>
               Atom.update(state(id), (current) => refuseMessage(current, outgoing.messageId)),
@@ -99,8 +104,9 @@ export function makeConversations(
       runtime.fn<void>()(() =>
         Effect.gen(function* () {
           const client = yield* ChatClient;
+          const stopNow = yield* Atom.modify(state(id), requestStop);
 
-          yield* client("Chat.stop", { conversationId: id });
+          if (stopNow) yield* client("Chat.stop", { conversationId: id });
         }).pipe(
           Effect.catch(() =>
             Atom.update(state(id), (current) =>

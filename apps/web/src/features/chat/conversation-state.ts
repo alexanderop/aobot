@@ -14,10 +14,22 @@ run is just idle. `busy` and `connection` come from the page, not from a run.
 */
 export type FailureCode = Exclude<RunErrorCode, "stopped"> | "busy" | "connection";
 
+/**
+How far a run in flight has got, as this page sees it. The server can only stop a run it has started, so
+a stop pressed while `Sending` waits here until the run starts.
+*/
+type RunPhase = Data.TaggedEnum<{
+  Sending: { readonly stopRequested: boolean };
+  Started: { readonly runId: RunId };
+  Observed: Record<never, never>;
+}>;
+
+const RunPhase = Data.taggedEnum<RunPhase>();
+
 /** Where a conversation stands: nothing running, a run in flight, or the last attempt failed. */
 export type ConversationStatus = Data.TaggedEnum<{
   Idle: Record<never, never>;
-  Running: { readonly runId: Option.Option<RunId> };
+  Running: { readonly phase: RunPhase };
   Failed: { readonly code: FailureCode; readonly message: string };
 }>;
 
@@ -38,13 +50,13 @@ export const initialState: ConversationState = {
   status: ConversationStatus.Idle(),
 };
 
-/** Start from what the server stored. A run already in flight has no known run id yet. */
+/** Start from what the server stored. A run already in flight was started elsewhere, so a stop goes out at once. */
 export function seedFromSnapshot(snapshot: ConversationSnapshot): ConversationState {
   return {
     bot: Option.some(snapshot.bot),
     messages: snapshot.messages,
     status: snapshot.isRunning
-      ? ConversationStatus.Running({ runId: Option.none() })
+      ? ConversationStatus.Running({ phase: RunPhase.Observed() })
       : ConversationStatus.Idle(),
   };
 }
@@ -58,7 +70,7 @@ export function appendUserMessage(
   return {
     ...state,
     messages: [...state.messages, { id: messageId, role: "user", text }],
-    status: ConversationStatus.Running({ runId: Option.none() }),
+    status: ConversationStatus.Running({ phase: RunPhase.Sending({ stopRequested: false }) }),
   };
 }
 
@@ -118,7 +130,10 @@ function appendAssistantText(
 export function foldChatEvent(state: ConversationState, event: ChatEvent): ConversationState {
   switch (event.type) {
     case "RUN_STARTED":
-      return { ...state, status: ConversationStatus.Running({ runId: Option.some(event.runId) }) };
+      return {
+        ...state,
+        status: ConversationStatus.Running({ phase: RunPhase.Started({ runId: event.runId }) }),
+      };
 
     case "TEXT_MESSAGE_START":
       return { ...state, messages: appendAssistantText(state.messages, event.messageId, "") };
@@ -149,4 +164,40 @@ export function foldChatEvent(state: ConversationState, event: ChatEvent): Conve
 /** True while a run is in flight. */
 export function isRunning(state: ConversationState): boolean {
   return ConversationStatus.$is("Running")(state.status);
+}
+
+function isStopWaiting(state: ConversationState): boolean {
+  return (
+    ConversationStatus.$is("Running")(state.status) &&
+    RunPhase.$is("Sending")(state.status.phase) &&
+    state.status.phase.stopRequested
+  );
+}
+
+/**
+The person pressed stop. Returns whether to send `Chat.stop` now: not while the run is still `Sending`,
+where the stop is held in the state instead, because the server would drop it.
+*/
+export function requestStop(state: ConversationState): [boolean, ConversationState] {
+  if (!ConversationStatus.$is("Running")(state.status)) return [false, state];
+
+  if (RunPhase.$is("Sending")(state.status.phase)) {
+    return [
+      false,
+      {
+        ...state,
+        status: ConversationStatus.Running({ phase: RunPhase.Sending({ stopRequested: true }) }),
+      },
+    ];
+  }
+
+  return [true, state];
+}
+
+/** Fold one streamed event, and say whether a held stop must go out now that the run has started. */
+export function receiveEvent(
+  state: ConversationState,
+  event: ChatEvent,
+): [boolean, ConversationState] {
+  return [event.type === "RUN_STARTED" && isStopWaiting(state), foldChatEvent(state, event)];
 }
