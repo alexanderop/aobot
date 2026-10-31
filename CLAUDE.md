@@ -4,7 +4,7 @@ AI coworkers with their own computer and guardrails. Read `docs/README.md` first
 
 ## Status
 
-E0-1 to E0-3 are done: chat with one Bot over `docker compose up`, each chat turn is one `Chat.turn` trace in Grafana, and every test runs on a scripted model, proven by `vp run verify E0-1`, `E0-2` and `E0-3`. The next ticket is `docs/backlog/E0-walking-skeleton/E0-4-quality-gates-and-ci.md`.
+E0-1 to E0-4 are done: chat with one Bot over `docker compose up`, each chat turn is one `Chat.turn` trace in Grafana, every test runs on a scripted model, and `vp run check` fails CI when a change breaks one of our rules, proven by `vp run verify E0-1`, `E0-2`, `E0-3` and `E0-4`. The next ticket is `docs/backlog/E0-walking-skeleton/E0-5-chat-on-my-own-subscription.md`.
 
 ## Commands
 
@@ -13,7 +13,7 @@ E0-1 to E0-3 are done: chat with one Bot over `docker compose up`, each chat tur
 - Imports: tests use `vite-plus/test`, lint plugins use `vite-plus/lint/plugins` (enforced by `vite-plus/prefer-vite-plus-imports`).
 - `vp run test:smoke` (from E0-3): one turn against the real model in `MODEL_*`. Not part of `check`; runs nightly.
 - `vp run test:contract` (from E1-1): computer provider contract suite. Needs Docker.
-- `vp run verify <ticket-id>` (from E0-1): the ticket's demo in a real browser with `agent-browser`. A slice is done only when this passes. Its stack publishes the server on 3100 and Grafana on 3400, so it runs beside `docker compose up`.
+- `vp run verify <ticket-id>` (from E0-1): the ticket's demo in a real browser with `agent-browser`. A slice is done only when this passes. Its stack publishes the server on 3100 and Grafana on 3400, so it runs beside `docker compose up`. A scenario that exports `stack = false` runs without the stack.
 - `docker compose up` (from E0-1): the server (SQLite file on a volume), `grafana/otel-lgtm` (Grafana on http://localhost:3300, traces under Explore → Tempo from E0-2).
 
 ## Rules
