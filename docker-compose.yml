@@ -10,7 +10,7 @@ services:
       DATABASE_PATH: /data/aobot.db
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - data:/data
     healthcheck:
@@ -28,7 +28,7 @@ services:
   otel-lgtm:
     image: grafana/otel-lgtm
     ports:
-      - "3300:3000"
+      - "127.0.0.1:3300:3000"
 
 volumes:
   data:
