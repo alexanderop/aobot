@@ -25,7 +25,7 @@ export function ConversationView(props: { readonly conversationId: ConversationI
           {Option.isSome(bot) ? botName : "Connecting…"}
         </span>
       </header>
-      <div className="conversation__messages" role="log" aria-live="polite">
+      <div className="conversation__messages" role="log" aria-live="polite" aria-busy={isRunning}>
         {messages.map((message) => (
           <Bubble key={message.id} message={message} />
         ))}
