@@ -28,6 +28,7 @@ adds it. Note that `vp check` alone is the built-in static check; `vp run check`
 | `vp check --fix`         | formats and applies autofixes                                                                                 | no          |
 | `vp run test:contract`   | tier 3, needs Docker (arrives with E1-1)                                                                      | no, CI job  |
 | `vp run verify <ticket>` | tier 4: the ticket's demo in a real browser through `agent-browser` (arrives with E0-1)                       | no, CI job  |
+| `vp run test:smoke`      | one turn against the real model in `MODEL_*` (`vite.smoke.config.ts`, arrives with E0-3)                      | no, nightly |
 
 Pinned versions: Vite+ 1.4.0 (oxlint 1.89, Vitest 5.0.5), pnpm 11.28.10, knip 6.44.0, Effect 4.1.0.
 pnpm 12 failed to install on macOS through Vite+ (`ENOEXEC`), so the project stays on pnpm 11 for now.

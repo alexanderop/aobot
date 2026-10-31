@@ -11,4 +11,4 @@ export { layerApi } from "./api-runtime.ts";
 
 export { checkModel } from "./model-check.ts";
 
-export { languageModelLayer, ModelProvider } from "./model-providers.ts";
+export { languageModelLayer, modelConfig } from "./model-providers.ts";

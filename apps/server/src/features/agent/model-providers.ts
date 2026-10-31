@@ -4,7 +4,7 @@ import {
   OpenAiClient as OpenAiCompatClient,
   OpenAiLanguageModel as OpenAiCompatLanguageModel,
 } from "@effect/ai-openai-compat";
-import { Effect, Layer, Option, type Redacted, Schema } from "effect";
+import { Config, Effect, Layer, Option, type Redacted, Schema } from "effect";
 import type { LanguageModel } from "effect/ai";
 import type { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 
@@ -21,6 +21,14 @@ export interface ModelSettings {
   readonly apiKey: Redacted.Redacted<string>;
   readonly baseUrl: Option.Option<string>;
 }
+
+/** The model settings, from `MODEL_PROVIDER`, `MODEL_NAME`, `MODEL_API_KEY` and `MODEL_BASE_URL`. */
+export const modelConfig = Config.all({
+  provider: Config.schema(ModelProvider, "MODEL_PROVIDER"),
+  name: Config.String("MODEL_NAME"),
+  apiKey: Config.Redacted("MODEL_API_KEY"),
+  baseUrl: Config.option(Config.String("MODEL_BASE_URL")),
+});
 
 /** What the app needs from one provider: the model itself, and a lookup of the model by name. */
 interface ProviderEntry {

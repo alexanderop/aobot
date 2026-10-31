@@ -1,5 +1,11 @@
-import { Effect, Layer, Ref, Stream } from "effect";
+import { Array, Effect, Layer, Option, Ref, Stream } from "effect";
 import { type AiError, LanguageModel, type Response } from "effect/ai";
+import {
+  type ModelScript,
+  ModelStep,
+  type ScriptedToolCall,
+  scriptOverrun,
+} from "./model-script.ts";
 
 /** One model call's answer, as the provider would stream it. */
 export type ScriptedAnswer = Stream.Stream<Response.StreamPartEncoded, AiError.AiError>;
@@ -28,6 +34,21 @@ export function scriptedModel(answer: (call: number) => ScriptedAnswer) {
   );
 }
 
+/** Answer call N with step N of `script`. A call past the end dies, naming the script's length. */
+export function replay(script: ModelScript): (call: number) => ScriptedAnswer {
+  return (call) =>
+    Option.match(Array.get(script, call - 1), {
+      onNone: () => Stream.die(scriptOverrun(script, call)),
+      onSome: (step) =>
+        Stream.fromIterable(
+          ModelStep.$match(step, {
+            Say: ({ words }) => textParts(words),
+            CallTools: ({ calls }) => toolCallParts(calls, call),
+          }),
+        ),
+    });
+}
+
 const usage = {
   inputTokens: { uncached: 1, total: 1, cacheRead: undefined, cacheWrite: undefined },
   outputTokens: { total: 1, text: undefined, reasoning: undefined },
@@ -47,10 +68,18 @@ export function textParts(words: ReadonlyArray<string>): Array<Response.StreamPa
   ];
 }
 
-/** The parts of an answer that only calls one tool. */
-export function toolCallParts(name: string, call: number): Array<Response.StreamPartEncoded> {
+/** The parts of an answer that only calls tools. `call` keeps the ids unique across calls. */
+export function toolCallParts(
+  calls: ReadonlyArray<ScriptedToolCall>,
+  call: number,
+): Array<Response.StreamPartEncoded> {
   return [
-    { type: "tool-call", id: `call-${call}`, name, params: {} },
+    ...calls.map(({ name, params }, index): Response.StreamPartEncoded => ({
+      type: "tool-call",
+      id: `call-${call}-${index}`,
+      name,
+      params,
+    })),
     { type: "finish", reason: "tool-calls", usage },
   ];
 }

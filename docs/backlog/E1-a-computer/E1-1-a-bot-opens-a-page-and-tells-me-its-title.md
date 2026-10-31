@@ -36,6 +36,7 @@ In:
 - If the audit row cannot be written, the action is not forwarded
 - After a crash, an `allow` row with no outcome becomes `unknown` and is never re-run; the Bot is told the outcome is unknown
 - One constant-time token comparison helper, comparing bytes, used by every service that checks a token
+- The mock model server takes a scenario's `ModelScript` over a control route (`PUT /mock/script`, which also resets the call count), so a verify scenario scripts tool calls without restarting the stack
 
 Out:
 
