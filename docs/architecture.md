@@ -23,14 +23,14 @@ three things:
                                                  Computer (container: Chromium, bash, /workspace)
 ```
 
-| Part                | Its one job                                                            | Built with                  |
-| ------------------- | ---------------------------------------------------------------------- | --------------------------- |
-| `apps/web`          | Show the conversation and the live screen, let a person take the mouse | React                       |
-| `apps/desktop`      | Wrap `apps/web`, keep the sign-in token safe, send notifications       | Electron                    |
-| `apps/server`       | Know Bots and people, run agent turns, stream answers                  | Effect on Node              |
-| Gateway (in server) | Decide if a tool call may happen, record it, then forward it           | Effect service + Postgres   |
-| `apps/computer`     | Actually do it: browse, click, type, run commands                      | Node + Playwright in Docker |
-| `packages/domain`   | Schemas shared by all of the above: Bot, ToolCall, AuditRow, ChatEvent | Effect Schema               |
+| Part                | Its one job                                                            | Built with                   |
+| ------------------- | ---------------------------------------------------------------------- | ---------------------------- |
+| `apps/web`          | Show the conversation and the live screen, let a person take the mouse | React + `@effect/atom-react` |
+| `apps/desktop`      | Wrap `apps/web`, keep the sign-in token safe, send notifications       | Electron                     |
+| `apps/server`       | Know Bots and people, run agent turns, stream answers                  | Effect on Node               |
+| Gateway (in server) | Decide if a tool call may happen, record it, then forward it           | Effect service + Postgres    |
+| `apps/computer`     | Actually do it: browse, click, type, run commands                      | Node + Playwright in Docker  |
+| `packages/domain`   | Schemas shared by all of the above: Bot, ToolCall, AuditRow, ChatEvent | Effect Schema                |
 
 ### Inside each app: features
 
@@ -113,6 +113,36 @@ waiting.
 | 9   | **OpenTelemetry from day one**                                                                     | One trace per chat turn, with the `trace_id` stored on every audit row                                                                                                                                                                                                  |
 | 10  | **Outside content is untrusted data**                                                              | Pages, command output and files reach the model inside one envelope that says they carry no authority. A page can say "ignore your instructions"; the envelope is what tells the model that is not its person speaking. A closing tag inside the content is neutralised |
 | 11  | **Every audit row names its initiator**                                                            | `initiator_kind` is `person` or `deployment` now, `routine` and `handoff` later. `actor.id` says on whose authority; only this says whether anybody was watching                                                                                                        |
+| 12  | **AG-UI events over Effect RPC, read through atoms**                                               | One `ChatEvent` Schema in `packages/domain` with AG-UI's event names and fields, streamed by an Effect RPC and decoded on both sides. The web reads it through `effect/reactivity` atoms in a few hooks, shaped like CopilotKit's. No CopilotKit dependency             |
+
+## The web app
+
+React with `@effect/atom-react`. State lives in atoms from `effect/reactivity`; components read them
+through a few hooks. The hooks copy the _shape_ of CopilotKit's
+(`~/Projects/opensource/CopilotKit/packages/react-core/src/v2/hooks/`), not their mechanics: no Bot
+tool ever runs in the page, so nothing depends on a tab being open.
+
+```ts
+// packages/domain: one schema, encoded by the server and decoded by the web
+export class ChatRpcs extends RpcGroup.make(
+  Rpc.make("Chat.send", { payload: SendMessage, success: ChatEvent, stream: true }),
+  Rpc.make("Chat.stop", { payload: ConversationRef }),
+) {}
+
+// apps/web: the RPC client as an atom service, one conversation atom per id
+class ChatClient extends AtomRpc.Service<ChatClient>()("ChatClient", { group: ChatRpcs, protocol }) {}
+const conversation = Atom.family((id: ConversationId) => /* fold ChatEvents into messages, tool calls, status */)
+```
+
+| Hook                    | Shaped like CopilotKit's             | What it gives a component                                                               | From |
+| ----------------------- | ------------------------------------ | --------------------------------------------------------------------------------------- | ---- |
+| `useConversation(id)`   | `useAgent`                           | `messages`, `toolCalls`, `isRunning`, `send`, `stop` as values and functions            | E0-1 |
+| `useToolCallRenderer()` | `useRenderTool`, `useRenderToolCall` | A registry from tool name to a component that draws one tool call in each of its states | E1-1 |
+| `useLiveScreen(bot)`    | (none)                               | The latest screen frame, and `takeControl` and `handBack`                               | E1-4 |
+
+Not copied: `useFrontendTool` (it runs a Bot's tool in the open tab, which breaks routines, the Mac and
+closed tabs) and CopilotKit's provider. The wire format stays AG-UI, so a CopilotKit or other AG-UI client
+could still connect through a thin adapter later.
 
 ## Local now, AWS later
 

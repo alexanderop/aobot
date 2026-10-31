@@ -28,6 +28,8 @@ In:
   addresses. `COMPUTER_ALLOW_PRIVATE_HOSTS` for local fixtures; the server refuses to start with it in production
 - `traceparent` sent to the computer
 - Gateway tools offered to both runtimes: the `api` `Toolkit` and the `acp` MCP server
+- Tool calls streamed as AG-UI `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END` and `TOOL_CALL_RESULT`; the
+  `useToolCallRenderer()` registry draws `navigate` and `snapshot` in the transcript, with a default for unknown tools
 - The computer image runs Chromium and every command as a non-root user. Chromium is headed on a virtual display (Xvfb), because bot checks spot headless browsers
 - A filter in the computer resolves each host name, checks every resolved address, and connects only to the address it checked, so a second lookup cannot point elsewhere (DNS rebinding)
 - Every tool result passes one seam: `markUntrusted()`, a 20,000-character cap with a visible `[truncated: N characters]` note, and a per-tool timeout

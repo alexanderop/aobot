@@ -21,7 +21,10 @@ In:
 - The `AgentRuntime` service and its `api` provider: `effect/ai` `LanguageModel` with our own loop over
   `Chat`, a step cap, and the model provider (`anthropic`, `openai`, `openai-compat`) picked by `Config`
 - One hard-coded Bot with an empty `Toolkit`
-- Answer streamed as `ChatEvent`s defined with Effect Schema in `packages/domain`
+- Answer streamed as `ChatEvent`s defined with Effect Schema in `packages/domain`, using AG-UI's event names and
+  fields (`RUN_STARTED`, `TEXT_MESSAGE_CONTENT`, `RUN_FINISHED`, `RUN_ERROR`), over a streaming Effect RPC (`Chat.send`, `Chat.stop`)
+- `apps/web` in React with `@effect/atom-react`: an `AtomRpc` client, a conversation atom per id, and the
+  `useConversation(id)` hook ([architecture.md § The web app](../../architecture.md#the-web-app))
 - Messages stored in Postgres, so a reload keeps the conversation
 - The conversation view and composer from [design.md](../../design.md): tokens, bubbles, Bot name pill
 - A stall watchdog: no event from the model or CLI for `AGENT_STALL_TIMEOUT_MS` (60 s) cancels the turn and tells the person; the clock pauses while the reader is slow
@@ -56,7 +59,8 @@ None yet (E0-2).
 
 ## Tests
 
-- Tier 1: `ChatEvent` decoding rejects unknown event types.
+- Tier 1: `ChatEvent` decoding rejects unknown event types; each event round-trips against an AG-UI `@ag-ui/core` 1.0.2 example.
+- Tier 2: the conversation atom folds a scripted event stream into messages and `isRunning`, and `stop` ends it.
 - Tier 2: `AgentRuntime` (`api`) with a scripted `LanguageModel` layer emits text, then done, in order.
 - Tier 2: a model that keeps calling tools stops at the step cap with a clear error.
 - Tier 4: the demo.
