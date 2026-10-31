@@ -1,0 +1,34 @@
+:root {
+  color-scheme: dark;
+  --bg: #0f0f10;
+  --sidebar: #141415;
+  --bubble: #1f1f21;
+  --row-active: #232325;
+  --fg: #ececed;
+  --muted: #8a8a8f;
+  --accent: #3fa592;
+  --unread: #3b82f6;
+  --danger: #e5766b;
+  --radius-bubble: 18px;
+  --radius-row: 12px;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 var(--font);
+}
