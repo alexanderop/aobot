@@ -1,11 +1,13 @@
 import { MessageId } from "@aobot/domain";
 import { describe, expect, it } from "@effect/vitest";
-import { Duration, Effect, Fiber, Layer, Queue, Schema, Stream } from "effect";
+import { Duration, Effect, Fiber, Layer, Queue, Ref, Schema, Stream } from "effect";
 import { Tool, Toolkit } from "effect/ai";
 import { TestClock } from "effect/testing";
 import { AgentEvent, AgentRuntime, Stalled, StepLimit, type Turn } from "./agent-runtime.ts";
 import { layerApi } from "./api-runtime.ts";
+import { ModelStep } from "./testing/model-script.ts";
 import {
+  replay,
   type ScriptedAnswer,
   scriptedModel,
   textParts,
@@ -19,6 +21,14 @@ const Ping = Tool.make("ping", {
 });
 
 const PingToolkit = Toolkit.make(Ping);
+
+const Forecast = Tool.make("forecast", {
+  description: "Says the weather in a city",
+  parameters: Schema.Struct({ city: Schema.String, days: Schema.Number }),
+  success: Schema.String,
+});
+
+const ForecastToolkit = Toolkit.make(Forecast);
 
 const pingHandlers = PingToolkit.toLayer({ ping: () => Effect.succeed("pong") });
 
@@ -77,7 +87,7 @@ describe("AgentRuntime (api)", () => {
         runtimeWith((call) => {
           calls = call;
 
-          return Stream.fromIterable(toolCallParts("ping", call));
+          return Stream.fromIterable(toolCallParts([{ name: "ping", params: {} }], call));
         }),
       ),
     );
@@ -91,7 +101,9 @@ describe("AgentRuntime (api)", () => {
     }).pipe(
       Effect.provide(
         runtimeWith((call) =>
-          Stream.fromIterable(call < 3 ? toolCallParts("ping", call) : textParts(["pong"])),
+          Stream.fromIterable(
+            call < 3 ? toolCallParts([{ name: "ping", params: {} }], call) : textParts(["pong"]),
+          ),
         ),
       ),
     ),
@@ -152,5 +164,41 @@ describe("AgentRuntime (api)", () => {
         ),
       ),
     ),
+  );
+
+  it.effect(
+    "hands a scripted tool call's input to the tool, then streams the scripted answer",
+    () =>
+      Effect.gen(function* () {
+        const asked = yield* Ref.make<ReadonlyArray<typeof Forecast.parametersSchema.Type>>([]);
+
+        const handlers = ForecastToolkit.toLayer({
+          forecast: (input) =>
+            Ref.update(asked, (inputs) => [...inputs, input]).pipe(Effect.as("sunny")),
+        });
+
+        const script = [
+          ModelStep.CallTools({
+            calls: [{ name: "forecast", params: { city: "Vienna", days: 3 } }],
+          }),
+          ModelStep.Say({ words: ["Sunny", " in", " Vienna"] }),
+        ];
+
+        const events = yield* runTurn.pipe(
+          Effect.provide(
+            layerApi(ForecastToolkit, limits).pipe(
+              Layer.provide([scriptedModel(replay(script)), handlers]),
+            ),
+          ),
+        );
+
+        expect(yield* Ref.get(asked)).toEqual([{ city: "Vienna", days: 3 }]);
+        expect(events).toEqual([
+          AgentEvent.TextDelta({ text: "Sunny" }),
+          AgentEvent.TextDelta({ text: " in" }),
+          AgentEvent.TextDelta({ text: " Vienna" }),
+          AgentEvent.Done(),
+        ]);
+      }),
   );
 });
