@@ -13,6 +13,7 @@ E0-1 is done: chat with one Bot over `docker compose up`, proven by `vp run veri
 - Imports: tests use `vite-plus/test`, lint plugins use `vite-plus/lint/plugins` (enforced by `vite-plus/prefer-vite-plus-imports`).
 - `vp run test:contract` (from E1-1): computer provider contract suite. Needs Docker.
 - `vp run verify <ticket-id>` (from E0-1): the ticket's demo in a real browser with `agent-browser`. A slice is done only when this passes.
+- `vp run docs`: the docs site (Astro Starlight in `apps/docs`) on http://localhost:4321. It renders `docs/` in place; architecture is arc42 in `docs/arc42/`. Every docs page needs `title` and `description` front-matter. `vp run @aobot/docs#build` builds it. Outside a terminal, Astro 7 detaches the dev server; stop it with `astro dev stop` in `apps/docs`.
 - `docker compose up` (from E0-1): the server (SQLite file on a volume), `grafana/otel-lgtm` (Grafana on http://localhost:3300).
 
 ## Rules
@@ -26,7 +27,7 @@ E0-1 is done: chat with one Bot over `docker compose up`, proven by `vp run veri
 - When a ticket is done, set `status: done` in its front-matter and add its `verify` scenario in the same change.
 - The UI follows `docs/design.md`.
 - Every PR description follows the `pr` skill (`.claude/skills/pr/SKILL.md`): Summary, Evidence, Merge Danger.
-- The web app is React with `@effect/atom-react`: state in atoms, read through a few hooks. See `docs/architecture.md` § The web app.
+- The web app is React with `@effect/atom-react`: state in atoms, read through a few hooks. See `docs/arc42/05-building-block-view.md` § `apps/web`.
 
 ## Reference repositories
 
