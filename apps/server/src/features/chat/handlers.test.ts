@@ -3,6 +3,7 @@ import {
   ChatRpcs,
   ConversationBusy,
   ConversationId,
+  MessageAlreadySent,
   MessageId,
 } from "@aobot/domain";
 import { describe, expect, it } from "@effect/vitest";
@@ -277,4 +278,44 @@ describe("Chat RPCs", () => {
       ),
     ),
   );
+
+  it.effect("refuses a retried message id without starting another run", () => {
+    let runs = 0;
+
+    const agent = Layer.succeed(
+      AgentRuntime,
+      AgentRuntime.of({
+        run: () =>
+          Stream.fromEffect(Effect.sync(() => runs++)).pipe(
+            Stream.flatMap(() =>
+              Stream.make(AgentEvent.TextDelta({ text: "Ok" }), AgentEvent.Done()),
+            ),
+          ),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const client = yield* RpcTest.makeClient(ChatRpcs);
+
+      yield* client["Chat.send"](send("Say hi", "user-1")).pipe(Stream.runCollect);
+
+      const refused = yield* client["Chat.send"](send("Say hi", "user-1")).pipe(
+        Stream.runCollect,
+        Effect.flip,
+      );
+
+      expect(refused).toEqual(new MessageAlreadySent({ messageId: MessageId.make("user-1") }));
+      expect(runs).toBe(1);
+
+      const snapshot = yield* client["Chat.open"]({ conversationId });
+      expect(snapshot.isRunning).toBe(false);
+      expect(snapshot.messages.map(({ role, text }) => ({ role, text }))).toEqual([
+        { role: "user", text: "Say hi" },
+        { role: "assistant", text: "Ok" },
+      ]);
+
+      const next = yield* client["Chat.send"](send("Again", "user-2")).pipe(Stream.runCollect);
+      expect(next.at(-1)?.type).toBe("RUN_FINISHED");
+    }).pipe(Effect.provide(chatLayer.pipe(Layer.provide([agent, testDatabase]))));
+  });
 });

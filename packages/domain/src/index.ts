@@ -7,6 +7,7 @@ export {
   ConversationRef,
   ConversationSnapshot,
   Message,
+  MessageAlreadySent,
   SendMessage,
 } from "./chat-rpcs.ts";
 

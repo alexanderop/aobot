@@ -3,6 +3,7 @@ import {
   ConversationBusy,
   type ConversationId,
   type ConversationRef,
+  MessageAlreadySent,
   MessageId,
   RunId,
   type SendMessage,
@@ -69,11 +70,15 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
 
       yield* store.ensure(conversationId, assistant.id);
 
-      yield* store.append(conversationId, {
+      const isNew = yield* store.append(conversationId, {
         id: message.messageId,
         role: "user",
         text: message.text,
       });
+
+      if (!isNew) {
+        return yield* new MessageAlreadySent({ messageId: message.messageId });
+      }
 
       const history = yield* store.messages(conversationId);
 

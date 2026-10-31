@@ -10,8 +10,8 @@ export class ConversationStore extends Context.Service<
   {
     /** Record that the conversation exists. Does nothing when it already does. */
     readonly ensure: (conversationId: ConversationId, botId: BotId) => Effect.Effect<void>;
-    /** Append a message. A message id seen before is ignored, so a retried send is stored once. */
-    readonly append: (conversationId: ConversationId, message: Message) => Effect.Effect<void>;
+    /** Append a message. Returns false, storing nothing, when the message id was seen before. */
+    readonly append: (conversationId: ConversationId, message: Message) => Effect.Effect<boolean>;
     /** Every message, oldest first. Empty for a conversation never written to. */
     readonly messages: (conversationId: ConversationId) => Effect.Effect<ReadonlyArray<Message>>;
   }
@@ -37,11 +37,14 @@ export const conversationStoreLayer = Layer.effect(
       conversationId: ConversationId,
       message: Message,
     ) {
-      yield* sql`
+      const inserted = yield* sql`
         INSERT INTO messages (id, conversation_id, role, text)
         VALUES (${message.id}, ${conversationId}, ${message.role}, ${message.text})
         ON CONFLICT (id) DO NOTHING
+        RETURNING id
       `.pipe(Effect.orDie);
+
+      return inserted.length > 0;
     });
 
     const messages = Effect.fn("ConversationStore.messages")(function* (

@@ -49,13 +49,22 @@ export class ConversationBusy extends Schema.TaggedError<ConversationBusy>()("Co
   conversationId: ConversationId,
 }) {}
 
+/**
+The message id was already stored, so this send is a retry of one the server has seen. It is refused,
+not replayed: no run starts and nothing is stored. Open the conversation to see how the first send ended.
+*/
+export class MessageAlreadySent extends Schema.TaggedError<MessageAlreadySent>()(
+  "MessageAlreadySent",
+  { messageId: MessageId },
+) {}
+
 /** The chat API the server serves and the page calls. */
 export class ChatRpcs extends RpcGroup.make(
   Rpc.make("Chat.open", { payload: ConversationRef, success: ConversationSnapshot }),
   Rpc.make("Chat.send", {
     payload: SendMessage,
     success: ChatEvent,
-    error: ConversationBusy,
+    error: Schema.Union([ConversationBusy, MessageAlreadySent]),
     stream: true,
   }),
   Rpc.make("Chat.stop", { payload: ConversationRef }),
