@@ -26,15 +26,25 @@ function compose(...args: string[]): void {
 
 const { default: scenario } = await import(`./scenarios/${ticket}.ts`);
 
-compose("down", "--volumes");
-
-compose("up", "--build", "--detach", "--wait");
+// A failed cleanup step must not hide why the scenario failed, and must not skip the teardown.
+function bestEffort(step: string, run: () => void): void {
+  try {
+    run();
+  } catch (error) {
+    console.error(`verify cleanup: ${step} failed`, error);
+  }
+}
 
 try {
+  compose("down", "--volumes");
+  compose("up", "--build", "--detach", "--wait");
   await scenario(baseUrl);
   console.log(`verify ${ticket}: passed`);
 } finally {
-  browser("close");
-  compose("logs", "server", "--tail", "40");
-  compose("down", "--volumes");
+  try {
+    bestEffort("close the browser", () => browser("close"));
+    bestEffort("collect the server log", () => compose("logs", "server", "--tail", "40"));
+  } finally {
+    compose("down", "--volumes");
+  }
 }
