@@ -2,8 +2,9 @@ import { createServer } from "node:http";
 import { ChatRpcs } from "@aobot/domain";
 import { NodeFileSystem, NodeHttpServer, NodePath, NodeRuntime } from "@effect/platform-node";
 import { SqliteClient } from "@effect/sql-sqlite-node";
-import { Effect, FileSystem, Layer, Path } from "effect";
-import { FetchHttpClient, HttpRouter, HttpStaticServer } from "effect/http";
+import { Effect, FileSystem, Layer, Option, Path } from "effect";
+import { FetchHttpClient, HttpMiddleware, HttpRouter, HttpStaticServer } from "effect/http";
+import { Otlp } from "effect/observability";
 import { RpcSerialization, RpcServer } from "effect/rpc";
 import { checkModel, languageModelLayer, layerApi } from "../features/agent/public.ts";
 import { botToolkit } from "../features/bots/public.ts";
@@ -33,7 +34,9 @@ const server = Layer.unwrap(
       Layer.provide(FetchHttpClient.layer),
     );
 
-    const rpc = RpcServer.layer(ChatRpcs).pipe(
+    // Off because the handlers name their own spans and `Chat.turn` starts its own trace. The RPC span
+    // around each call would only add a second trace of one span.
+    const rpc = RpcServer.layer(ChatRpcs, { disableTracing: true }).pipe(
       Layer.provide(RpcServer.layerProtocolWebsocket({ path: "/rpc" })),
       Layer.provide(RpcSerialization.layerJson),
       Layer.provide(chatLayer),
@@ -48,9 +51,22 @@ const server = Layer.unwrap(
 
     const listener = NodeHttpServer.layer(createServer, { port: config.port });
 
+    const telemetry = Option.match(config.otlpEndpoint, {
+      onNone: () => Layer.empty,
+      onSome: (baseUrl) =>
+        Otlp.layerJson({ baseUrl, resource: { serviceName: "aobot-server" } }).pipe(
+          Layer.provide(FetchHttpClient.layer),
+        ),
+    });
+
+    // HTTP carries only the web app's files, the health check and the RPC socket. None of it is worth
+    // a trace, and the health check every two seconds would bury the turns.
+    const untracedHttp = Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true);
+
     return HttpRouter.serve(Layer.mergeAll(rpc, webApp)).pipe(
       Layer.merge(modelCheck),
       Layer.provide(listener),
+      Layer.provide([telemetry, untracedHttp]),
     );
   }),
 );
