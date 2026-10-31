@@ -2,7 +2,7 @@
 id: E0-2
 title: One chat turn is one trace
 epic: E0
-status: todo
+status: done
 depends_on: [E0-1]
 estimate: 1d
 ---

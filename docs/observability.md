@@ -4,13 +4,29 @@ OpenTelemetry for traces, logs and metrics, from the first ticket.
 
 ## What gets traced
 
-- **Server.** Effect exports OTLP itself (`effect/observability/Otlp`). Every service method written
-  with `Effect.fn("Domain.operation")` becomes a span, so a chat turn is one trace with a span per tool
-  call without extra code.
+- **Server.** Effect exports OTLP itself (`effect/observability/Otlp`) to `OTEL_EXPORTER_OTLP_ENDPOINT`.
+  Without that variable the server exports nothing, so it also runs without a collector.
 
   ```ts
-  Otlp.layer({ baseUrl: otelUrl, resource: { serviceName: "aobot-server" } });
+  Otlp.layerJson({ baseUrl: otlpEndpoint, resource: { serviceName: "aobot-server" } });
   ```
+
+  The `Chat.send` handler opens a root span, `Chat.turn`, around the whole answer stream, so one chat
+  turn is one trace. Every service method written with `Effect.fn("Domain.operation")` is a span inside
+  it, without extra code:
+
+  ```text
+  Chat.turn
+  ├─ Chat.send                  (storing the message: ConversationStore.* and their sqlite spans)
+  ├─ AgentRuntime.run
+  │  └─ Chat.streamText
+  │     └─ LanguageModel.streamText   (one per model call, with its HTTP POST)
+  └─ ConversationStore.append   (storing the reply)
+  ```
+
+  RPC and HTTP request spans are off. RPC spans would add a second trace per call, and HTTP carries only
+  the web app's files, the health check and the RPC socket. Logs written inside a span carry its
+  `trace_id`.
 
 - **Computer.** The server sends a `traceparent` header with every request, so browser actions appear
   inside the same trace.
