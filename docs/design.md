@@ -21,24 +21,15 @@ screenshot.
 
 ## Layout
 
-```
-┌──────────────────────┬──────────────────────────────────────────────────────────┐
-│          🔍  ＋      │                   ( ● Fitness Coach )                    │
-│  ● Chief  ● QS   ● … │                       today 3:14 PM                      │
-│  ● To-Do  ● Lesen ●  │                       ┌─────────────────────────────────┐│
-│                      │                       │ your message (accent bubble)    ││
-│  fitness             │                       └─────────────────────────────────┘│
-│  ● Fitness Coach     │ ┌───────────────────────────────┐                        │
-│    last message…     │ │ Bot message (grey bubble)     │                        │
-│  ● Essensplaner      │ └───────────────────────────────┘                        │
-│  dev stuff           │ ┌───────────────────────────────┐                        │
-│  ● alexop.dev      • │ │ Shall I delete the 18:00 slot? │                        │
-│  news                │ │ [A] Yes, update the calendar  │                        │
-│  ● Filme & Serien  • │ └───────────────────────────────┘                        │
-│                      │ ┌─────────────────────────────────────────────────── 🎙 ◉┐│
-│ (me) Alexander    ⊞  │ │ ＋  Message Fitness Coach                              ││
-└──────────────────────┴──────────────────────────────────────────────────────────┘
-```
+Two columns. A fixed-width sidebar of Bots on the left (about 300px), the open conversation on the right
+(content at most 860px wide, centred). The conversation is the sidebar's selected row.
+
+On the docs site the screens below are the real components: the built ones render from `apps/web`, the
+planned ones live in `apps/docs/src/features/design/planned/` until their ticket moves them into
+`apps/web`. In this file `[caption](screen:<name>)` marks where a screen goes; the name is a key in
+`apps/docs/src/features/design/screens.ts`.
+
+[The planned layout: the sidebar beside a conversation with an approval card.](screen:layout)
 
 ### Sidebar
 
@@ -49,6 +40,8 @@ screenshot.
   avatar, name, a one-line preview of the last message, an unread dot on the right.
 - **Selected row:** a slightly lighter rounded background.
 - **Bottom:** your photo and name, and an apps button.
+
+[The sidebar: pinned Bots, groups, the selected row and unread dots.](screen:sidebar)
 
 ### Conversation
 
@@ -61,13 +54,43 @@ screenshot.
   with a lettered key (`A`, `B`) in an accent square. Choosing one sends it as your reply and writes an
   audit row.
 - **Composer:** a full-width rounded bar at the bottom: `＋` for attachments, placeholder
-  "Message <Bot name>", a microphone button, and a round accent voice button.
+  `Message <Bot name>`, a microphone button, and a round accent voice button. E0-1 builds the text-only
+  version: the input and one round button, send or, while the Bot answers, stop.
+- **Errors:** one line above the composer, in the danger colour, never a modal. The text says what to do next.
+
+[A conversation: your bubble on the right, the Bot's on the left, two Bot bubbles stacked, a line break inside one.](screen:conversation)
+
+[While the Bot answers: its text so far, and the composer shows stop in place of send.](screen:conversation-running)
+
+[Before the Bot has loaded: the pill says "Connecting…" and the composer is off.](screen:connecting)
+
+[The approval card inside the conversation: the question in muted bold, answers with lettered accent keys.](screen:approval-card)
+
+**Composer states.**
+
+[Idle: the placeholder names the Bot. Type to enable send.](screen:composer-idle)
+
+[Focused: an accent outline.](screen:composer-focused)
+
+[The Bot is answering: stop replaces send.](screen:composer-running)
+
+[Disabled: no Bot loaded yet, so nothing can be sent.](screen:composer-disabled)
+
+**Error states.**
+
+[The socket dropped or the server is down.](screen:error-connection)
+
+[A second message while the Bot is still answering is refused and its bubble taken back.](screen:error-busy)
+
+[The model sent nothing for 60 seconds, so the turn was stopped.](screen:error-stalled)
 
 ### Bot avatars
 
 Each Bot gets a simple, friendly character: a soft blob shape in one solid colour with two eyes. Colour
 and shape tell Bots apart at a glance. Make our own set (Codex generates the images); do not copy the
 characters from the reference.
+
+[The planned set: eight characters, each one solid colour and a pair of eyes.](screen:avatars)
 
 ## Tokens (starting point)
 

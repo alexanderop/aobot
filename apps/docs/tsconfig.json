@@ -1,8 +1,10 @@
 {
   "extends": "../../tsconfig.json",
-  "include": ["src/**/*.ts", "*.ts", ".astro/types.d.ts"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "*.ts", ".astro/types.d.ts"],
   "exclude": ["node_modules", "dist"],
   "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
     "types": ["node", "astro/client"]
   }
 }
