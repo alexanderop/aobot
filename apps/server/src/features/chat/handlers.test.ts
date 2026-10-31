@@ -100,6 +100,29 @@ describe("Chat RPCs", () => {
     ),
   );
 
+  it.effect("accepts a new send once the previous turn has ended", () =>
+    Effect.gen(function* () {
+      const client = yield* RpcTest.makeClient(ChatRpcs);
+
+      yield* client["Chat.send"](send("First", "user-1")).pipe(Stream.runCollect);
+      const events = yield* client["Chat.send"](send("Second", "user-2")).pipe(Stream.runCollect);
+
+      expect(events.at(-1)?.type).toBe("RUN_FINISHED");
+
+      const snapshot = yield* client["Chat.open"]({ conversationId });
+      expect(snapshot.messages.map(({ role, text }) => ({ role, text }))).toEqual([
+        { role: "user", text: "First" },
+        { role: "assistant", text: "Ok" },
+        { role: "user", text: "Second" },
+        { role: "assistant", text: "Ok" },
+      ]);
+    }).pipe(
+      Effect.provide(
+        chatWith(Stream.make(AgentEvent.TextDelta({ text: "Ok" }), AgentEvent.Done())),
+      ),
+    ),
+  );
+
   it.effect("tells the person when the model went quiet", () =>
     Effect.gen(function* () {
       const client = yield* RpcTest.makeClient(ChatRpcs);

@@ -8,7 +8,7 @@ const builtWebApp = fileURLToPath(new URL("../../../web/dist", import.meta.url))
 export const serverConfig = Config.all({
   port: Config.Port("PORT").pipe(Config.withDefault(3000)),
   webDistDir: Config.String("WEB_DIST_DIR").pipe(Config.withDefault(builtWebApp)),
-  databaseUrl: Config.Redacted("DATABASE_URL"),
+  databasePath: Config.String("DATABASE_PATH").pipe(Config.withDefault("data/aobot.db")),
   model: Config.all({
     provider: Config.schema(ModelProvider, "MODEL_PROVIDER"),
     name: Config.String("MODEL_NAME"),

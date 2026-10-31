@@ -1,5 +1,6 @@
 import {
   ChatRpcs,
+  ConversationBusy,
   type ConversationId,
   type ConversationRef,
   MessageId,
@@ -10,28 +11,29 @@ import { Deferred, Effect, MutableHashMap, Option, Ref, Stream } from "effect";
 import { AgentEvent, AgentRuntime } from "../agent/public.ts";
 import { assistant, botSummary } from "../bots/public.ts";
 import { ConversationStore } from "./conversation-store.ts";
-import { holdLease, RunLease } from "./run-lease.ts";
 import { TurnStopped, turnEvents } from "./turn.ts";
 
 /** The chat API: open a conversation, send a message and watch the answer stream, stop a turn. */
 export const chatHandlersLayer = ChatRpcs.toLayer(
   Effect.gen(function* () {
     const store = yield* ConversationStore;
-    const lease = yield* RunLease;
     const agent = yield* AgentRuntime;
 
-    // Stop reaches runs in this process only; the lease is what keeps other processes out.
-    const stopSignals = MutableHashMap.empty<ConversationId, Deferred.Deferred<void>>();
+    // One server process owns every run, so this map is the whole "one run per conversation" rule:
+    // an entry exists exactly while a turn runs, and a restart starts with none. Its value is that
+    // turn's stop signal.
+    const runs = MutableHashMap.empty<ConversationId, Deferred.Deferred<void>>();
 
     const open = Effect.fn("Chat.open")(function* ({
       conversationId,
     }: typeof ConversationRef.Type) {
-      const [messages, isRunning] = yield* Effect.all(
-        [store.messages(conversationId), lease.isHeld(conversationId)],
-        { concurrency: 2 },
-      );
+      const messages = yield* store.messages(conversationId);
 
-      return { bot: botSummary(assistant), messages, isRunning };
+      return {
+        bot: botSummary(assistant),
+        messages,
+        isRunning: MutableHashMap.has(runs, conversationId),
+      };
     });
 
     const startTurn = Effect.fn("Chat.send")(function* (message: typeof SendMessage.Type) {
@@ -43,21 +45,25 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
         messageId: MessageId.make(crypto.randomUUID()),
       };
 
+      const stop = yield* Deferred.make<void>();
+
+      // The check and the insert run in one synchronous step, so two sends cannot both pass it.
+      yield* Effect.acquireRelease(
+        Effect.suspend(() =>
+          MutableHashMap.has(runs, conversationId)
+            ? Effect.fail(new ConversationBusy({ conversationId }))
+            : Effect.sync(() => MutableHashMap.set(runs, conversationId, stop)),
+        ),
+        () => Effect.sync(() => MutableHashMap.remove(runs, conversationId)),
+      );
+
       yield* store.ensure(conversationId, assistant.id);
-      yield* holdLease(conversationId, ids.runId).pipe(Effect.provideService(RunLease, lease));
       yield* store.append(conversationId, {
         id: message.messageId,
         role: "user",
         text: message.text,
       });
       const history = yield* store.messages(conversationId);
-
-      const stop = yield* Deferred.make<void>();
-
-      yield* Effect.acquireRelease(
-        Effect.sync(() => MutableHashMap.set(stopSignals, conversationId, stop)),
-        () => Effect.sync(() => MutableHashMap.remove(stopSignals, conversationId)),
-      );
 
       const written = yield* Ref.make("");
 
@@ -84,7 +90,7 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
     const stop = Effect.fn("Chat.stop")(function* ({
       conversationId,
     }: typeof ConversationRef.Type) {
-      yield* Option.match(MutableHashMap.get(stopSignals, conversationId), {
+      yield* Option.match(MutableHashMap.get(runs, conversationId), {
         onNone: () => Effect.void,
         onSome: (signal) => Deferred.succeed(signal, undefined),
       });

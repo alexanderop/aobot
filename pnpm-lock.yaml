@@ -64,16 +64,13 @@ importers:
       '@effect/platform-node':
         specifier: 4.1.0
         version: 4.1.0(effect@4.1.0)(redis@6.3.1)
-      '@effect/sql-pg':
+      '@effect/sql-sqlite-node':
         specifier: 4.1.0
         version: 4.1.0(effect@4.1.0)
       effect:
         specifier: 4.1.0
         version: 4.1.0
     devDependencies:
-      '@effect/sql-pglite':
-        specifier: 4.1.0
-        version: 4.1.0(effect@4.1.0)
       '@effect/vitest':
         specifier: 4.1.0
         version: 4.1.0(effect@4.1.0)(vitest@5.0.5)
@@ -172,13 +169,8 @@ packages:
       effect: ^4.1.0
       redis: '>=5.0.0 <7.0.0'
 
-  '@effect/sql-pg@4.1.0':
-    resolution: {integrity: sha512-/Q1M2PEuk8eSLEmgjfvix1/WZTuRBxu75ZENbKkIh2J3c50dQb8NMFOGMPocMFlPFh5k4WUOUKZQcgXzBljTFA==}
-    peerDependencies:
-      effect: ^4.1.0
-
-  '@effect/sql-pglite@4.1.0':
-    resolution: {integrity: sha512-A96DVuabAR+reNjltGr5OoE06sSXVp7Uth4wHtcffv0vsIyODDBbwkdyAA7Jtgdq8rYYdnKyjrtKd8iPVZcJzw==}
+  '@effect/sql-sqlite-node@4.1.0':
+    resolution: {integrity: sha512-Z8PxzlVlfp5JCGYAg9CwehHkvLEwMf/NF7htdDkKy65G4vE78ARkDMUSyeIzZ1zpadMxbbCEUJ2FM9M5/0Nxgg==}
     peerDependencies:
       effect: ^4.1.0
 
@@ -187,9 +179,6 @@ packages:
     peerDependencies:
       effect: ^4.1.0
       vitest: 5.0.5
-
-  '@electric-sql/pglite@0.5.13':
-    resolution: {integrity: sha512-4rZuxK1k07w6sSpJzjMri0B9+HuXuC7V9pxVB51pR0T9KPqXg6TD0mdaEwBA9rkcL4jdht4tGDf/wYzAiGhT7g==}
 
   '@emnapi/core@1.11.2':
     resolution: {integrity: sha512-TC8MkTuZUtcTSiFeuC0ksCh9QIJ5+F21MvZ4Wn4ORfYaFJ/0dsiudv5tVkejgwZlwQ39jL9WWDe2lz8x0WglOA==}
@@ -1531,21 +1520,14 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@effect/sql-pg@4.1.0(effect@4.1.0)':
+  '@effect/sql-sqlite-node@4.1.0(effect@4.1.0)':
     dependencies:
-      effect: 4.1.0
-
-  '@effect/sql-pglite@4.1.0(effect@4.1.0)':
-    dependencies:
-      '@electric-sql/pglite': 0.5.13
       effect: 4.1.0
 
   '@effect/vitest@4.1.0(effect@4.1.0)(vitest@5.0.5)':
     dependencies:
       effect: 4.1.0
       vitest: 5.0.5(@types/node@22.20.5)(@vitest/browser-preview@5.0.5)(@vitest/ui@5.0.5)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@22.20.5)(jiti@2.7.0)(yaml@2.9.1))(jiti@2.7.0)(yaml@2.9.1)
-
-  '@electric-sql/pglite@0.5.13': {}
 
   '@emnapi/core@1.11.2':
     dependencies:

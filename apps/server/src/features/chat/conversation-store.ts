@@ -17,7 +17,7 @@ export class ConversationStore extends Context.Service<
   }
 >()("aobot/chat/ConversationStore") {}
 
-/** {@link ConversationStore} on the app's Postgres. */
+/** {@link ConversationStore} on the app's SQLite database. */
 export const conversationStoreLayer = Layer.effect(
   ConversationStore,
   Effect.gen(function* () {

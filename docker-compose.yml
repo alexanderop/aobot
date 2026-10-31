@@ -1,35 +1,18 @@
 name: aobot
 
 services:
-  postgres:
-    image: postgres:18-alpine
-    environment:
-      POSTGRES_USER: aobot
-      POSTGRES_PASSWORD: aobot
-      POSTGRES_DB: aobot
-    volumes:
-      - postgres:/var/lib/postgresql
-    networks: [data]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U aobot -d aobot"]
-      interval: 2s
-      timeout: 3s
-      retries: 30
-
   server:
     build: .
     env_file:
       - path: .env
         required: false
     environment:
-      DATABASE_URL: postgres://aobot:aobot@postgres:5432/aobot
+      DATABASE_PATH: /data/aobot.db
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
     ports:
       - "3000:3000"
-    networks: [data, default]
-    depends_on:
-      postgres:
-        condition: service_healthy
+    volumes:
+      - data:/data
     healthcheck:
       test:
         [
@@ -48,8 +31,4 @@ services:
       - "3300:3000"
 
 volumes:
-  postgres:
-
-networks:
   data:
-  default:
