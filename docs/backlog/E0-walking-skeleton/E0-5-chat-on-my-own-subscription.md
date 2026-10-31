@@ -2,7 +2,7 @@
 id: E0-5
 title: Chat on my own subscription
 epic: E0
-status: todo
+status: done
 depends_on: [E0-3]
 estimate: 3d
 ---
