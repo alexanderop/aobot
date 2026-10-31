@@ -19,6 +19,7 @@ In:
 - Persistent browser profile and `/workspace` (EFS, or decided in this ticket)
 - Chromium launched with `--disable-dev-shm-usage` (Fargate has no shared-memory setting)
 - Passes the full contract suite
+- The task definition matches E3-3's hardening: non-root user, dropped capabilities, memory and pids limits
 
 Out:
 

@@ -19,6 +19,7 @@ In:
 - Server address configurable (local or AWS)
 - Sign-in through the system browser; token kept with Electron `safeStorage`
 - Signed builds are a later ticket
+- Sign-in hand-off: PKCE, a `state` value, a redirect only to `127.0.0.1` on a fixed path, and a single-use code that expires in 120 seconds
 
 Out:
 
@@ -45,7 +46,9 @@ App version as a resource attribute on traces.
 ## Tests
 
 - Tier 4: launch the app headless and complete the demo.
+- Tier 2: a reused or expired code, a wrong `state` and a non-loopback redirect are all refused.
 
 ## Reference
 
-t3code `apps/desktop` is an Effect + Electron reference.
+- t3code `apps/desktop` is an Effect + Electron reference.
+- OpenBot `server/src/auth/native-browser.ts`.

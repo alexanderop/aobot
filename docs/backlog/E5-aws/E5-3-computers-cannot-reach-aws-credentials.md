@@ -19,6 +19,8 @@ In:
 - Block `169.254.169.254` and `169.254.170.2` from the computer
 - Egress through a proxy with an allowlist per Bot
 - Security groups: only the server reaches computers
+- Until a Bot's network policy has reached its computer, every connection is refused
+- The same resolved-address filter as E1-1, so ECS and Docker refuse the same addresses
 
 Out:
 

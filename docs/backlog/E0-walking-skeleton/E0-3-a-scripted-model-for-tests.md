@@ -15,9 +15,12 @@ estimate: 1d
 
 In:
 
-- A mock model server that speaks the Anthropic Messages API and replays scripted turns, including `tool_use` blocks
-- Tests point the Agent SDK at it with `ANTHROPIC_BASE_URL`
-- One nightly smoke test against the real model
+- Tier 2: a scripted `LanguageModel` layer that replays turns, including tool calls. No HTTP
+- Tiers 3 and 4: a mock model server that replays the same scripts over HTTP, in the API shapes our
+  runtimes need: Anthropic Messages (Claude Code over ACP), OpenAI Chat Completions and Responses (Codex,
+  `openai`, `openai-compat`)
+- `api` points at it through the provider's base URL in `Config`; each ACP CLI through its own base URL variable
+- One nightly smoke test against a real model
 
 Out:
 
@@ -42,8 +45,9 @@ None.
 
 ## Tests
 
-- Tier 2: a scripted `tool_use` turn reaches the tool handler with the scripted input.
+- Tier 2: a scripted tool call reaches the `Toolkit` handler with the scripted input.
+- Tier 3: the same script gives the same tool call through the mock server in each API shape.
 
 ## Reference
 
-OpenBot uses `@copilotkit/aimock`. Check whether it covers the Anthropic Messages API before writing our own.
+OpenBot uses `@copilotkit/aimock`. Check which API shapes it covers before writing our own.

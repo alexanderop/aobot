@@ -17,6 +17,9 @@ In:
 
 - `run` tool: `bash -c` in `/workspace`, 30-second timeout, output tails capped
 - Commands get PATH, locale and proxy variables only, never the computer's own environment
+- Command output reaches the model as untrusted data
+- Commands run as the image's non-root user
+- A Stop that arrives before the command has started is still honoured
 
 Out:
 
@@ -42,8 +45,11 @@ gateway · computer
 ## Tests
 
 - Tier 3: timeout kills the command; `env` output does not contain `COMPUTER_TOKEN`.
+- Tier 4: `pg_isready -h postgres` and `curl -m 3 http://server:3000` from the Bot's shell both fail.
 - Tier 4: the demo.
+- Tier 3: Stop sent before spawn means the command never runs.
 
 ## Reference
 
-OpenBot `agent-computer/src/shell.ts`.
+- OpenBot `agent-computer/src/shell.ts`.
+- OpenBot #733 (a Stop that already landed).

@@ -2,7 +2,7 @@
 
 Move from laptop to our AWS account by swapping configuration and providers. Code paths stay the same.
 
-**Epic demo:** The desktop app talks to aobot in AWS, Bots run on Bedrock, each person's computer is an ECS task, and none can reach AWS credentials.
+**Epic demo:** The desktop app talks to aobot in AWS, Bots run on the chosen model provider, each person's computer is an ECS task, and none can reach AWS credentials.
 
 | Ticket                                                  | Title                                     | Depends on | Estimate |
 | ------------------------------------------------------- | ----------------------------------------- | ---------- | -------- |

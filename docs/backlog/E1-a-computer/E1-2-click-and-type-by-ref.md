@@ -18,6 +18,7 @@ In:
 - `click` and `type` tools using the `aria-ref=<ref>` locator
 - Refs only valid for the latest snapshot; a stale ref returns a clear error telling the Bot to snapshot again
 - Every action returns a fresh snapshot
+- The latest snapshot per Bot is stored server-side in Postgres, so any replica can resolve a ref. The gateway resolves a ref to its role and name before rules run and refuses a ref it cannot resolve
 
 Out:
 
@@ -45,6 +46,7 @@ One `Gateway.act` span per action.
 
 - Tier 3: click and type against a local form fixture; a stale ref fails with the documented error.
 - Tier 4: the demo.
+- Tier 2: a click on a ref missing from the stored snapshot is refused before any rule runs.
 
 ## Reference
 

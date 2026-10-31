@@ -14,9 +14,9 @@ OpenTelemetry for traces, logs and metrics, from the first ticket.
 
 - **Computer.** The server sends a `traceparent` header with every request, so browser actions appear
   inside the same trace.
-- **Agent.** Claude Code, which the Agent SDK runs, can export its own OpenTelemetry metrics and events
-  (`CLAUDE_CODE_ENABLE_TELEMETRY=1`). Confirm the current variables in the Claude Code docs before
-  relying on them.
+- **Agent.** With `api`, `effect/ai` writes a span per model call with the GenAI attributes (model,
+  tokens) inside `Chat.turn`, so cost per turn is in the trace. With `acp`, the CLI runs outside our
+  process: we record one `AgentRuntime.turn` span around it, and token counts only if the CLI reports them.
 
 ## Audit rows link to traces
 

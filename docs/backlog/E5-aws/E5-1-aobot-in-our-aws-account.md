@@ -19,8 +19,13 @@ In:
 - Server on ECS Fargate behind an ALB with HTTPS
 - RDS Postgres with pgvector, private subnets
 - Secrets in AWS Secrets Manager, read through `Config`
-- Model on Bedrock through the task's IAM role
+- `AGENT_RUNTIME=api` only; `acp` is refused here
+- Model provider chosen in this ticket. `effect/ai` has no Bedrock provider: either a provider's API key in
+  Secrets Manager, Bedrock's OpenAI-compatible endpoint through `openai-compat` (check it works with the
+  task's IAM role), or a small Bedrock provider of our own
+- Migrations run as a release step before the new tasks start, never at server start-up
 - Telemetry to the AWS OpenTelemetry collector
+- `sslmode` on `DATABASE_URL` turns on TLS; an unknown mode stops start-up
 
 Out:
 
@@ -47,7 +52,9 @@ Same spans as local, in the AWS backend.
 ## Tests
 
 - Tier 4: the E0-1 demo against the AWS URL, run from CI after deploy.
+- Tier 2: `sslmode=require` gives a TLS connection; `sslmode=bogus` fails at boot.
 
 ## Reference
 
-OpenBot `docs/deployment.md` § AWS.
+- OpenBot `docs/deployment.md` § AWS.
+- OpenBot #746 (`sslmode` sent to Postgres as a parameter, unencrypted on RDS).

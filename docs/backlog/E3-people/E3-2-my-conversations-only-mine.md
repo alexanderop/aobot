@@ -16,7 +16,8 @@ estimate: 2d
 In:
 
 - Conversations list per person
-- Continue a conversation with the Agent SDK's `resume` plus our stored messages
+- Continue a conversation from our stored messages (`effect/ai` `Chat` rebuilt from Postgres; for `acp`,
+  `session/load` where the CLI supports it, else a fresh session primed with the history)
 - Every conversation route checks ownership
 - Last-message previews and unread dots in the sidebar
 
