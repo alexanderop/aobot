@@ -23,7 +23,7 @@ In:
 - A second `failed` row when an allowed call fails on the computer
 - Snapshots reach the model wrapped as untrusted data (decision 10), through one `markUntrusted()` used by
   every tool result
-- Compose networks: Postgres on `data` with the server only; the computer on another network
+- The SQLite file sits on a volume only the server mounts; the computer is on its own network
 - The computer refuses navigation to non-`http(s)` schemes and to private, loopback and metadata
   addresses. `COMPUTER_ALLOW_PRIVATE_HOSTS` for local fixtures; the server refuses to start with it in production
 - `traceparent` sent to the computer

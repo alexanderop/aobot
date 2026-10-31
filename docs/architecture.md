@@ -28,7 +28,7 @@ three things:
 | `apps/web`          | Show the conversation and the live screen, let a person take the mouse | React + `@effect/atom-react` |
 | `apps/desktop`      | Wrap `apps/web`, keep the sign-in token safe, send notifications       | Electron                     |
 | `apps/server`       | Know Bots and people, run agent turns, stream answers                  | Effect on Node               |
-| Gateway (in server) | Decide if a tool call may happen, record it, then forward it           | Effect service + Postgres    |
+| Gateway (in server) | Decide if a tool call may happen, record it, then forward it           | Effect service + SQLite      |
 | `apps/computer`     | Actually do it: browse, click, type, run commands                      | Node + Playwright in Docker  |
 | `packages/domain`   | Schemas shared by all of the above: Bot, ToolCall, AuditRow, ChatEvent | Effect Schema                |
 
@@ -100,20 +100,20 @@ waiting.
 
 ## Decisions
 
-| #   | Decision                                                                                           | Why                                                                                                                                                                                                                                                                     |
-| --- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **No CopilotKit Intelligence.** Threads, messages and audit live in our Postgres                   | No external licence, no data outside our account                                                                                                                                                                                                                        |
-| 2   | **The think-act loop is a provider**: `api` (effect/ai) or `acp` (your own CLI)                    | Any model in the cloud, your own subscription on a laptop, and in both the gateway is the only way to act. Not the Claude Agent SDK: its built-in tools run inside the server, beside `DATABASE_URL`                                                                    |
-| 3   | **Effect v4** on the server                                                                        | Typed errors make every gateway path visible, layers make providers swappable, `Effect.fn` gives tracing for free                                                                                                                                                       |
-| 4   | **Web first, Electron as a wrapper**                                                               | The agents run in the cloud, so the desktop app adds safe token storage and notifications, not core logic                                                                                                                                                               |
-| 5   | **The page as text, not screenshots**                                                              | `ariaSnapshot({ mode: "ai" })` with refs is cheap and needs no vision model. Snapshots are capped at 12,000 characters                                                                                                                                                  |
-| 6   | **A computer is only ever "a URL and a token"**, or for a Mac, a connection the desktop app opened | The server never uses `docker exec` or shared files, so where a computer runs can change freely. A laptop is behind NAT, so it dials out                                                                                                                                |
-| 7   | **Fail closed**                                                                                    | A missing rule permits nothing, a crashing rule denies, a missing grant is refused before any rule runs                                                                                                                                                                 |
-| 8   | **Never log what a Bot typed**                                                                     | The audit row keeps `"[14 chars]"`, not the value. It may be a password                                                                                                                                                                                                 |
-| 9   | **OpenTelemetry from day one**                                                                     | One trace per chat turn, with the `trace_id` stored on every audit row                                                                                                                                                                                                  |
-| 10  | **Outside content is untrusted data**                                                              | Pages, command output and files reach the model inside one envelope that says they carry no authority. A page can say "ignore your instructions"; the envelope is what tells the model that is not its person speaking. A closing tag inside the content is neutralised |
-| 11  | **Every audit row names its initiator**                                                            | `initiator_kind` is `person` or `deployment` now, `routine` and `handoff` later. `actor.id` says on whose authority; only this says whether anybody was watching                                                                                                        |
-| 12  | **AG-UI events over Effect RPC, read through atoms**                                               | One `ChatEvent` Schema in `packages/domain` with AG-UI's event names and fields, streamed by an Effect RPC and decoded on both sides. The web reads it through `effect/reactivity` atoms in a few hooks, shaped like CopilotKit's. No CopilotKit dependency             |
+| #   | Decision                                                                                              | Why                                                                                                                                                                                                                                                                     |
+| --- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **No CopilotKit Intelligence.** Threads, messages and audit live in our own database (SQLite for now) | No external licence, no data outside our account                                                                                                                                                                                                                        |
+| 2   | **The think-act loop is a provider**: `api` (effect/ai) or `acp` (your own CLI)                       | Any model in the cloud, your own subscription on a laptop, and in both the gateway is the only way to act. Not the Claude Agent SDK: its built-in tools run inside the server, beside the database file                                                                 |
+| 3   | **Effect v4** on the server                                                                           | Typed errors make every gateway path visible, layers make providers swappable, `Effect.fn` gives tracing for free                                                                                                                                                       |
+| 4   | **Web first, Electron as a wrapper**                                                                  | The agents run in the cloud, so the desktop app adds safe token storage and notifications, not core logic                                                                                                                                                               |
+| 5   | **The page as text, not screenshots**                                                                 | `ariaSnapshot({ mode: "ai" })` with refs is cheap and needs no vision model. Snapshots are capped at 12,000 characters                                                                                                                                                  |
+| 6   | **A computer is only ever "a URL and a token"**, or for a Mac, a connection the desktop app opened    | The server never uses `docker exec` or shared files, so where a computer runs can change freely. A laptop is behind NAT, so it dials out                                                                                                                                |
+| 7   | **Fail closed**                                                                                       | A missing rule permits nothing, a crashing rule denies, a missing grant is refused before any rule runs                                                                                                                                                                 |
+| 8   | **Never log what a Bot typed**                                                                        | The audit row keeps `"[14 chars]"`, not the value. It may be a password                                                                                                                                                                                                 |
+| 9   | **OpenTelemetry from day one**                                                                        | One trace per chat turn, with the `trace_id` stored on every audit row                                                                                                                                                                                                  |
+| 10  | **Outside content is untrusted data**                                                                 | Pages, command output and files reach the model inside one envelope that says they carry no authority. A page can say "ignore your instructions"; the envelope is what tells the model that is not its person speaking. A closing tag inside the content is neutralised |
+| 11  | **Every audit row names its initiator**                                                               | `initiator_kind` is `person` or `deployment` now, `routine` and `handoff` later. `actor.id` says on whose authority; only this says whether anybody was watching                                                                                                        |
+| 12  | **AG-UI events over Effect RPC, read through atoms**                                                  | One `ChatEvent` Schema in `packages/domain` with AG-UI's event names and fields, streamed by an Effect RPC and decoded on both sides. The web reads it through `effect/reactivity` atoms in a few hooks, shaped like CopilotKit's. No CopilotKit dependency             |
 
 ## The web app
 
@@ -148,18 +148,18 @@ could still connect through a thin adapter later.
 
 Two switches decide where things run. Code never checks which one is active.
 
-| Switch                        | Local (now)                                                       | AWS (later)                                                      |
-| ----------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `AGENT_RUNTIME`               | `acp` on your own subscription, or `api` with a key               | `api` only                                                       |
-| `COMPUTER_PROVIDER`           | `docker`: one container per person, a named volume for its logins | `ecs` (RunTask in a private subnet), later `k8s` (agent-sandbox) |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | the `grafana/otel-lgtm` container                                 | the AWS OpenTelemetry collector (ADOT) or Grafana Cloud          |
-| `DATABASE_URL`                | Postgres in Docker Compose                                        | RDS Postgres with pgvector                                       |
-| Secrets                       | `.env` through Effect `Config`                                    | AWS Secrets Manager                                              |
-| Model                         | Whatever your CLI uses, or any `effect/ai` provider with a key    | Any `effect/ai` provider; Bedrock is decided in E5-1             |
+| Switch                           | Local (now)                                                       | AWS (later)                                                      |
+| -------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `AGENT_RUNTIME`                  | `acp` on your own subscription, or `api` with a key               | `api` only                                                       |
+| `COMPUTER_PROVIDER`              | `docker`: one container per person, a named volume for its logins | `ecs` (RunTask in a private subnet), later `k8s` (agent-sandbox) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`    | the `grafana/otel-lgtm` container                                 | the AWS OpenTelemetry collector (ADOT) or Grafana Cloud          |
+| `DATABASE_PATH` / `DATABASE_URL` | a SQLite file on a Compose volume (`DATABASE_PATH`)               | RDS Postgres with pgvector (`DATABASE_URL`)                      |
+| Secrets                          | `.env` through Effect `Config`                                    | AWS Secrets Manager                                              |
+| Model                            | Whatever your CLI uses, or any `effect/ai` provider with a key    | Any `effect/ai` provider; Bedrock is decided in E5-1             |
 
 Rules that keep the move cheap:
 
-1. Postgres locally, never SQLite, so there is no database migration later.
+1. SQLite locally, Postgres on AWS. aobot is a learning project and a proof of concept with one server process, so one file beats a database container. Moving to the cloud means switching to Postgres then (E5-1), and the in-memory one-run-per-conversation guard becomes a shared lock the day there is a second replica. Keep SQL inside the feature stores so that switch stays in one place.
 2. Settings and secrets only through Effect `Config`, never `process.env` in application code.
 3. Computers never publish ports. Only the server's network can reach them.
 4. The images Compose runs are the images AWS runs.
@@ -181,8 +181,8 @@ export interface Interface {
 A Bot has a shell and a browser, and both reach whatever the computer's network reaches. These hold
 locally as much as on AWS:
 
-- **The database is not on the computers' network.** Compose puts Postgres on a `data` network with only
-  the server and migrations; computers sit on another. A Bot's `psql` finds nothing to connect to.
+- **The database is not on the computers.** The SQLite file lives on a volume only the server mounts, so a
+  Bot's shell has no file to read or write.
 - **The browser refuses private and metadata addresses.** `169.254.0.0/16`, `fe80::/10`, loopback and
   private ranges are refused, so a Bot cannot browse to internal services. `COMPUTER_ALLOW_PRIVATE_HOSTS`
   exists for local fixtures and stops the server from starting in production.
