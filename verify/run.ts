@@ -5,7 +5,7 @@ const ticket = process.argv[2];
 
 if (ticket === undefined) throw new Error("usage: vp run verify <ticket-id>");
 
-const baseUrl = "http://localhost:3000";
+const baseUrl = "http://localhost:3100";
 
 function compose(...args: string[]): void {
   execFileSync(
