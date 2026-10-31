@@ -24,6 +24,7 @@ In:
 - The server refuses `AGENT_RUNTIME=acp` unless single-user mode is on and it listens on loopback
 - An agent runtime contract suite that runs against `api` and every supported CLI
 - One `session/prompt` per ACP session at a time, under the E0-1 conversation guard; CLI silence counts toward the stall watchdog
+- Each CLI points at the E0-3 mock model server in tests through its own base URL variable
 
 Out:
 

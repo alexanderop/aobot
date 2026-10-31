@@ -4,13 +4,14 @@ AI coworkers with their own computer and guardrails. Read `docs/README.md` first
 
 ## Status
 
-E0-1 and E0-2 are done: chat with one Bot over `docker compose up`, and each chat turn is one `Chat.turn` trace in Grafana, proven by `vp run verify E0-1` and `vp run verify E0-2`. The next ticket is `docs/backlog/E0-walking-skeleton/E0-3-a-scripted-model-for-tests.md`.
+E0-1 to E0-3 are done: chat with one Bot over `docker compose up`, each chat turn is one `Chat.turn` trace in Grafana, and every test runs on a scripted model, proven by `vp run verify E0-1`, `E0-2` and `E0-3`. The next ticket is `docs/backlog/E0-walking-skeleton/E0-4-quality-gates-and-ci.md`.
 
 ## Commands
 
 - `vp run check`: `vp check` (format, lint with our plugins, type-check), then `vp test run` (`unit`, `architecture`), then knip. Run it before calling anything done. Works today.
 - `vp install`: installs with the pinned pnpm. `vp fmt` formats. `vp check --fix` formats and autofixes.
 - Imports: tests use `vite-plus/test`, lint plugins use `vite-plus/lint/plugins` (enforced by `vite-plus/prefer-vite-plus-imports`).
+- `vp run test:smoke` (from E0-3): one turn against the real model in `MODEL_*`. Not part of `check`; runs nightly.
 - `vp run test:contract` (from E1-1): computer provider contract suite. Needs Docker.
 - `vp run verify <ticket-id>` (from E0-1): the ticket's demo in a real browser with `agent-browser`. A slice is done only when this passes. Its stack publishes the server on 3100 and Grafana on 3400, so it runs beside `docker compose up`.
 - `docker compose up` (from E0-1): the server (SQLite file on a volume), `grafana/otel-lgtm` (Grafana on http://localhost:3300, traces under Explore → Tempo from E0-2).
