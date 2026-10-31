@@ -14,7 +14,11 @@ const env = {
 };
 
 function compose(...args: string[]): void {
-  execFileSync("docker", ["compose", "--project-name", "aobot-verify", "--profile", "verify", ...args], { env, stdio: "inherit" });
+  execFileSync(
+    "docker",
+    ["compose", "--project-name", "aobot-verify", "--profile", "verify", ...args],
+    { env, stdio: "inherit" },
+  );
 }
 
 const { default: scenario } = await import(`./scenarios/${ticket}.ts`);
