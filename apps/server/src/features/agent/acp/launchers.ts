@@ -98,9 +98,11 @@ export const acpAgents = {
     args: ["--yes", "opencode-ai@1.19.5", "acp"],
     environment: () =>
       Effect.succeed({
-        // Deny every tool but the gateway's MCP server, which OpenCode names `aobot_<tool>`.
+        // Deny every tool but the gateway's MCP server, which OpenCode names `aobot_<tool>`. The title
+        // agent is off: it would spend a model call per turn on a title nobody sees.
         OPENCODE_CONFIG_CONTENT: JSON.stringify({
           permission: { "*": "deny", "aobot_*": "allow" },
+          agent: { title: { disable: true } },
           autoupdate: false,
           share: "disabled",
         }),

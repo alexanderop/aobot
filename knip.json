@@ -6,7 +6,8 @@
         "tools/oxlint/*/index.ts",
         "tools/**/*.test.ts",
         "vite.smoke.config.ts",
-        "verify/mock-model.ts"
+        "verify/mock-model.ts",
+        "vite.contract.config.ts"
       ],
       "project": ["tools/**/*.ts", "*.ts"],
       "ignore": ["tools/oxlint/anti-slop/**"],
@@ -17,7 +18,12 @@
       "project": ["src/**/*.ts"]
     },
     "apps/server": {
-      "entry": ["src/**/*.test.ts", "src/**/*.smoke.ts", "src/**/testing/fake-acp-agent.ts"],
+      "entry": [
+        "src/**/*.test.ts",
+        "src/**/*.smoke.ts",
+        "src/**/testing/fake-acp-agent.ts",
+        "src/**/*.contract.ts"
+      ],
       "project": ["src/**/*.ts"]
     },
     "apps/web": {

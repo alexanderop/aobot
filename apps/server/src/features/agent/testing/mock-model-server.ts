@@ -2,7 +2,7 @@ import { createServer, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { setTimeout } from "node:timers/promises";
 import { text } from "node:stream/consumers";
-import { Array, Effect, Option, type Schema } from "effect";
+import { Array, Effect, Option, Schema } from "effect";
 import type { ModelProvider } from "../model-providers.ts";
 import {
   type ModelScript,
@@ -242,6 +242,24 @@ const wireFormats = {
   readonly [Api in "anthropic-messages" | "openai-responses" | "openai-chat"]: WireFormat;
 };
 
+/**
+A request for structured output, which Claude Code sends to title a session. It is a CLI's side call,
+not a step of the turn, so it gets a JSON answer with every required field set and leaves the script
+alone. Otherwise it would race the turn for the first step.
+*/
+const decodeSideCall = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      output_config: Schema.Struct({
+        format: Schema.Struct({
+          type: Schema.Literal("json_schema"),
+          schema: Schema.Struct({ required: Schema.Array(Schema.String) }),
+        }),
+      }),
+    }),
+  ),
+);
+
 const routes = new Map(Object.values(wireFormats).map((format) => [format.path, format]));
 
 /** Which step answers call N once the script has run out: none, or the script again from the top. */
@@ -267,6 +285,8 @@ interface MockModelOptions {
 /** A running mock model server. */
 export interface MockModelServer {
   readonly port: number;
+  /** The body of every request so far, in order: what the runtime sent the model. */
+  readonly requests: () => ReadonlyArray<string>;
   readonly close: () => Promise<void>;
 }
 
@@ -298,9 +318,11 @@ it without a build.
 */
 export function startMockModel(options: MockModelOptions): Promise<MockModelServer> {
   let calls = 0;
+  const bodies: Array<string> = [];
 
   const server = createServer(async (request, response) => {
-    await text(request);
+    const body = await text(request);
+    bodies.push(body);
     const { pathname } = new URL(request.url ?? "/", "http://mock");
     const format = routes.get(pathname);
 
@@ -312,6 +334,15 @@ export function startMockModel(options: MockModelOptions): Promise<MockModelServ
       return sendJson(response, 404, {
         error: { message: `The mock model has no ${request.method} ${pathname}.` },
       });
+    }
+
+    const sideCall = decodeSideCall(body);
+
+    if (Option.isSome(sideCall)) {
+      const { required } = sideCall.value.output_config.format.schema;
+      const answer = JSON.stringify(Object.fromEntries(required.map((field) => [field, "mock"])));
+
+      return stream(response, format.say([answer], 0), options.delayMs);
     }
 
     calls += 1;
@@ -346,6 +377,7 @@ export function startMockModel(options: MockModelOptions): Promise<MockModelServ
 
       resolve({
         port,
+        requests: () => [...bodies],
         close: () =>
           new Promise((closed) => {
             server.closeAllConnections();
