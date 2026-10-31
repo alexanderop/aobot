@@ -48,7 +48,7 @@ screenshot.
 ### Conversation
 
 - **Header:** the Bot's avatar and name in a pill, centred, with the time below.
-- **Your messages:** right-aligned, accent background, white text, large radius.
+- **Your messages:** right-aligned, accent background, dark text (`--bg`, 4.5:1 or better), large radius.
 - **Bot messages:** left-aligned, dark grey background, max ~60% width. A Bot's consecutive messages are
   separate bubbles stacked with a small gap, not one long block.
 - **Rich text:** bold, bullet lists, line breaks render inside the bubble.

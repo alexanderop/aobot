@@ -4,7 +4,7 @@ AI coworkers with their own computer and guardrails. Read `docs/README.md` first
 
 ## Status
 
-Quality gates are in place (`vp run check`, E0-4). No app code yet. The next ticket is `docs/backlog/E0-walking-skeleton/E0-1-chat-with-a-bot-locally.md`.
+E0-1 is done: chat with one Bot over `docker compose up`, proven by `vp run verify E0-1`. The next ticket is `docs/backlog/E0-walking-skeleton/E0-2-one-chat-turn-is-one-trace.md`.
 
 ## Commands
 
@@ -13,7 +13,7 @@ Quality gates are in place (`vp run check`, E0-4). No app code yet. The next tic
 - Imports: tests use `vite-plus/test`, lint plugins use `vite-plus/lint/plugins` (enforced by `vite-plus/prefer-vite-plus-imports`).
 - `vp run test:contract` (from E1-1): computer provider contract suite. Needs Docker.
 - `vp run verify <ticket-id>` (from E0-1): the ticket's demo in a real browser with `agent-browser`. A slice is done only when this passes.
-- `docker compose up` (from E0-1): Postgres, the server, `grafana/otel-lgtm` (Grafana on http://localhost:3300).
+- `docker compose up` (from E0-1): the server (SQLite file on a volume), `grafana/otel-lgtm` (Grafana on http://localhost:3300).
 
 ## Rules
 
@@ -25,6 +25,7 @@ Quality gates are in place (`vp run check`, E0-4). No app code yet. The next tic
 - Effect v4 conventions: `Context.Service`, `Layer.effect`, `Effect.fn("Domain.operation")`, `Schema.TaggedError`. See the `effect` skill.
 - When a ticket is done, set `status: done` in its front-matter and add its `verify` scenario in the same change.
 - The UI follows `docs/design.md`.
+- Every PR description follows the `pr` skill (`.claude/skills/pr/SKILL.md`): Summary, Evidence, Merge Danger.
 - The web app is React with `@effect/atom-react`: state in atoms, read through a few hooks. See `docs/architecture.md` § The web app.
 
 ## Reference repositories

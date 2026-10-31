@@ -2,7 +2,7 @@
 id: E0-1
 title: Chat with a Bot locally
 epic: E0
-status: todo
+status: done
 depends_on: []
 estimate: 4d
 ---
@@ -16,7 +16,7 @@ estimate: 4d
 In:
 
 - pnpm workspace through Vite+: `apps/server`, `apps/web`, `packages/domain`
-- Docker Compose with Postgres
+- Docker Compose with a named volume for the SQLite file
 - Effect server on Node (`HttpRouter`, `@effect/platform-node`), settings through `Config`
 - The `AgentRuntime` service and its `api` provider: `effect/ai` `LanguageModel` with our own loop over
   `Chat`, a step cap, and the model provider (`anthropic`, `openai`, `openai-compat`) picked by `Config`
@@ -25,10 +25,10 @@ In:
   fields (`RUN_STARTED`, `TEXT_MESSAGE_CONTENT`, `RUN_FINISHED`, `RUN_ERROR`), over a streaming Effect RPC (`Chat.send`, `Chat.stop`)
 - `apps/web` in React with `@effect/atom-react`: an `AtomRpc` client, a conversation atom per id, and the
   `useConversation(id)` hook ([architecture.md § The web app](../../architecture.md#the-web-app))
-- Messages stored in Postgres, so a reload keeps the conversation
+- Messages stored in SQLite (`@effect/sql-sqlite-node`, one file at `DATABASE_PATH`), so a reload keeps the conversation
 - The conversation view and composer from [design.md](../../design.md): tokens, bubbles, Bot name pill
 - A stall watchdog: no event from the model or CLI for `AGENT_STALL_TIMEOUT_MS` (60 s) cancels the turn and tells the person; the clock pauses while the reader is slow
-- One run per conversation: a Postgres lease (120 s, renewed by a heartbeat, released in `finally`). A second message while a turn runs is refused, not queued
+- One run per conversation: an in-process guard per conversation, taken before anything is stored and released when the turn ends. A second message while a turn runs is refused, not queued. A restart clears every guard
 - At boot, one request to the provider checks the key can use the configured model and logs how to fix it; it never stops start-up
 
 Out:
@@ -65,7 +65,7 @@ None yet (E0-2).
 - Tier 2: a model that keeps calling tools stops at the step cap with a clear error.
 - Tier 4: the demo.
 - Tier 2: a model that goes silent is cancelled after the stall limit (`TestClock`); a slow reader is not blamed.
-- Tier 2: a second turn in the same conversation is refused while the first runs; a crashed run's lease expires.
+- Tier 2: a second turn in the same conversation is refused while the first runs, and a new one is accepted once it ends.
 
 ## Reference
 

@@ -23,7 +23,7 @@ In:
   the client capabilities we advertise are `fs: false`, `terminal: false`
 - The server refuses `AGENT_RUNTIME=acp` unless single-user mode is on and it listens on loopback
 - An agent runtime contract suite that runs against `api` and every supported CLI
-- One `session/prompt` per ACP session at a time, under the E0-1 conversation lease; CLI silence counts toward the stall watchdog
+- One `session/prompt` per ACP session at a time, under the E0-1 conversation guard; CLI silence counts toward the stall watchdog
 
 Out:
 

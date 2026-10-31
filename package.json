@@ -8,7 +8,8 @@
     "fmt": "vp fmt",
     "test": "vp test run",
     "test:watch": "vp test watch",
-    "knip": "knip"
+    "knip": "knip",
+    "verify": "node verify/run.ts"
   },
   "dependencies": {
     "effect": "4.1.0"

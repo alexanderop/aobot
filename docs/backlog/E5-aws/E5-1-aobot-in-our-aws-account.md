@@ -17,7 +17,7 @@ In:
 
 - Infrastructure as code (tool chosen in this ticket)
 - Server on ECS Fargate behind an ALB with HTTPS
-- RDS Postgres with pgvector, private subnets
+- RDS Postgres with pgvector, private subnets. E0-1 stores in SQLite, so this ticket switches the SQL client to Postgres (`DATABASE_URL`) and replaces the in-memory conversation guard with one shared by every replica
 - Secrets in AWS Secrets Manager, read through `Config`
 - `AGENT_RUNTIME=api` only; `acp` is refused here
 - Model provider chosen in this ticket. `effect/ai` has no Bedrock provider: either a provider's API key in

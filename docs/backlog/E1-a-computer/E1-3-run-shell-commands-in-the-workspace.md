@@ -45,7 +45,7 @@ gateway · computer
 ## Tests
 
 - Tier 3: timeout kills the command; `env` output does not contain `COMPUTER_TOKEN`.
-- Tier 4: `pg_isready -h postgres` and `curl -m 3 http://server:3000` from the Bot's shell both fail.
+- Tier 4: `ls /data/aobot.db` and `curl -m 3 http://server:3000` from the Bot's shell both fail.
 - Tier 4: the demo.
 - Tier 3: Stop sent before spawn means the command never runs.
 

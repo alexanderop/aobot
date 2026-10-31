@@ -1,0 +1,12 @@
+# Added on top of docker-compose.yml by `vp run verify`: the server talks to the scripted mock model.
+services:
+  server:
+    environment:
+      MODEL_PROVIDER: openai-compat
+      MODEL_NAME: mock
+      MODEL_API_KEY: mock
+      MODEL_BASE_URL: http://mock-model:4010/v1
+
+  mock-model:
+    build: .
+    command: ["node", "verify/mock-model.ts"]

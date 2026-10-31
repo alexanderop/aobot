@@ -1,5 +1,12 @@
 {
-  "include": ["apps/**/*.ts", "apps/**/*.tsx", "packages/**/*.ts", "tools/**/*.ts", "*.ts"],
+  "include": [
+    "apps/**/*.ts",
+    "apps/**/*.tsx",
+    "packages/**/*.ts",
+    "tools/**/*.ts",
+    "verify/**/*.ts",
+    "*.ts"
+  ],
   "exclude": ["node_modules", "**/node_modules"],
   "compilerOptions": {
     "target": "ES2022",

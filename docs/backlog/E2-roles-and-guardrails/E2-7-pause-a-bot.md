@@ -16,7 +16,7 @@ estimate: 2d
 In:
 
 - A Stop button in the composer while a turn runs: cancels the turn, its running tool call and the model stream
-- Pause a Bot (admin): stored in Postgres; turns on this replica are cancelled at once, other replicas check every 5 seconds and cancel theirs
+- Pause a Bot (admin): stored in the database; turns on this replica are cancelled at once, other replicas check every 5 seconds and cancel theirs
 - A replica that cannot read the pause state three times in a row refuses new turns for that Bot (fail closed)
 - Every turn, including ones nobody typed, checks the pause before it starts
 
