@@ -7,25 +7,39 @@ description: Who and what aobot talks to, over which channels, and which of thos
 
 ## Business context
 
-```mermaid
-flowchart LR
-  person([Person])
-  aobot[aobot]
-  model[(Model provider<br/>Anthropic · OpenAI · compatible)]
-  web[(Websites a Bot visits)]
-  sso[(Company SSO)]
-  grafana[(Traces and logs<br/>Grafana · ADOT)]
-  mac[(The person's Mac)]
+This C4 system context diagram shows aobot as one box, with the people and systems it talks to.
 
-  person -- "chats, approves, takes over" --> aobot
-  aobot -- "prompt and tools" --> model
-  aobot -. "planned E1: browses, clicks, types" .-> web
-  aobot -. "planned E3-1: sign-in" .-> sso
-  aobot -. "planned E0-2: one trace per turn" .-> grafana
-  aobot -. "planned E4: folders and Chrome" .-> mac
+```mermaid
+---
+title: System context
+---
+flowchart TB
+  person["fa:fa-user <b>Person</b><br/><small>[Person]</small><br/>Chats with their Bots"]
+  aobot["fa:fa-robot <b>aobot</b><br/><small>[Software system]</small><br/>AI coworkers with their own computer"]
+  model["fa:fa-brain <b>Model provider</b><br/><small>[External system]</small><br/>Anthropic, OpenAI or compatible"]
+  grafana["fa:fa-chart-line <b>Telemetry backend</b><br/><small>[External system]</small><br/>Grafana locally, ADOT on AWS"]
+  web["fa:fa-globe <b>Websites</b><br/><small>[External system]</small><br/>Planned, E1-1"]
+  sso["fa:fa-key <b>Company SSO</b><br/><small>[External system]</small><br/>Planned, E3-1"]
+  mac["fa:fa-laptop <b>The person's Mac</b><br/><small>[External system]</small><br/>Planned, E4"]
+
+  person -- "chats; later approves, takes over" --> aobot
+  aobot -- "prompt and tools [HTTPS]" --> model
+  aobot -. "one trace per turn [OTLP]" .-> grafana
+  aobot -. "browses, clicks, types" .-> web
+  aobot -. "sign-in" .-> sso
+  aobot -. "folders and Chrome" .-> mac
+  model ~~~ web
+  grafana ~~~ sso
+  grafana ~~~ mac
+
+  class aobot built
+  class person,model,grafana external
+  class web,sso,mac planned-external
 ```
 
-Solid lines exist today. Dotted lines are planned, with the ticket that adds them.
+Teal boxes are aobot, grey boxes are outside it. Dashed means planned, with the ticket that adds it. The
+telemetry backend already runs in Compose; nothing exports to it until
+[E0-2](../backlog/E0-walking-skeleton/E0-2-one-chat-turn-is-one-trace.md).
 
 | Partner           | What crosses the boundary                                                                                                                      | Today                                                                                                                                                         |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |

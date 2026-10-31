@@ -22,3 +22,91 @@
   --sl-color-gray-6: #f3f3f4;
   --sl-color-black: #ffffff;
 }
+
+/*
+Roles for the architecture diagrams. They are C4 views drawn as Mermaid flowcharts, because Mermaid
+12.2's C4 syntax draws no icons and cannot dash a planned box. A node takes `class <id> built`,
+`external`, `planned` or `planned-external`; a subgraph takes `boundary` (a software system) or
+`deployment` (where things run). `src/shared/diagrams.test.ts` checks every node has one. The colours
+live here, once per theme, and every text colour is 4.5:1 or better on its fill.
+*/
+:root {
+  --diagram-boundary: #8a8a8f;
+}
+
+:root[data-theme="light"] {
+  --diagram-boundary: #5c5c61;
+}
+
+pre.mermaid .node.built {
+  --fill: #3fa592;
+  --stroke: #2c8574;
+  --text: #0f0f10;
+}
+
+pre.mermaid .node.external {
+  --fill: #8a8a8f;
+  --stroke: #5c5c61;
+  --text: #0f0f10;
+}
+
+pre.mermaid .node.planned {
+  --fill: #12352f;
+  --stroke: #3fa592;
+  --text: #ececed;
+}
+
+pre.mermaid .node.planned-external {
+  --fill: #232325;
+  --stroke: #8a8a8f;
+  --text: #ececed;
+}
+
+:root[data-theme="light"] pre.mermaid .node.planned {
+  --fill: #d3eee8;
+  --stroke: #2c8574;
+  --text: #0f0f10;
+}
+
+:root[data-theme="light"] pre.mermaid .node.planned-external {
+  --fill: #f3f3f4;
+  --stroke: #5c5c61;
+  --text: #0f0f10;
+}
+
+pre.mermaid .node:is(.built, .external, .planned, .planned-external) > :is(rect, path, polygon) {
+  fill: var(--fill) !important;
+  stroke: var(--stroke) !important;
+  stroke-width: 1.5px !important;
+}
+
+pre.mermaid .node:is(.planned, .planned-external) > :is(rect, path, polygon) {
+  stroke-dasharray: 6 4 !important;
+}
+
+pre.mermaid .node:is(.built, .external, .planned, .planned-external) .nodeLabel {
+  color: var(--text) !important;
+}
+
+pre.mermaid .cluster.boundary > rect {
+  fill: transparent !important;
+  stroke: var(--diagram-boundary) !important;
+  stroke-dasharray: 10 6 !important;
+}
+
+/* Mermaid's dark edge labels are #ccc on #585858, 4.4:1. */
+:root:not([data-theme="light"]) pre.mermaid .edgeLabel :is(.labelBkg, p, span) {
+  background-color: #232325 !important;
+  color: #ececed !important;
+}
+
+/* Mermaid 12.2 computes a dotted edge's dash pattern from its length and draws it solid when the edge hops a crossing. */
+pre.mermaid path.flowchart-link.edge-pattern-dotted {
+  stroke-dasharray: 3 3 !important;
+}
+
+pre.mermaid .cluster.deployment > rect {
+  fill: transparent !important;
+  stroke: var(--diagram-boundary) !important;
+  stroke-width: 1.5px !important;
+}

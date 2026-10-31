@@ -3,6 +3,7 @@ import { satteri } from "@astrojs/markdown-satteri";
 import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
 import mermaid from "astro-mermaid";
+import diagramIcons from "./src/shared/diagram-icons.json" with { type: "json" };
 import { sidebar, siteHref } from "./src/shared/doc-routes.ts";
 
 /** The docs site: Starlight over the repository's `docs/` folder, with Mermaid diagrams. */
@@ -28,7 +29,13 @@ export default defineConfig({
     }),
   },
   integrations: [
-    mermaid({ autoTheme: true }),
+    mermaid({
+      autoTheme: true,
+      // A subset of `@iconify-json/fa6-solid`, registered as `fa` so a label can say `fa:fa-server`.
+      // To add an icon, copy its entry from that package. The colours are in theme.css.
+      iconPacks: [{ name: "fa", icons: diagramIcons }],
+      mermaidConfig: { flowchart: { wrappingWidth: 220 } },
+    }),
     starlight({
       title: "aobot",
       description: "AI coworkers with their own computer and guardrails.",
