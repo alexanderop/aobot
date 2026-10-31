@@ -11,11 +11,15 @@ Four tiers. Each tier proves something the one below cannot.
 
 ## The model in tests
 
-Tests never depend on what a real model happens to say. Tier 2 provides a scripted `LanguageModel`
-layer. Tiers 3 and 4 point `api` and every `acp` CLI at a mock model server that replays the same
-scripts in the Anthropic and OpenAI API shapes. See [E0-3](backlog/E0-walking-skeleton/E0-3-a-scripted-model-for-tests.md).
+Tests never depend on what a real model happens to say. A test writes what the model does as a
+`ModelScript`. Tier 2 replays it through a scripted `LanguageModel` layer. Tiers 3 and 4 point `api`
+and every `acp` CLI at our own mock model server, which replays the same script in the Anthropic
+Messages, OpenAI Responses and OpenAI Chat Completions shapes. Both live in
+`apps/server/src/features/agent/testing/`; `verify/mock-model.ts` runs the server for tier 4. See
+[E0-3](backlog/E0-walking-skeleton/E0-3-a-scripted-model-for-tests.md).
 
-One nightly smoke test runs against the real model, so a model or SDK change shows up within a day.
+One nightly smoke test (`vp run test:smoke`, `*.smoke.ts`) runs against the real model, so a model or
+SDK change shows up within a day.
 
 ## Rules the tooling enforces
 

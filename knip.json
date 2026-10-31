@@ -2,7 +2,12 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
     ".": {
-      "entry": ["tools/oxlint/*/index.ts", "tools/**/*.test.ts"],
+      "entry": [
+        "tools/oxlint/*/index.ts",
+        "tools/**/*.test.ts",
+        "vite.smoke.config.ts",
+        "verify/mock-model.ts"
+      ],
       "project": ["tools/**/*.ts", "*.ts"],
       "ignore": ["tools/oxlint/anti-slop/**"],
       "ignoreDependencies": ["vite", "vitest"]
@@ -12,7 +17,7 @@
       "project": ["src/**/*.ts"]
     },
     "apps/server": {
-      "entry": ["src/**/*.test.ts"],
+      "entry": ["src/**/*.test.ts", "src/**/*.smoke.ts"],
       "project": ["src/**/*.ts"]
     },
     "apps/web": {
