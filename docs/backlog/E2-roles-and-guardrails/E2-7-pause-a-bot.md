@@ -1,6 +1,7 @@
 ---
 id: E2-7
 title: Pause a Bot
+description: As a person, I press Stop and my Bot stops now. As an admin, I pause a Bot and none of its turns run anywhere until I resume it.
 epic: E2
 status: todo
 depends_on: [E2-1]

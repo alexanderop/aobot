@@ -1,6 +1,7 @@
 ---
 id: E0-4
 title: Quality gates and CI
+description: As a developer, I get a failing pull request when I break one of our rules, instead of a review comment.
 epic: E0
 status: doing
 depends_on: [E0-1]

@@ -1,6 +1,7 @@
 ---
 id: E0-5
 title: Chat on my own subscription
+description: As a developer on my laptop, I chat with a Bot that runs on my own Claude Code or Codex subscription, with no API key.
 epic: E0
 status: todo
 depends_on: [E0-3]

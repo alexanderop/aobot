@@ -1,6 +1,7 @@
 ---
 id: E1-2
 title: Click and type by ref
+description: As a person, I ask a Bot to fill in a form and it clicks and types like I would.
 epic: E1
 status: todo
 depends_on: [E1-1]

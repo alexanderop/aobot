@@ -1,6 +1,7 @@
 ---
 id: E4-2
 title: Tell me when my Bot needs help
+description: As a colleague, I get a notification when my Bot is stuck at a login, and one click takes me to its screen.
 epic: E4
 status: todo
 depends_on: [E4-1, E1-5]

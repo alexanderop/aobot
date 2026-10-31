@@ -1,3 +1,8 @@
+---
+title: Design
+description: How aobot looks, a messenger where your coworkers happen to be Bots, described well enough to build without the reference screenshot.
+---
+
 # Design
 
 aobot looks and feels like a messenger where your coworkers happen to be Bots. The reference is a

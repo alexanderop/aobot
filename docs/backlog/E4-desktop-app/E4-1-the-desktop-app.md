@@ -1,6 +1,7 @@
 ---
 id: E4-1
 title: The desktop app
+description: As a colleague, I install aobot as an app, sign in once, and it remembers me.
 epic: E4
 status: todo
 depends_on: [E3-1]

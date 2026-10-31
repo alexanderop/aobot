@@ -1,6 +1,7 @@
 ---
 id: E2-2
 title: Rules that fail closed
+description: As security, I write deny and allow rules over tool, page, command and Bot, and anything unclear is refused.
 epic: E2
 status: todo
 depends_on: [E2-1]

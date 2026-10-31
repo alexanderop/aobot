@@ -1,3 +1,8 @@
+---
+title: E2 · Roles and guardrails
+description: Bots become configuration with granted tools. Rules fail closed, secrets never reach the audit trail, and the trail is readable.
+---
+
 # E2 · Roles and guardrails
 
 Bots become configuration with granted tools. Rules fail closed, secrets never reach the audit trail, and the trail is readable.

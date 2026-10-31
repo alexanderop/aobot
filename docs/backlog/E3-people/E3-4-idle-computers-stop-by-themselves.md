@@ -1,6 +1,7 @@
 ---
 id: E3-4
 title: Idle computers stop by themselves
+description: As the person paying the bill, computers nobody uses stop, and come back with their logins when needed.
 epic: E3
 status: todo
 depends_on: [E3-3]

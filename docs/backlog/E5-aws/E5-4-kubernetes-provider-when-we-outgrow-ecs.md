@@ -1,6 +1,7 @@
 ---
 id: E5-4
 title: Kubernetes provider (when we outgrow ECS)
+description: As the platform team, we run computers on EKS with suspend and resume, when ECS tasks become too slow or too costly.
 epic: E5
 status: todo
 depends_on: [E5-3]

@@ -1,6 +1,7 @@
 ---
 id: E0-2
 title: One chat turn is one trace
+description: As a developer, I open Grafana and see one trace per chat turn, so I can tell where time went.
 epic: E0
 status: todo
 depends_on: [E0-1]

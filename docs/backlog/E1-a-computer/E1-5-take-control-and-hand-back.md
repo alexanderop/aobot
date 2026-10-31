@@ -1,6 +1,7 @@
 ---
 id: E1-5
 title: Take control and hand back
+description: As a person, I take the mouse when my Bot reaches a login or a CAPTCHA, then hand it back.
 epic: E1
 status: todo
 depends_on: [E1-4]

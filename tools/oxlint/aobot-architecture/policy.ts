@@ -8,6 +8,7 @@ export const workspaceDependencies: ReadonlyMap<string, readonly string[]> = new
   ["server", ["domain"]],
   ["web", ["domain"]],
   ["desktop", ["domain"]],
+  ["docs", []],
 ]);
 
 /**

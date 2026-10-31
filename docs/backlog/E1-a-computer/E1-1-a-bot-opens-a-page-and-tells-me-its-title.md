@@ -1,6 +1,7 @@
 ---
 id: E1-1
 title: A Bot opens a page and tells me its title
+description: As a person, I ask a Bot to open a page and it tells me what is on it, and the action is recorded.
 epic: E1
 status: todo
 depends_on: [E0-3]

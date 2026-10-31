@@ -1,6 +1,7 @@
 ---
 id: E4-3
 title: My Bot works in a folder on my Mac
+description: As a colleague with the desktop app open, I let my Bot read, write and run commands in one folder on my Mac, and it still has its cloud computer for everything else.
 epic: E4
 status: todo
 depends_on: [E4-1, E2-5]

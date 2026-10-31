@@ -1,3 +1,8 @@
+---
+title: E1 · A computer
+description: Give a Bot its own computer and route every action through the gateway. One shared computer for now; one per person comes in E3.
+---
+
 # E1 · A computer
 
 Give a Bot its own computer and route every action through the gateway. One shared computer for now; one per person comes in E3.

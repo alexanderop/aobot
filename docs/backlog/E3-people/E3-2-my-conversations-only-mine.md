@@ -1,6 +1,7 @@
 ---
 id: E3-2
 title: My conversations, only mine
+description: As a colleague, I see and continue my own conversations, and nobody else's.
 epic: E3
 status: todo
 depends_on: [E3-1]

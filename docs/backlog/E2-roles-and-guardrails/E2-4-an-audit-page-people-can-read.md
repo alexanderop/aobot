@@ -1,6 +1,7 @@
 ---
 id: E2-4
 title: An audit page people can read
+description: As security, I filter every action by Bot, person and decision, and open the trace behind any row.
 epic: E2
 status: todo
 depends_on: [E2-2, E2-3, E2-5]
