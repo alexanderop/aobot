@@ -5,7 +5,9 @@ const ticket = process.argv[2];
 
 if (ticket === undefined) throw new Error("usage: vp run verify <ticket-id>");
 
-const baseUrl = "http://localhost:3000";
+const baseUrl = "http://localhost:3100";
+
+const grafanaUrl = "http://localhost:3400";
 
 function compose(...args: string[]): void {
   execFileSync(
@@ -38,7 +40,7 @@ function bestEffort(step: string, run: () => void): void {
 try {
   compose("down", "--volumes");
   compose("up", "--build", "--detach", "--wait");
-  await scenario(baseUrl);
+  await scenario(baseUrl, grafanaUrl);
   console.log(`verify ${ticket}: passed`);
 } finally {
   try {

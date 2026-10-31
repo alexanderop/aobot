@@ -1,4 +1,5 @@
 # Added on top of docker-compose.yml by `vp run verify`: the server talks to the scripted mock model.
+# Its own host ports, so a verify run works while the dev stack holds 3000 and 3300.
 services:
   server:
     environment:
@@ -6,6 +7,12 @@ services:
       MODEL_NAME: mock
       MODEL_API_KEY: mock
       MODEL_BASE_URL: http://mock-model:4010/v1
+    ports: !override
+      - "127.0.0.1:3100:3000"
+
+  otel-lgtm:
+    ports: !override
+      - "127.0.0.1:3400:3000"
 
   mock-model:
     build: .

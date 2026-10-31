@@ -17,12 +17,12 @@ export function assert(condition: boolean, message: string): asserts condition {
 export async function waitFor(
   description: string,
   timeoutMs: number,
-  read: () => boolean,
+  read: () => boolean | Promise<boolean>,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    if (read()) return;
+    if (await read()) return;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
