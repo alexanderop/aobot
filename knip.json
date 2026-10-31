@@ -17,7 +17,7 @@
       "project": ["src/**/*.ts"]
     },
     "apps/server": {
-      "entry": ["src/**/*.test.ts", "src/**/*.smoke.ts"],
+      "entry": ["src/**/*.test.ts", "src/**/*.smoke.ts", "src/**/testing/fake-acp-agent.ts"],
       "project": ["src/**/*.ts"]
     },
     "apps/web": {
