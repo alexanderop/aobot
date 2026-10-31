@@ -8,6 +8,7 @@
     "fmt": "vp fmt",
     "test": "vp test run",
     "test:watch": "vp test watch",
+    "test:smoke": "vp test run --config vite.smoke.config.ts",
     "knip": "knip",
     "verify": "node verify/run.ts"
   },
