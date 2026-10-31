@@ -46,12 +46,7 @@ const server = Layer.unwrap(
       checkModel(config.model).pipe(Effect.provide(FetchHttpClient.layer), Effect.forkScoped),
     );
 
-    // An agent turn can be quiet for minutes. Node's default requestTimeout (300 s) would cut a
-    // streaming response, so it is off; headers still have to arrive within a minute.
-    const listener = NodeHttpServer.layer(
-      () => createServer({ requestTimeout: 0, headersTimeout: 60_000 }),
-      { port: config.port },
-    );
+    const listener = NodeHttpServer.layer(createServer, { port: config.port });
 
     return HttpRouter.serve(Layer.mergeAll(rpc, webApp)).pipe(
       Layer.merge(modelCheck),
