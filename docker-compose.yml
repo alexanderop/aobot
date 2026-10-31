@@ -23,10 +23,6 @@ services:
         required: false
     environment:
       DATABASE_URL: postgres://aobot:aobot@postgres:5432/aobot
-      MODEL_PROVIDER: ${MODEL_PROVIDER:-anthropic}
-      MODEL_NAME: ${MODEL_NAME:-claude-sonnet-5-5}
-      MODEL_API_KEY: ${MODEL_API_KEY:-}
-      MODEL_BASE_URL: ${MODEL_BASE_URL:-}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
     ports:
       - "3000:3000"
@@ -50,11 +46,6 @@ services:
     image: grafana/otel-lgtm
     ports:
       - "3300:3000"
-
-  mock-model:
-    profiles: [verify]
-    build: .
-    command: ["node", "verify/mock-model.ts"]
 
 volumes:
   postgres:

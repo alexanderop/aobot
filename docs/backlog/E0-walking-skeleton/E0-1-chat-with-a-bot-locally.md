@@ -2,7 +2,7 @@
 id: E0-1
 title: Chat with a Bot locally
 epic: E0
-status: todo
+status: done
 depends_on: []
 estimate: 4d
 ---

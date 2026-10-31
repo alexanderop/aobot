@@ -4,7 +4,7 @@ AI coworkers with their own computer and guardrails. Read `docs/README.md` first
 
 ## Status
 
-Quality gates are in place (`vp run check`, E0-4). No app code yet. The next ticket is `docs/backlog/E0-walking-skeleton/E0-1-chat-with-a-bot-locally.md`.
+E0-1 is done: chat with one Bot over `docker compose up`, proven by `vp run verify E0-1`. The next ticket is `docs/backlog/E0-walking-skeleton/E0-2-one-chat-turn-is-one-trace.md`.
 
 ## Commands
 

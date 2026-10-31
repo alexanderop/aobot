@@ -99,9 +99,6 @@ importers:
         specifier: 19.3.0
         version: 19.3.0(react@19.3.0)
     devDependencies:
-      '@effect/vitest':
-        specifier: 4.1.0
-        version: 4.1.0(effect@4.1.0)(vitest@5.0.5)
       '@types/react':
         specifier: 19.3.0
         version: 19.3.0

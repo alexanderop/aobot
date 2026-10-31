@@ -8,7 +8,9 @@ function wordsShown(): number {
   const text = browser("get", "text", "body");
   const words = answer.split(" ");
   let shown = 0;
+
   while (shown < words.length && text.includes(words.slice(0, shown + 1).join(" "))) shown++;
+
   return shown;
 }
 
@@ -30,6 +32,7 @@ export default async function scenario(baseUrl: string): Promise<void> {
   await waitFor("the whole answer", 20_000, () => {
     const shown = wordsShown();
     seen.add(shown);
+
     return shown === answer.split(" ").length;
   });
 
@@ -40,8 +43,8 @@ export default async function scenario(baseUrl: string): Promise<void> {
   browser("wait", "--load", "networkidle");
   await waitFor("the conversation after reload", 10_000, () => {
     const text = browser("get", "text", "body");
+
     return text.includes("Say hi in five words") && text.includes(answer);
   });
-  assert(browser("get", "url") === url, "the reload reopened the same conversation");
-  assert(true, "the conversation is still there after a reload");
+  assert(browser("get", "url") === url, "after a reload the same conversation is still there");
 }

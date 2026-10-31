@@ -20,6 +20,7 @@ export async function waitFor(
   read: () => boolean,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
+
   while (Date.now() < deadline) {
     if (read()) return;
     await new Promise((resolve) => setTimeout(resolve, 100));
