@@ -7,21 +7,38 @@ description: How aobot runs on a laptop with Docker Compose today, and what chan
 
 ## Local now: Docker Compose
 
-```mermaid
-flowchart LR
-  browser([Browser<br/>http://localhost:3000])
-  subgraph compose ["docker compose up (project aobot)"]
-    server["server<br/>node:26-slim<br/>serves apps/web + /rpc on 3000"]
-    volume[("volume data<br/>/data/aobot.db")]
-    lgtm["otel-lgtm<br/>Grafana on 3300"]
-  end
-  model[(Model provider)]
+This C4 deployment diagram shows one laptop. Outlined boxes are where things run; the filled boxes inside
+them are the containers from the [building block view](05-building-block-view.md).
 
-  browser --> server
-  server --> volume
-  server -- "HTTPS, MODEL_*" --> model
-  server -. "OTLP 4318, planned E0-2" .-> lgtm
+```mermaid
+---
+title: Deployment, local Docker Compose
+---
+flowchart TB
+  subgraph laptop ["fa:fa-laptop Laptop [Deployment node]"]
+    subgraph browser ["Browser [Deployment node]"]
+      web["fa:fa-window-maximize <b>apps/web</b><br/><small>[Container: React]</small><br/>http://localhost:3000"]
+    end
+    subgraph compose ["Docker Compose, project aobot [Deployment node]"]
+      server["fa:fa-server <b>server</b><br/><small>[Container: node:26-slim]</small><br/>serves apps/web and /rpc on 127.0.0.1:3000"]
+      volume[("fa:fa-hard-drive <b>volume data</b><br/><small>[Database: SQLite]</small><br/>/data/aobot.db")]
+      lgtm["fa:fa-chart-line <b>otel-lgtm</b><br/><small>[Container: grafana/otel-lgtm]</small><br/>Grafana on 127.0.0.1:3300"]
+    end
+  end
+  model["fa:fa-brain <b>Model provider</b><br/><small>[External system]</small><br/>picked by MODEL_PROVIDER"]
+
+  web -- "page and Chat RPCs [HTTP, WebSocket]" --> server
+  server -- "reads, writes" --> volume
+  server -- "prompt and tools [HTTPS]" --> model
+  server -. "spans and logs [OTLP :4318], E0-2" .-> lgtm
+
+  class web,server,volume built
+  class lgtm,model external
+  class laptop,browser,compose deployment
 ```
+
+Teal is ours, grey is someone else's image or service. The dashed arrow is planned in
+[E0-2](../backlog/E0-walking-skeleton/E0-2-one-chat-turn-is-one-trace.md).
 
 | Node        | What runs                                                                                                                                  | Settings                                                                                                                                              |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
