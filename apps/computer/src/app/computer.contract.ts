@@ -366,6 +366,25 @@ describe("the docker computer", () => {
       expect(fetched.stdout.text).toContain("inside the computer's own network");
     });
 
+    it("cannot drive the browser around the gateway with the token it reads out of /proc", async () => {
+      const probe = await ran(
+        await runCommand(
+          local,
+          [
+            `token=$(for f in /proc/[0-9]*/environ; do tr '\\0' '\\n' < "$f" 2>/dev/null; done | sed -n 's/^COMPUTER_TOKEN=//p' | head -n 1)`,
+            'test -n "$token" || exit 3',
+            "own=$(hostname -i | cut -d ' ' -f 1)",
+            'for host in 127.0.0.1 "$own"; do',
+            `  curl --noproxy '*' --silent --output /dev/null --write-out '%{http_code}\\n' --max-time 3 -X POST -H "authorization: Bearer $token" -H 'content-type: application/json' --data '{"action":"snapshot"}' "http://$host:4100/act"`,
+            "done",
+          ].join("\n"),
+        ),
+      );
+
+      expect(probe.end).toEqual(Exited.make({ code: 0 }));
+      expect(probe.stdout.text).toBe("403\n403\n");
+    });
+
     it("keeps only the end of a long output, and says so", async () => {
       const { stdout } = await ran(await runCommand(local, "seq 1 200000"));
 

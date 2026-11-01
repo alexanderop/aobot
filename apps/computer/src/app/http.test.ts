@@ -1,7 +1,7 @@
 import { CommandEnd, type PageAction } from "@aobot/domain";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 import { Effect, Layer, Option, Redacted } from "effect";
-import { HttpRouter, HttpServer } from "effect/http";
+import { HttpMiddleware, HttpRouter, HttpServer, HttpServerRequest } from "effect/http";
 import { ActionFailed, ActionRefused, Browser } from "../features/browser/public.ts";
 import { CommandFailed, Shell } from "../features/shell/public.ts";
 import { routesLayer } from "./http.ts";
@@ -57,12 +57,30 @@ const fakeShell = Layer.succeed(
   }),
 );
 
+/** The server's address on the computers' network, unless a test sends `x-remote-address`. */
+const server = "172.18.0.2";
+
 const app = HttpRouter.toWebHandler(
   routesLayer(Redacted.make(token)).pipe(
     Layer.provideMerge(Layer.merge(fakeBrowser, fakeShell)),
     Layer.provide(HttpServer.layerServices),
+    // As in the computer, so a middleware starts no HTTP span of its own.
+    Layer.provideMerge(Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true)),
   ),
-  { disableLogger: true },
+  {
+    disableLogger: true,
+    // A web handler has no socket, so the test says where each request came from.
+    middleware: (handle) =>
+      Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+        Effect.provideService(
+          handle,
+          HttpServerRequest.HttpServerRequest,
+          request.modify({
+            remoteAddress: Option.some(request.headers["x-remote-address"] ?? server),
+          }),
+        ),
+      ),
+  },
 );
 
 afterAll(() => app.dispose());
@@ -90,6 +108,15 @@ describe("GET /health", () => {
 });
 
 describe("POST /act", () => {
+  it.each(["127.0.0.1", "::ffff:127.0.0.1", "::1"])(
+    "answers 403 to a caller on the computer itself, at %s, even with the token",
+    async (address) => {
+      const response = await act(navigate, { ...bearer, "x-remote-address": address });
+      expect(response.status).toBe(403);
+      expect(await response.text()).toBe("");
+    },
+  );
+
   it.each([
     ["no token", {}],
     ["the wrong token", { authorization: "Bearer computer-tokeN" }],

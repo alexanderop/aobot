@@ -8,12 +8,15 @@ import { Effect, Layer, Option, Redacted, Schema } from "effect";
 import { HttpRouter, HttpServerResponse, HttpTraceContext } from "effect/http";
 import { Browser } from "../features/browser/public.ts";
 import { Shell } from "../features/shell/public.ts";
+import { fromThisComputer } from "./callers.ts";
 
 function errorReply(error: ComputerActError, status: 403 | 502) {
   return HttpServerResponse.jsonUnsafe(error, { status });
 }
 
 const notAuthorised = HttpServerResponse.jsonUnsafe({ error: "Not authorised." }, { status: 401 });
+
+const forbidden = HttpServerResponse.empty({ status: 403 });
 
 /** The token in `Authorization: Bearer <token>`, or none. */
 function bearerToken(header: Option.Option<string>): Option.Option<string> {
@@ -36,13 +39,16 @@ const act = Effect.fn("Computer.act")(function* (action: ComputerAction) {
 
 /**
 `GET /health`, open so Docker and the server can see the computer is up, and `POST /act`, the only way to
-drive the browser and the shell, behind the bearer token.
+drive the browser and the shell, behind the bearer token. `/act` refuses a caller on the computer itself,
+so a command that reads the token out of `/proc` still cannot drive the browser around the gateway.
 */
 export const routesLayer = (token: Redacted.Redacted<string>) =>
   Layer.mergeAll(
     HttpRouter.add("GET", "/health", HttpServerResponse.jsonUnsafe({ status: "ok" })),
     HttpRouter.add("POST", "/act", (request) =>
       Effect.gen(function* () {
+        if (fromThisComputer(request.remoteAddress)) return forbidden;
+
         const offered = bearerToken(Option.fromNullishOr(request.headers["authorization"]));
 
         const authorised = Option.match(offered, {
