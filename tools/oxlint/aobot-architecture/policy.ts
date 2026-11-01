@@ -51,6 +51,7 @@ export const featureDependencies: ReadonlyMap<
       ["egress", []],
       ["browser", ["egress"]],
       ["shell", ["egress"]],
+      ["workspace", []],
       ["screen", ["browser"]],
     ]),
   ],

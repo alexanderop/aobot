@@ -1,8 +1,11 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { AddressInfo, Socket as NetSocket } from "node:net";
 import { CommandEnd, type PageAction, PersonInput, ScreenFrame } from "@aobot/domain";
-import { NodeHttpServer, NodeWS } from "@effect/platform-node";
+import { NodeHttpServer, NodeServices, NodeWS } from "@effect/platform-node";
 import { afterAll, describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Effect, Exit, Layer, Option, Redacted, Schema, Scope, Stream } from "effect";
 import {
@@ -20,6 +23,7 @@ import {
 } from "../features/browser/public.ts";
 import { Screencast, screencastLayer } from "../features/screen/public.ts";
 import { CommandFailed, Shell } from "../features/shell/public.ts";
+import { workspaceLayer } from "../features/workspace/public.ts";
 import { routesLayer } from "./http.ts";
 
 const token = "computer-token";
@@ -80,6 +84,12 @@ const fakeShell = Layer.succeed(
   }),
 );
 
+const workspaceFolder = mkdtempSync(join(tmpdir(), "aobot-http-"));
+
+afterAll(() => rmSync(workspaceFolder, { recursive: true, force: true }));
+
+const workspace = workspaceLayer(workspaceFolder).pipe(Layer.provide(NodeServices.layer));
+
 const server = "172.18.0.2";
 
 /** Where a request came from: `x-remote-address`, or the server. A test's own requests come from loopback. */
@@ -98,7 +108,7 @@ const calledFrom = <E, R>(handle: Effect.Effect<HttpServerResponse.HttpServerRes
 function computerWith(browser: Layer.Layer<Browser>) {
   return HttpRouter.toWebHandler(
     routesLayer(Redacted.make(token)).pipe(
-      Layer.provideMerge(Layer.mergeAll(browser, fakeShell, fakeScreencast)),
+      Layer.provideMerge(Layer.mergeAll(browser, fakeShell, workspace, fakeScreencast)),
       Layer.provide(HttpServer.layerServices),
       Layer.provideMerge(Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true)),
     ),
@@ -216,8 +226,104 @@ describe("POST /act", () => {
     "not json",
     JSON.stringify({ action: "click" }),
     JSON.stringify({ action: "navigate" }),
-  ])("answers 400 to the body %s", async (body) => {
-    expect((await act(body, bearer)).status).toBe(400);
+  ])("answers 400 to the body %s, refused as the other refusals are", async (body) => {
+    const response = await act(body, bearer);
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      reason: "refused",
+      message: "The body is not a computer action.",
+    });
+  });
+});
+
+describe("POST /act on the workspace", () => {
+  it("writes a file and reads it back", async () => {
+    const written = await act(
+      JSON.stringify({ action: "write_file", path: "notes.txt", contents: "hello" }),
+      bearer,
+    );
+
+    expect(await written.json()).toEqual({ action: "write_file", path: "notes.txt", bytes: 5 });
+
+    const read = await act(JSON.stringify({ action: "read_file", path: "notes.txt" }), bearer);
+    expect(read.status).toBe(200);
+    expect(await read.json()).toMatchObject({ action: "read_file", text: "hello", bytes: 5 });
+  });
+
+  it("answers 403 refused to a path outside the workspace", async () => {
+    const response = await act(
+      JSON.stringify({ action: "read_file", path: "/etc/passwd" }),
+      bearer,
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ reason: "refused" });
+  });
+
+  it("answers 502 failed to a file that is not there", async () => {
+    const response = await act(
+      JSON.stringify({ action: "read_file", path: "missing.txt" }),
+      bearer,
+    );
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({
+      reason: "failed",
+      message: "There is nothing at missing.txt.",
+    });
+  });
+});
+
+describe("/files", () => {
+  const fileUrl = (path: string) => `http://computer/files?path=${encodeURIComponent(path)}`;
+
+  function download(path: string, headers: Record<string, string> = {}) {
+    return app.handler(new Request(fileUrl(path), { headers: { ...bearer, ...headers } }));
+  }
+
+  function upload(path: string, body: Uint8Array | string) {
+    return app.handler(new Request(fileUrl(path), { method: "PUT", body, headers: bearer }));
+  }
+
+  it("downloads a file's exact bytes", async () => {
+    const bytes = Uint8Array.from([0, 255, 10, 0, 128]);
+    writeFileSync(join(workspaceFolder, "blob.bin"), bytes);
+
+    const response = await download("blob.bin");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-length")).toBe("5");
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
+  });
+
+  it("uploads a request's body into the workspace", async () => {
+    const response = await upload("upload.bin", Uint8Array.from([1, 0, 2]));
+    expect(await response.json()).toEqual({ path: "upload.bin", bytes: 3 });
+    expect([...readFileSync(join(workspaceFolder, "upload.bin"))]).toEqual([1, 0, 2]);
+  });
+
+  it("answers 403 refused to a path outside the workspace, both ways", async () => {
+    expect((await download("../outside.txt")).status).toBe(403);
+    expect((await upload("/etc/aobot", "x")).status).toBe(403);
+  });
+
+  it("answers 401 without the token and 403 to a caller on the computer", async () => {
+    const anonymous = await app.handler(new Request("http://computer/files?path=blob.bin"));
+
+    const fromInside = await download("blob.bin", { "x-remote-address": "127.0.0.1" });
+
+    expect(anonymous.status).toBe(401);
+    expect(fromInside.status).toBe(403);
+  });
+
+  it("answers 400 without a path, refused as the other refusals are", async () => {
+    const response = await app.handler(new Request("http://computer/files", { headers: bearer }));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      reason: "refused",
+      message: "Say which file with ?path=.",
+    });
   });
 });
 
@@ -389,7 +495,7 @@ async function computerShowing(page: WatchedPage) {
     disableListenLog: true,
     middleware: calledFrom,
   }).pipe(
-    Layer.provide([browser, fakeShell, screencastLayer.pipe(Layer.provide(browser))]),
+    Layer.provide([browser, fakeShell, workspace, screencastLayer.pipe(Layer.provide(browser))]),
     Layer.provide(NodeHttpServer.layer(() => http, { port: 0, host: "127.0.0.1" })),
     Layer.provide(Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true)),
   );

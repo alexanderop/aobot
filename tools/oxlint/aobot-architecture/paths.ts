@@ -11,7 +11,9 @@ export interface Owner {
   readonly workspaceDir: string | null;
   readonly layer: Layer;
   readonly feature: string | null;
-  readonly entry: "public" | null;
+  /** `public` for a feature's `public.ts`, `testing` for a module under its `testing/`, which only tests import. */
+  readonly entry: "public" | "testing" | null;
+  /** A test file: `*.test.ts`, `*.spec.ts`, or a contract or smoke suite (`*.contract.ts`, `*.smoke.ts`). */
   readonly test: boolean;
 }
 
@@ -64,7 +66,7 @@ export function ownerOf(root: string, filename: string): Owner {
     .replaceAll("\\", "/")
     .replace(/\?.*$/u, "");
   const parts = path.split("/");
-  const test = /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(path);
+  const test = /\.(?:test|spec|contract|smoke)\.[cm]?[jt]sx?$/u.test(path);
   const base = { path, test, feature: null, entry: null } as const;
 
   if ((parts[0] === "apps" || parts[0] === "packages") && parts[1] && parts.length > 2) {
@@ -82,7 +84,12 @@ export function ownerOf(root: string, filename: string): Owner {
         workspaceDir,
         layer: "feature",
         feature: parts[4],
-        entry: parts.length === 6 && module === "public" ? "public" : null,
+        entry:
+          parts.length === 6 && module === "public"
+            ? "public"
+            : parts[5] === "testing"
+              ? "testing"
+              : null,
       };
     }
 

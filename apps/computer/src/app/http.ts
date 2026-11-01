@@ -3,27 +3,36 @@ import {
   ComputerAction,
   type ComputerActError,
   ComputerActResult,
+  type FileAction,
+  FileQuery,
+  FileSaved,
+  fileTransferLimit,
+  type PageAction,
   PersonInput,
   ScreenFrame,
   tokensMatch,
 } from "@aobot/domain";
 import { NodeHttpServerRequest } from "@effect/platform-node";
 import { Effect, Layer, Option, Redacted, Schema, Stream } from "effect";
-import {
-  HttpRouter,
-  type HttpServerRequest,
-  HttpServerResponse,
-  HttpTraceContext,
-} from "effect/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse, HttpTraceContext } from "effect/http";
 import { Socket } from "effect/socket";
 import { Browser } from "../features/browser/public.ts";
 import { Screencast } from "../features/screen/public.ts";
 import { Shell } from "../features/shell/public.ts";
+import { FileFailed, Workspace } from "../features/workspace/public.ts";
 import { fromThisComputer } from "./callers.ts";
 
-function errorReply(error: ComputerActError, status: 403 | 502) {
+function errorReply(error: ComputerActError, status: 400 | 403 | 413 | 502) {
   return HttpServerResponse.jsonUnsafe(error, { status });
 }
+
+/** How every route answers the workspace's refusals and failures. */
+const fileReplies = {
+  FileRefused: ({ message }: { readonly message: string }) =>
+    Effect.succeed(errorReply({ reason: "refused", message }, 403)),
+  FileFailed: ({ message }: { readonly message: string }) =>
+    Effect.succeed(errorReply({ reason: "failed", message }, 502)),
+};
 
 const notAuthorised = HttpServerResponse.jsonUnsafe({ error: "Not authorised." }, { status: 401 });
 
@@ -89,12 +98,23 @@ const sendFrames = (socket: Socket.Socket, connection: Writable) =>
     );
   }).pipe(Effect.ignore, Effect.scoped);
 
+const browse = (action: PageAction) => Browser.use((browser) => browser.act(action));
+
+const files = (action: FileAction) => Workspace.use((workspace) => workspace.act(action));
+
 const act = Effect.fn("Computer.act")(function* (action: ComputerAction) {
   yield* Effect.annotateCurrentSpan("computer.action", action.action);
 
-  if (action.action === "run") return yield* Shell.use((shell) => shell.run(action.command));
-
-  return yield* Browser.use((browser) => browser.act(action));
+  return yield* ComputerAction.match(action, {
+    navigate: browse,
+    snapshot: browse,
+    click: browse,
+    type: browse,
+    run: ({ command }) => Shell.use((shell) => shell.run(command)),
+    read_file: files,
+    write_file: files,
+    list_files: files,
+  });
 });
 
 const input = Effect.fn("Computer.input")(function* (given: PersonInput) {
@@ -115,11 +135,39 @@ function withBody<A, I, E, R>(
       Option.match({
         onNone: () =>
           Effect.succeed(
-            HttpServerResponse.jsonUnsafe({ error: `The body is not ${what}.` }, { status: 400 }),
+            errorReply({ reason: "refused", message: `The body is not ${what}.` }, 400),
           ),
         onSome: handle,
       }),
     ),
+  );
+}
+
+/** `handle` of the `path` query parameter, or 400 when there is none. */
+function withPath<E, R>(
+  handle: (path: string) => Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
+) {
+  return HttpServerRequest.schemaSearchParams(FileQuery).pipe(
+    Effect.option,
+    Effect.flatMap(
+      Option.match({
+        onNone: () =>
+          Effect.succeed(
+            errorReply({ reason: "refused", message: "Say which file with ?path=." }, 400),
+          ),
+        onSome: ({ path }) => handle(path),
+      }),
+    ),
+  );
+}
+
+const encodeSaved = HttpServerResponse.schemaJson(FileSaved);
+
+/** The upload's own length, when it says one, or none. */
+function declaredLength(request: HttpServerRequest.HttpServerRequest): Option.Option<number> {
+  return Option.filter(
+    Option.map(Option.fromNullishOr(request.headers["content-length"]), Number),
+    Number.isSafeInteger,
   );
 }
 
@@ -136,8 +184,9 @@ function withCallerSpan<A, E, R>(
 
 /**
 `GET /health`, open so Docker and the server can see the computer is up. `POST /act`, the only way to drive
-the browser and the shell, `POST /input`, what a person in control did on the screen, and `GET /stream`, the
-screen as a WebSocket of frames, all behind the bearer token. They refuse a caller on the computer itself,
+the browser, the shell and the workspace's files, `GET` and `PUT /files`, a person's download and upload of
+one file's bytes, `POST /input`, what a person in control did on the screen, and `GET /stream`, the screen
+as a WebSocket of frames, all behind the bearer token. They refuse a caller on the computer itself,
 so a command that reads the token out of `/proc` can neither drive the browser around the gateway nor watch
 what it shows.
 */
@@ -158,9 +207,67 @@ export const routesLayer = (token: Redacted.Redacted<string>) =>
                 Effect.succeed(errorReply({ reason: "failed", message }, 502)),
               CommandFailed: ({ message }) =>
                 Effect.succeed(errorReply({ reason: "failed", message }, 502)),
+              ...fileReplies,
             }),
           ),
         ),
+      ),
+    ),
+    HttpRouter.add(
+      "GET",
+      "/files",
+      guarded(token, (request) =>
+        withPath((path) =>
+          withCallerSpan(
+            request,
+            Workspace.use((workspace) => workspace.download(path)),
+          ).pipe(
+            Effect.map(({ bytes, body }) =>
+              HttpServerResponse.stream(body, {
+                contentType: "application/octet-stream",
+                contentLength: bytes,
+              }),
+            ),
+            Effect.catchTags(fileReplies),
+          ),
+        ),
+      ),
+    ),
+    HttpRouter.add(
+      "PUT",
+      "/files",
+      guarded(token, (request) =>
+        withPath((path) => {
+          // Refused before a byte is read when the upload says it is too large. One that does not say is
+          // counted as it arrives.
+          if (Option.exists(declaredLength(request), (bytes) => bytes > fileTransferLimit)) {
+            return Effect.succeed(
+              errorReply(
+                {
+                  reason: "refused",
+                  message: `An upload may hold at most ${fileTransferLimit} bytes.`,
+                },
+                413,
+              ),
+            );
+          }
+
+          const body = request.stream.pipe(
+            Stream.mapError(() => new FileFailed({ message: "The upload broke off." })),
+          );
+
+          return withCallerSpan(
+            request,
+            Workspace.use((workspace) => workspace.upload(path, body)),
+          ).pipe(
+            Effect.flatMap(encodeSaved),
+            Effect.catchTags({
+              ...fileReplies,
+              FileTooLarge: ({ message }) =>
+                Effect.succeed(errorReply({ reason: "refused", message }, 413)),
+            }),
+          );
+        }),
       ),
     ),
     HttpRouter.add(

@@ -4,7 +4,7 @@ import { featureDependencies, policyProblems, workspaceDependencies } from "./po
 
 const doc = "/** Documented. */\n";
 
-/** Create the public entry and one internal module of a feature, so imports resolve. */
+/** Create the public entry, one internal module and one testing module of a feature, so imports resolve. */
 function feature(app: string, name: string) {
   return (root: string) => {
     fixtureFile(root, `apps/${app}/src/features/${name}/public.ts`, `${doc}export const x = 1;\n`);
@@ -12,6 +12,11 @@ function feature(app: string, name: string) {
       root,
       `apps/${app}/src/features/${name}/internal.ts`,
       `${doc}export const y = 1;\n`,
+    );
+    fixtureFile(
+      root,
+      `apps/${app}/src/features/${name}/testing/fake.ts`,
+      `${doc}export const f = 1;\n`,
     );
   };
 }
@@ -71,6 +76,24 @@ describe("aobot architecture enforced by Oxlint", () => {
       undefined,
     ],
     [
+      "a test using another feature's testing module",
+      "apps/server/src/features/gateway/run.test.ts",
+      `import "../computers/testing/fake";\n`,
+      feature("server", "computers"),
+    ],
+    [
+      "a contract suite using its own feature's testing module",
+      "apps/server/src/features/computers/computers.contract.ts",
+      `import "./testing/fake";\n`,
+      feature("server", "computers"),
+    ],
+    [
+      "a testing module using another of its feature",
+      "apps/server/src/features/computers/testing/other.ts",
+      `import "./fake";\n`,
+      feature("server", "computers"),
+    ],
+    [
       "Node built-ins in a domain test",
       "packages/domain/src/x.test.ts",
       `import "node:fs";\n`,
@@ -94,6 +117,20 @@ describe("aobot architecture enforced by Oxlint", () => {
       `import "../computers/internal";\n`,
       feature("server", "computers"),
       "Import computers/public instead of internal module",
+    ],
+    [
+      "code that is no test importing another feature's testing module",
+      "apps/server/src/features/gateway/run.ts",
+      `import "../computers/testing/fake";\n`,
+      feature("server", "computers"),
+      "Only tests may import apps/server/src/features/computers/testing/fake.ts",
+    ],
+    [
+      "code that is no test importing its own feature's testing module",
+      "apps/server/src/features/computers/run.ts",
+      `import "./testing/fake";\n`,
+      feature("server", "computers"),
+      "Only tests may import apps/server/src/features/computers/testing/fake.ts",
     ],
     [
       "a feature depending on app composition",

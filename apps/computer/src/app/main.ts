@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { NodeHttpServer, NodeRuntime, NodeServices } from "@effect/platform-node";
+import { workspaceRoot } from "@aobot/domain";
 import { Effect, Layer, Option } from "effect";
 import { FetchHttpClient, HttpMiddleware, HttpRouter } from "effect/http";
 import { Otlp } from "effect/observability";
@@ -7,6 +8,7 @@ import { browserLayer } from "../features/browser/public.ts";
 import { commandDestinationsLayer, destinationsLayer } from "../features/egress/public.ts";
 import { screencastLayer } from "../features/screen/public.ts";
 import { shellLayer } from "../features/shell/public.ts";
+import { workspaceLayer } from "../features/workspace/public.ts";
 import { computerConfig } from "./config.ts";
 import { routesLayer } from "./http.ts";
 
@@ -21,6 +23,8 @@ const computer = Layer.unwrap(
     const shell = shellLayer(config.shell).pipe(
       Layer.provide([commandDestinationsLayer, NodeServices.layer]),
     );
+
+    const workspace = workspaceLayer(workspaceRoot).pipe(Layer.provide(NodeServices.layer));
 
     // Every address, because the server reaches the computer from another container. Docker publishes
     // no port, so only the computer's own network can connect.
@@ -39,7 +43,7 @@ const computer = Layer.unwrap(
     const untracedHttp = Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true);
 
     return HttpRouter.serve(routesLayer(config.token)).pipe(
-      Layer.provide([browser, shell, screencastLayer.pipe(Layer.provide(browser))]),
+      Layer.provide([browser, shell, workspace, screencastLayer.pipe(Layer.provide(browser))]),
       Layer.provide(listener),
       Layer.provide([telemetry, untracedHttp]),
     );

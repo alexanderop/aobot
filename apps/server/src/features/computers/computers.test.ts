@@ -15,16 +15,18 @@ import {
   type Schema,
   Stream,
   SubscriptionRef,
+  Tracer,
 } from "effect";
 import { FetchHttpClient, HttpClient } from "effect/http";
 import {
+  type Computer,
   ComputerActFailed,
   type ComputerAddress,
   ComputerLost,
   computerAt,
   liveScreen,
 } from "./computers.ts";
-import { reply, serve, serveScreen } from "./testing/serve.ts";
+import { bodyOf, reply, serve, serveScreen } from "./testing/serve.ts";
 
 /** A computer that answers every request with `status` and `json`, and keeps the headers and paths it was sent. */
 function fakeComputer(status: number, json?: Schema.Json) {
@@ -63,6 +65,15 @@ function click(url: string) {
     return yield* computerAt({ url, token }, client).input(
       PersonInput.cases.Click.make({ at: { x: 0.5, y: 0.5 } }),
     );
+  }).pipe(Effect.provide(FetchHttpClient.layer));
+}
+
+/** `use` of the computer at `url`, over fetch. */
+function withComputer<A, E, R>(url: string, use: (computer: Computer) => Effect.Effect<A, E, R>) {
+  return Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+
+    return yield* use(computerAt({ url, token }, client));
   }).pipe(Effect.provide(FetchHttpClient.layer));
 }
 
@@ -165,6 +176,158 @@ describe("computerAt", () => {
       expect(yield* Effect.flip(runCommand(page.url))).toBeInstanceOf(ComputerLost);
       expect(yield* Effect.flip(act(command.url))).toBeInstanceOf(ComputerLost);
       expect(yield* runCommand(command.url)).toMatchObject({ action: "run" });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reads a file answer only in the shape of the file action it sent", () =>
+    Effect.gen(function* () {
+      const computer = yield* fakeComputer(200, { action: "write_file", path: "a.txt", bytes: 1 });
+
+      const [read, written] = yield* withComputer(computer.url, (files) =>
+        Effect.all([
+          Effect.flip(files.files({ action: "read_file", path: "a.txt" })),
+          files.files({ action: "write_file", path: "a.txt", contents: "x" }),
+        ]),
+      );
+
+      expect(read).toBeInstanceOf(ComputerLost);
+      expect(written).toEqual({ action: "write_file", path: "a.txt", bytes: 1 });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("downloads a file's exact bytes and size from /files, with the token", () =>
+    Effect.gen(function* () {
+      const bytes = Uint8Array.from([0, 255, 10, 0]);
+      const asked: Array<string | undefined> = [];
+
+      const { port } = yield* serve((request, response) => {
+        asked.push(`${request.headers.authorization} ${request.url}`);
+        response.setHeader("content-length", bytes.length);
+        response.end(bytes);
+      });
+
+      const [size, sent] = yield* withComputer(`http://127.0.0.1:${port}`, (computer) =>
+        computer
+          .download("reports/a b.bin")
+          .pipe(
+            Effect.flatMap(({ bytes: length, body }) =>
+              Effect.map(Stream.runCollect(body), (chunks) => [length, chunks] as const),
+            ),
+          ),
+      );
+
+      expect(asked).toEqual(["Bearer computer-token /files?path=reports%2Fa+b.bin"]);
+      expect(size).toBe(4);
+      expect(Buffer.concat(sent)).toEqual(Buffer.from(bytes));
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("drops the computer's answer when the download's scope closes before its end", () =>
+    Effect.gen(function* () {
+      let dropped = false;
+
+      const { port } = yield* serve((_request, response) => {
+        response.on("close", () => {
+          dropped = !response.writableFinished;
+        });
+        response.setHeader("content-length", 2);
+        response.write(Uint8Array.from([1]));
+      });
+
+      yield* withComputer(`http://127.0.0.1:${port}`, (computer) =>
+        Effect.scoped(computer.download("half.bin")),
+      );
+
+      yield* until("the computer's answer was dropped", () => dropped);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps a file's path out of every span of a download and an upload", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const path = "reports/salary-2026.csv";
+
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+
+          return span;
+        },
+      });
+
+      const { port } = yield* serve((request, response) =>
+        request.method === "PUT"
+          ? void bodyOf(request).then(() => reply(response, 200, { path, bytes: 1 }))
+          : response.end(Uint8Array.from([1])),
+      );
+
+      yield* withComputer(`http://127.0.0.1:${port}`, (computer) =>
+        Effect.all([
+          Effect.scoped(
+            Effect.flatMap(computer.download(path), ({ body }) => Stream.runDrain(body)),
+          ),
+          computer.upload(path, Stream.make(Uint8Array.from([1]))),
+        ]),
+      ).pipe(Effect.provideService(Tracer.Tracer, tracer));
+
+      const attributes = JSON.stringify(spans.map((span) => [...span.attributes]));
+      expect(attributes).toContain("url.full");
+      expect(attributes).not.toContain("salary");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("uploads a body to /files as it comes, and reads what the computer saved", () =>
+    Effect.gen(function* () {
+      const received: Array<string> = [];
+
+      const { port } = yield* serve((request, response) => {
+        void bodyOf(request).then((body) => {
+          received.push(`${request.method} ${request.url} ${body}`);
+          reply(response, 200, { path: "expenses.csv", bytes: 8 });
+        });
+      });
+
+      const written = yield* withComputer(`http://127.0.0.1:${port}`, (computer) =>
+        computer.upload(
+          "expenses.csv",
+          Stream.make(new TextEncoder().encode("a,1\n"), new TextEncoder().encode("b,2\n")),
+        ),
+      );
+
+      expect(received).toEqual(["PUT /files?path=expenses.csv a,1\nb,2\n"]);
+      expect(written).toEqual({ path: "expenses.csv", bytes: 8 });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("fails an upload whose body breaks off with the body's own error", () =>
+    Effect.gen(function* () {
+      const { port } = yield* serve((request, response) => {
+        request.on("error", () => response.destroy());
+        void bodyOf(request).then(() => reply(response, 200, { path: "a.csv", bytes: 4 }));
+      });
+
+      const brokeOff = Stream.make(new TextEncoder().encode("a,1\n")).pipe(
+        Stream.concat(Stream.fail("the person went away" as const)),
+      );
+
+      expect(
+        yield* withComputer(`http://127.0.0.1:${port}`, (computer) =>
+          Effect.flip(computer.upload("a.csv", brokeOff)),
+        ),
+      ).toBe("the person went away");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reads an upload the computer found too large as refused", () =>
+    Effect.gen(function* () {
+      const computer = yield* fakeComputer(413, { reason: "refused", message: "too large" });
+
+      expect(
+        yield* withComputer(computer.url, (files) =>
+          Effect.flip(files.upload("big.bin", Stream.make(new Uint8Array(1)))),
+        ),
+      ).toEqual(new ComputerActFailed({ reason: "refused", message: "too large" }));
     }).pipe(Effect.scoped),
   );
 });

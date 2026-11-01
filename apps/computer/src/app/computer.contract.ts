@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { request } from "node:http";
+import { createHash, randomBytes } from "node:crypto";
+import { type OutgoingHttpHeaders, request } from "node:http";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
@@ -8,6 +8,9 @@ import {
   CommandRan,
   type ComputerAction,
   commandOutputLimit,
+  FileAnswer,
+  FileSaved,
+  fileTransferLimit,
   findRef,
   PageRead,
   PersonInput,
@@ -158,6 +161,52 @@ async function ran(response: Response): Promise<CommandRan> {
 
   return Schema.decodeUnknownSync(CommandRan)(await response.json());
 }
+
+const fileUrl = (computer: Computer, path: string) =>
+  `${computer.url}/files?path=${encodeURIComponent(path)}`;
+
+async function fileAnswer(response: Response): Promise<FileAnswer> {
+  expect(response.status).toBe(200);
+
+  return Schema.decodeUnknownSync(FileAnswer)(await response.json());
+}
+
+/**
+The status `PUT /files` answers an upload of `bytes` zero bytes, sent in 1 MiB pieces as fast as the
+computer reads them. Without `declared` the upload says no length, so the computer can only count it as
+it arrives.
+*/
+function uploadStatus(computer: Computer, path: string, bytes: number, declared: boolean) {
+  return new Promise<number>((resolve, reject) => {
+    const piece = Buffer.alloc(1024 * 1024);
+    const headers: OutgoingHttpHeaders = { authorization: `Bearer ${token}` };
+
+    if (declared) headers["content-length"] = String(bytes);
+
+    const upload = request(fileUrl(computer, path), { method: "PUT", headers });
+
+    upload.on("response", (response) => {
+      response.resume();
+      resolve(response.statusCode ?? 0);
+      upload.destroy();
+    });
+    // The computer may hang up once it has answered, before the rest is sent.
+    upload.on("error", (error) => (upload.destroyed ? undefined : reject(error)));
+
+    const send = (left: number) => {
+      if (left <= 0) return upload.end();
+
+      const ready = upload.write(piece.subarray(0, Math.min(piece.length, left)));
+
+      if (ready) send(left - piece.length);
+      else upload.once("drain", () => send(left - piece.length));
+    };
+
+    send(bytes);
+  });
+}
+
+const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -476,6 +525,100 @@ describe("the docker computer", () => {
     expect(await docker("exec", local.name, "id", "-u")).not.toBe("0");
     const owners = await docker("exec", local.name, "ps", "-o", "uid=", "-C", "chrome");
     expect(owners.split("\n").map((uid) => uid.trim())).not.toContain("0");
+  });
+
+  describe("its workspace", () => {
+    it("keeps a Bot's files where its shell sees them", async () => {
+      expect(
+        await fileAnswer(
+          await act(local, {
+            action: "write_file",
+            path: "reports/total.csv",
+            contents: "total,20\n",
+          }),
+        ),
+      ).toEqual({ action: "write_file", path: "reports/total.csv", bytes: 9 });
+
+      expect((await ran(await runCommand(local, "cat reports/total.csv"))).stdout.text).toBe(
+        "total,20\n",
+      );
+      expect(
+        await fileAnswer(await act(local, { action: "read_file", path: "reports/total.csv" })),
+      ).toMatchObject({ text: "total,20\n", bytes: 9 });
+    });
+
+    it("refuses /etc/passwd, and a link the shell placed in the workspace that leads to /etc", async () => {
+      await ran(await runCommand(local, "ln -sfn /etc etc && ln -sf /etc/passwd passwd"));
+
+      for (const path of ["/etc/passwd", "../etc/passwd", "etc/passwd", "passwd"]) {
+        const response = await act(local, { action: "read_file", path });
+
+        expect(response.status, path).toBe(403);
+        expect(await response.json(), path).toMatchObject({ reason: "refused" });
+      }
+
+      const written = await act(local, { action: "write_file", path: "passwd", contents: "x" });
+      expect(written.status).toBe(403);
+    });
+
+    it("refuses a write through a link that goes up out of a folder a link leads outside", async () => {
+      await ran(await runCommand(local, "ln -sfn /tmp sub && ln -sfn sub/.. up"));
+
+      const written = await act(local, {
+        action: "write_file",
+        path: "up/tmp/aobot-planted.txt",
+        contents: "x",
+      });
+
+      expect(written.status).toBe(403);
+      expect((await ran(await runCommand(local, "ls -A /tmp"))).stdout.text).not.toContain(
+        "aobot-planted.txt",
+      );
+    });
+
+    it("downloads the exact bytes of a file a person uploaded, as the shell sees them", async () => {
+      const bytes = randomBytes(1024 * 1024);
+      bytes[0] = 0;
+      bytes[bytes.length - 1] = 0;
+
+      const uploaded = await fetch(fileUrl(local, "blob.bin"), {
+        method: "PUT",
+        headers: { authorization: asServer.authorization },
+        body: bytes,
+      });
+
+      expect(uploaded.status).toBe(200);
+      expect(Schema.decodeUnknownSync(FileSaved)(await uploaded.json())).toEqual({
+        path: "blob.bin",
+        bytes: bytes.length,
+      });
+
+      const downloaded = await fetch(fileUrl(local, "blob.bin"), {
+        headers: { authorization: asServer.authorization },
+      });
+
+      expect(downloaded.status).toBe(200);
+      expect(downloaded.headers.get("content-length")).toBe(String(bytes.length));
+      expect(Buffer.from(await downloaded.arrayBuffer()).equals(bytes)).toBe(true);
+
+      const { stdout } = await ran(await runCommand(local, "sha256sum blob.bin"));
+      expect(stdout.text.split(" ")[0]).toBe(sha256(bytes));
+    });
+
+    it("refuses an upload past 100 MiB with 413 and keeps none of it, said or counted", async () => {
+      const tooLarge = fileTransferLimit + 1024 * 1024;
+
+      expect(await uploadStatus(local, "declared.bin", tooLarge, true)).toBe(413);
+      expect(await uploadStatus(local, "counted.bin", tooLarge, false)).toBe(413);
+
+      const { stdout } = await ran(await runCommand(local, "ls -A /workspace"));
+      expect(stdout.text).not.toContain("declared.bin");
+      expect(stdout.text).not.toContain("counted.bin");
+    }, 120_000);
+
+    it("refuses a download without the token", async () => {
+      expect((await fetch(fileUrl(local, "blob.bin"))).status).toBe(401);
+    });
   });
 
   describe("its shell", () => {

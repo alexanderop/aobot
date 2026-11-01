@@ -1,7 +1,5 @@
+import { workspaceRoot } from "@aobot/domain";
 import { Config, Record } from "effect";
-
-/** The Bot's own folder, where every command runs. It is also the commands' HOME. */
-export const workspace = "/workspace";
 
 /**
 What a command inherits from the computer's environment: its PATH and locale, and nothing else. A list
@@ -36,7 +34,7 @@ export function commandEnvironment(
   return {
     PATH,
     ...Record.getSomes(locale),
-    HOME: workspace,
+    HOME: workspaceRoot,
     DEBIAN_FRONTEND: "noninteractive",
     HTTP_PROXY: proxy,
     HTTPS_PROXY: proxy,
