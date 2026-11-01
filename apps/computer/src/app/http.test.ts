@@ -31,6 +31,8 @@ const fakeBrowser = Layer.succeed(
           action: "navigate",
           url: action.url,
           title: `${span.name} under ${parent}`,
+          snapshot: '- heading "Example Domain" [level=1] [ref=e1]',
+          truncated: false,
         } as const;
       }),
   }),
@@ -87,6 +89,8 @@ describe("POST /act", () => {
       action: "navigate",
       url: "https://example.com/",
       title: "Computer.act under no parent",
+      snapshot: '- heading "Example Domain" [level=1] [ref=e1]',
+      truncated: false,
     });
   });
 

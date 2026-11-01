@@ -34,6 +34,17 @@ function playwright<A>(what: string, run: () => Promise<A>): Effect.Effect<A, Ac
   });
 }
 
+/** The page as the Bot reads it after any action: its address, title and capped snapshot. */
+const readPage = Effect.fn("Browser.readPage")(function* (current: Page) {
+  const tree = yield* playwright("Reading the page", () =>
+    current.ariaSnapshot({ mode: "ai", timeout: snapshotTimeoutMs }),
+  );
+
+  const title = yield* playwright("Reading the title", () => current.title());
+
+  return { url: current.url(), title, ...capSnapshot(tree, snapshotLimit) };
+});
+
 /** The page actions run in. A page the site closed is replaced, so the next action still has one. */
 function currentPage(context: BrowserContext, page: Ref.Ref<Page>) {
   return Effect.gen(function* () {
@@ -116,34 +127,15 @@ export const browserLayer = (home: string) =>
           return yield* new ActionRefused({ message });
         }
 
-        const title = yield* playwright("Reading the title", () => current.title());
-
-        return { action: "navigate", url: current.url(), title } as const;
-      });
-
-      const snapshot = Effect.fn("Browser.snapshot")(function* () {
-        const current = yield* currentPage(context, page);
-
-        const tree = yield* playwright("Reading the page", () =>
-          current.ariaSnapshot({ mode: "ai", timeout: snapshotTimeoutMs }),
-        );
-
-        const title = yield* playwright("Reading the title", () => current.title());
-
-        return {
-          action: "snapshot",
-          url: current.url(),
-          title,
-          ...capSnapshot(tree, snapshotLimit),
-        } as const;
+        return yield* readPage(current);
       });
 
       const act = (action: ComputerAction) =>
         oneAtATime.withPermits(1)(
           ComputerAction.match(action, {
             navigate: ({ url }) => navigate(url),
-            snapshot: () => snapshot(),
-          }),
+            snapshot: () => Effect.flatMap(currentPage(context, page), readPage),
+          }).pipe(Effect.map((read): ComputerActResult => ({ action: action.action, ...read }))),
         );
 
       return Browser.of({ act });

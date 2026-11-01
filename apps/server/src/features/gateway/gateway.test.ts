@@ -45,17 +45,13 @@ function fakeComputers(act: Computer["act"]) {
 }
 
 const exampleDomain = (action: ComputerAction): Effect.Effect<ComputerActResult> =>
-  Effect.succeed(
-    action.action === "navigate"
-      ? { action: "navigate", url: "https://example.com/", title: "Example Domain" }
-      : {
-          action: "snapshot",
-          url: "https://example.com/",
-          title: "Example Domain",
-          snapshot: '- heading "Example Domain" [level=1] [ref=e1]',
-          truncated: false,
-        },
-  );
+  Effect.succeed({
+    action: action.action,
+    url: "https://example.com/",
+    title: "Example Domain",
+    snapshot: '- heading "Example Domain" [level=1] [ref=e1]',
+    truncated: false,
+  });
 
 const database = Layer.effectDiscard(migrateAudit).pipe(
   Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })),

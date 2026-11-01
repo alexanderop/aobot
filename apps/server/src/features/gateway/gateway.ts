@@ -1,4 +1,4 @@
-import { ComputerAction, ComputerActResult } from "@aobot/domain";
+import { ComputerAction, type ComputerActResult } from "@aobot/domain";
 import { Context, Duration, Effect, Layer, Match, Option, Result, type Schema } from "effect";
 import { AuditLog, type Outcome } from "../audit/public.ts";
 import {
@@ -52,17 +52,15 @@ const auditDetail = ComputerAction.match({
 });
 
 /** What the model is told the computer answered, before it is marked untrusted. */
-const present = ComputerActResult.match({
-  navigate: ({ url, title }) => `Opened ${url}\nTitle: ${title}`,
-  snapshot: ({ url, title, snapshot, truncated }) =>
-    [
-      `URL: ${url}`,
-      `Title: ${title}`,
-      "",
-      snapshot,
-      ...(truncated ? ["[the computer cut this snapshot short]"] : []),
-    ].join("\n"),
-});
+function present({ url, title, snapshot, truncated }: ComputerActResult): string {
+  return [
+    `URL: ${url}`,
+    `Title: ${title}`,
+    "",
+    snapshot,
+    ...(truncated ? ["[the computer cut this snapshot short]"] : []),
+  ].join("\n");
+}
 
 /** Why a forwarded call did not come back with a result. */
 type ForwardFailure = ComputerUnavailable | ComputerActFailed | ComputerLost | ToolTimedOut;

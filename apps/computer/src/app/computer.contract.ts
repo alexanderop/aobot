@@ -142,7 +142,11 @@ describe("the docker computer", () => {
   it("opens the fixture and tells its title", async () => {
     const url = `http://${suite}-fixture:${fixturePort}/`;
     const response = await act(local, { action: "navigate", url });
-    expect(await response.json()).toEqual({ action: "navigate", url, title: "Contract Fixture" });
+    expect(await response.json()).toMatchObject({
+      action: "navigate",
+      url,
+      title: "Contract Fixture",
+    });
     expect(response.status).toBe(200);
   });
 
@@ -151,9 +155,8 @@ describe("the docker computer", () => {
     const body = Schema.decodeUnknownSync(ComputerActResult)(await response.json());
     expect(response.status).toBe(200);
     expect(body).toMatchObject({ action: "snapshot", title: "Contract Fixture", truncated: false });
-    const snapshot = ComputerActResult.guards.snapshot(body) ? body.snapshot : "";
-    expect(snapshot).toMatch(/button "Press me" \[ref=e\d+\]/u);
-    expect(snapshot).toMatch(/link "Next page" \[ref=e\d+\]/u);
+    expect(body.snapshot).toMatch(/button "Press me" \[ref=e\d+\]/u);
+    expect(body.snapshot).toMatch(/link "Next page" \[ref=e\d+\]/u);
   });
 
   it.each([

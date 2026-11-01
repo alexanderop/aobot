@@ -132,7 +132,13 @@ const fakeDocker = Effect.gen(function* () {
     if (request.url === "/health") return reply(response, 200);
 
     state.acts.push(String(request.headers.authorization));
-    reply(response, 200, { action: "navigate", url: "https://example.com/", title: "Example" });
+    reply(response, 200, {
+      action: "navigate",
+      url: "https://example.com/",
+      title: "Example",
+      snapshot: "",
+      truncated: false,
+    });
   });
 
   const socketPath = join(tmpdir(), `aobot-docker-${crypto.randomUUID().slice(0, 8)}.sock`);

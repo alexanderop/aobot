@@ -87,6 +87,8 @@ const computers = Layer.succeed(
           action: "navigate",
           url: "https://example.com/",
           title: "Example Domain",
+          snapshot: '- heading "Example Domain" [level=1] [ref=e1]',
+          truncated: false,
         } as const),
     }),
     stop: Effect.void,

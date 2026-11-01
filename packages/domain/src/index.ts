@@ -13,6 +13,14 @@ export {
 
 export { BotId, ConversationId, MessageId, RunId, ToolCallId } from "./ids.ts";
 
-export { ComputerAction, ComputerActError, ComputerActResult, snapshotLimit } from "./computer.ts";
+export {
+  ComputerAction,
+  ComputerActError,
+  ComputerActResult,
+  RefTarget,
+  snapshotLimit,
+} from "./computer.ts";
 
 export { tokensMatch } from "./token.ts";
+
+export { snapshotRefs } from "./aria-snapshot.ts";
