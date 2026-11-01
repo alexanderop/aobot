@@ -7,12 +7,13 @@ word by word, and finds the whole conversation again after a reload. While a tur
 
 - `chat-send` the message appears as the person's bubble right away.
 - `chat-stream` the answer appears word by word, not all at once.
-- `chat-persist` a reload of the same `?c=<id>` URL shows both bubbles again.
+- `chat-persist` a reload of the same `?bot=assistant&c=<id>` URL shows both bubbles again.
 - `chat-stop` Stop ends a running turn.
 
 ## How to get to it (user POV)
 
-- Open http://localhost:3100. The page creates a conversation and puts its id in the URL as `?c=<id>`.
+- Open http://localhost:3100. The page opens Assistant, creates a conversation and puts both in the URL as
+  `?bot=assistant&c=<id>`.
 - Type in the `Message Assistant` box, press Enter (or the `Send` button). Shift+Enter adds a line.
 - While a turn runs, the `Stop` button replaces `Send`.
 

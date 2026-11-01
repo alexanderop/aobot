@@ -8,7 +8,8 @@ you touch. Every recipe drives the real page at http://localhost:3100 through
 ## Baseline preconditions
 
 - `$S up` printed `ready:` and an evidence folder. `$S doctor` ends `doctor: OK`.
-- The SQLite file is fresh (each `up` starts from an empty volume). One Bot exists: `Assistant`.
+- The SQLite file is fresh (each `up` starts from an empty volume). The Bots are the four in the root
+  `bots.yaml`; the page opens on `Assistant`, which is granted every tool.
 - The page is open in session `aobot-adhoc`: `$S ab open http://localhost:3100`, `$S ab wait --load networkidle`,
   `$S ab set media dark reduced-motion`.
 - Before every turn, `$S script` the model. An unscripted turn answers `Hi there, nice to meet you!`.
@@ -45,6 +46,7 @@ Each file: H1 title, one paragraph of user-visible behavior, then exactly `Sub-f
 - [Live screen](./live-screen.md): the side panel shows the Bot's browser while it works, folds after. E1-4.
 - [Take control](./take-control.md): a person takes the computer, clicks on it, hands back; the Bot is refused meanwhile. E1-5.
 - [Files](./files.md): a person uploads into the Bot's workspace and downloads what it saved; the Bot's file tools stay inside it. E1-6.
+- [Bots](./bots.md): the sidebar of Bots from `bots.yaml`, picking one, and the gateway refusing a tool it was not granted. E2-1.
 
 Cross-cutting: every turn is one `Chat.turn` trace (E0-2). Check it with `$S trace` on any feature's audit
 row `trace_id`.

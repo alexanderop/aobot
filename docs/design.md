@@ -45,9 +45,14 @@ screenshot.
 - **Selected row:** a slightly lighter rounded background.
 - **Bottom:** your photo and name, and an apps button.
 
+E2-1 builds the pinned grid, the groups and the selected row. A pinned Bot shows only in the grid, and a
+Bot in no group is listed just below it without a heading. Search and "new Bot" wait for creating Bots
+in the app, previews and unread dots for E3-2, and the bottom bar for people (E3).
+
 ### Conversation
 
-- **Header:** the Bot's avatar and name in a pill, centred, with the time below.
+- **Header:** the Bot's avatar and name in a pill, centred, with the time below. Until the conversation
+  opens the pill says Connecting…, and Unavailable with a `--danger` dot when it cannot.
 - **Your messages:** right-aligned, accent background, dark text (`--bg`, 4.5:1 or better), large radius.
 - **Bot messages:** left-aligned, dark grey background, max ~60% width. A Bot's consecutive messages are
   separate bubbles stacked with a small gap, not one long block.
@@ -82,8 +87,9 @@ screenshot.
 ### Bot avatars
 
 Each Bot gets a simple, friendly character: a soft blob shape in one solid colour with two eyes. Colour
-and shape tell Bots apart at a glance. Make our own set (Codex generates the images); do not copy the
-characters from the reference.
+and shape tell Bots apart at a glance. They are our own set, not the reference's characters: five blob
+bodies, ten colours and four gazes drawn as inline SVG and picked from a hash of the Bot's id, so a Bot
+looks the same on every page and a new Bot in `bots.yaml` needs no image file.
 
 ## Tokens (starting point)
 

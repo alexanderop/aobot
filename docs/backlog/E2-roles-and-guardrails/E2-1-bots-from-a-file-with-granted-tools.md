@@ -2,7 +2,7 @@
 id: E2-1
 title: Bots from a file, with granted tools
 epic: E2
-status: todo
+status: done
 depends_on: [E1-3]
 estimate: 2d
 ---

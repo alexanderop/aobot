@@ -6,8 +6,8 @@ description: Launch and drive the real aobot web app (chat with a Bot that has i
 # verify-aobot
 
 aobot is a React web app (`apps/web`) served by an Effect server (`apps/server`) that talks to a model and
-starts a Docker container per Bot (`apps/computer`, "the computer"). The user touches one page: a chat
-column plus a side panel showing the Bot's screen. Everything here runs against that page.
+starts one Docker container every Bot shares (`apps/computer`, "the computer"). The user touches one page:
+a sidebar of Bots, a chat column, and a side panel showing the computer's screen. Everything here runs against that page.
 
 Two ways to prove something:
 
@@ -114,7 +114,8 @@ Stable handles (from `apps/web/src`):
 
 | What          | Handle                                                                                                  |
 | ------------- | ------------------------------------------------------------------------------------------------------- |
-| Composer      | placeholder / aria-label `Message Assistant`                                                            |
+| Composer      | placeholder / aria-label `Message <Bot name>`, `Message Assistant` by default                           |
+| Sidebar       | `nav[aria-label="Bots"]`, a link per Bot (`find role link click --name "Researcher"`)                   |
 | Send / Stop   | button aria-label `Send` / `Stop` (Stop only while a turn runs)                                         |
 | Answers       | `.bubble--assistant .bubble__text`                                                                      |
 | Tool card     | `.tool-call[data-tool="<name>"][data-status="running\|done\|failed"]`, result in `.tool-call__result`   |
@@ -123,7 +124,7 @@ Stable handles (from `apps/web/src`):
 | Panel buttons | text `Take control`, `Hand back`, `Start the computer` (use `find role button click --name "<text>"`)   |
 | Panel status  | `.live-screen__status` ("The Bot holds its computer.", "You have control. The Bot waits…")              |
 | Live frame    | `img.live-screen__frame`, `data-control="person\|bot"`; a click on it clicks the computer               |
-| Conversation  | URL query `?c=<id>`; reload keeps the conversation                                                      |
+| Conversation  | URL query `?bot=<id>&c=<id>`; reload keeps the conversation                                             |
 | Attach        | button aria-label `Attach a file`, `input[type="file"]` (`ab upload`), chips `.attachment[data-status]` |
 | File chip     | `.tool-call[data-tool="write_file"] a.file-chip` (`ab download <sel> <path>`)                           |
 

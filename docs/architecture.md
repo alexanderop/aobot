@@ -248,7 +248,7 @@ ends. The HTTP client's spans of the server's requests to the computer's `/files
 
 ## Gateway tools
 
-Every tool a Bot has, in either runtime. The tool map test (`apps/server/src/features/gateway/tool-map.test.ts`)
+Every tool a Bot can be granted, in either runtime. The tool map test (`apps/server/src/features/gateway/tool-map.test.ts`)
 fails when a tool in `botToolkit` is missing here or a row here names no tool. Each call writes the `allow`
 row first, then one outcome row linked to it by `outcome_of`. Both carry the turn's `trace_id`; the outcome row
 copies the action, and its `detail` says why for `failed` and `unknown`.
@@ -373,11 +373,32 @@ const conversation = Atom.family((id: ConversationId) => /* fold ChatEvents into
 
 | Hook                       | Shaped like CopilotKit's             | What it gives a component                                                                                                                     | From |
 | -------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
-| `useConversation(id)`      | `useAgent`                           | `transcript` (messages and tool calls in order), `isRunning`, `usesComputer`, `send`, `stop`                                                  | E0-1 |
+| `useConversation(id, bot)` | `useAgent`                           | The conversation's own `bot`, `transcript` (messages and tool calls in order), `isRunning`, `usesComputer`, `unsent`, `send`, `stop`          | E0-1 |
 | `useToolCallRenderer()`    | `useRenderTool`, `useRenderToolCall` | A registry from tool name to a component that draws one tool call in each of its states                                                       | E1-1 |
 | `useLiveScreen()`          | (none)                               | The latest screen frame, none while the screen is blank                                                                                       | E1-4 |
-| `useControl()`             | (none)                               | Who holds the Bot's computer, why the last take, click or hand back failed, `takeControl`, `handBack`, `click`                                | E1-5 |
+| `useControl()`             | (none)                               | Who holds the computer every Bot shares, why the last take, click or hand back failed, `takeControl`, `handBack`, `click`                     | E1-5 |
 | `useAttachments(id, send)` | (none)                               | The files picked in the conversation's composer and how each upload went, `attach`, `dismiss`, and `send`, which names the files that arrived | E1-6 |
+| `useBots()`                | (none)                               | The Bots the server knows, as `bots.yaml` lists them, for the sidebar                                                                         | E2-1 |
+| `useSelection()`           | (none)                               | The Bot and conversation the page has open, as the server confirmed it, and `pick` to open another Bot                                        | E2-1 |
+
+The page opens the Bot and the conversation the URL names as `?bot=<id>&c=<id>`, or the first Bot in
+`bots.yaml`; a `bot` that is no Bot the server knows, or no Bot id at all, opens the first Bot and drops
+the URL's conversation. One writable `selection` atom holds it: its read side derives it from the URL, the
+Bot list, a memory of each Bot's last conversation and what `Chat.open` answered for that pair, and
+corrects the URL to show it without a history entry; its write side takes a picked Bot and pushes a
+history entry, so Back returns to the Bot before. The memory lives in an atom and is mirrored to
+`localStorage` at best, so a private window still returns to the conversation a person left. Each write
+takes in what other tabs stored first, so two tabs never overwrite each other's Bots. Each sidebar entry
+is a link to `?bot=<id>`, so it opens in a new tab or copies like any link.
+
+A conversation belongs to the Bot of its first message. `Chat.open` and `Chat.send` name the Bot the page
+picked; the server refuses another Bot with `ConversationOfAnotherBot`, naming the conversation's own,
+and a Bot the file does not name with `UnknownBot`. The page follows the first to the conversation's Bot;
+a message `Chat.send` was refused for goes back into the composer, where it stays through the follow.
+The second means the page's Bot list is out of date: the page asks for it again, once per answer, and
+stays on the Bot with its refusal until the fresh list resolves the URL to a Bot it names. It never moves
+to a Bot only the old list named, so two Bots the server forgot cannot send it back and forth. It
+remembers a Bot's conversation only once the server opened it with that Bot.
 
 Not copied: `useFrontendTool` (it runs a Bot's tool in the open tab, which breaks routines, the Mac and
 closed tabs) and CopilotKit's provider. The wire format stays AG-UI, so a CopilotKit or other AG-UI client
@@ -492,6 +513,10 @@ reaches when it does not, until network limits (E5-3). These hold locally as muc
 - **An approval is spent once.** It is bound to the exact action, refused if that changes, never repeated
   after a crash, and a "No" covers equivalent actions. Credentials, security settings and payments always go
   to the person, whatever the rules say (E2-6).
+- **An `acp` CLI names its own Bot.** Every MCP call carries the `aobot-bot` header the `acp` runtime
+  set for the turn, and the gateway grants by it, so a process on the host that reaches `/mcp` can name
+  any Bot. `acp` runs only in single-user mode on loopback, the same trust every MCP call had before
+  Bots existed; a per-turn token would close it.
 - **Secrets are typed by the person, not the chat.** When a Bot needs a password it asks; the person types
   it into a separate field that goes straight to the computer. The audit row records that a secret was
   supplied and its length.

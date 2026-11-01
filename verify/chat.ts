@@ -80,9 +80,9 @@ export function cardResult(tool: string): string {
   );
 }
 
-/** Send `text` from the composer, without waiting for the answer. */
-export function send(text: string): void {
-  browser("find", "placeholder", "Message Assistant", "fill", text);
+/** Send `text` from the composer of the conversation with `bot`, without waiting for the answer. */
+export function send(text: string, bot = "Assistant"): void {
+  browser("find", "placeholder", `Message ${bot}`, "fill", text);
   browser("press", "Enter");
 }
 
@@ -91,14 +91,19 @@ Send `text` from the composer once it takes a message, and wait until answer num
 `answer`. The last word of an answer can show a moment before its turn ends, and until then the composer
 holds Stop and Enter sends nothing.
 */
-export async function ask(text: string, index: number, answer: string): Promise<void> {
+export async function ask(
+  text: string,
+  index: number,
+  answer: string,
+  bot = "Assistant",
+): Promise<void> {
   await waitFor(
     "the composer to take a message",
     30_000,
     () => browser("get", "count", '[aria-label="Stop"]') === "0",
   );
 
-  send(text);
+  send(text, bot);
 
   await waitFor(`answer ${index + 1}`, 120_000, () => answers()[index] === answer);
 }
