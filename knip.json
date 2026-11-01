@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "ignoreBinaries": ["pgrep"],
+  "ignoreBinaries": ["pgrep", "Xvfb"],
   "workspaces": {
     ".": {
       "entry": [
@@ -30,6 +30,10 @@
     "apps/web": {
       "entry": ["src/**/*.test.ts"],
       "project": ["src/**/*.{ts,tsx}"]
+    },
+    "apps/computer": {
+      "entry": ["src/**/*.test.ts", "src/**/*.contract.ts"],
+      "project": ["src/**/*.ts"]
     }
   }
 }
