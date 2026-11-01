@@ -140,6 +140,7 @@ describe("the mock model server", () => {
         yield* askWith(origin);
 
         const answer = yield* Effect.promise(() => fetch(`${origin}/mock/requests`));
+
         const { requests } = Schema.decodeUnknownSync(
           Schema.Struct({ requests: Schema.Array(Schema.String) }),
         )(yield* Effect.promise(() => answer.json()));
