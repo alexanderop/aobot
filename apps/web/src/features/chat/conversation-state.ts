@@ -6,13 +6,32 @@ import type {
   Message,
   RunErrorCode,
 } from "@aobot/domain";
-import type { MessageId, RunId, ToolCallId } from "@aobot/domain";
+import type { BotId, MessageId, RunId, ToolCallId } from "@aobot/domain";
 
 /**
 Why a conversation is in the failed state. `stopped` is not here: the person asked for it, so a stopped
-run is just idle. `busy` and `connection` come from the page, not from a run.
+run is just idle. `busy`, `connection`, `unknown_bot` and `another_bot` come from the page, not from a
+run.
 */
-export type FailureCode = Exclude<RunErrorCode, "stopped"> | "busy" | "connection";
+export type FailureCode =
+  | Exclude<RunErrorCode, "stopped">
+  | "busy"
+  | "connection"
+  | "unknown_bot"
+  | "another_bot";
+
+/**
+What the server said when the page opened a conversation with a Bot: opened, with the Bot it belongs to,
+or refused because it belongs to another Bot or the server knows no such Bot.
+*/
+export type OpenOutcome = Data.TaggedEnum<{
+  Opened: { readonly bot: BotSummary };
+  OfAnotherBot: { readonly botId: BotId };
+  UnknownBot: { readonly botId: BotId };
+}>;
+
+/** Constructors and matchers for {@link OpenOutcome}. */
+export const OpenOutcome = Data.taggedEnum<OpenOutcome>();
 
 /**
 How far a run in flight has got, as this page sees it. The server can only stop a run it has started, so
@@ -67,11 +86,18 @@ export type TranscriptItem = Data.TaggedEnum<{
 /** Constructors and matchers for {@link TranscriptItem}. */
 export const TranscriptItem = Data.taggedEnum<TranscriptItem>();
 
+/** A message the server turned away, which the composer offers again. */
+export interface Unsent {
+  readonly id: MessageId;
+  readonly text: string;
+}
+
 /** Everything the page knows about one conversation. */
 export interface ConversationState {
   readonly bot: Option.Option<BotSummary>;
   readonly transcript: ReadonlyArray<TranscriptItem>;
   readonly status: ConversationStatus;
+  readonly unsent: Option.Option<Unsent>;
 }
 
 /** A conversation the page has not heard about yet. */
@@ -79,6 +105,7 @@ export const initialState: ConversationState = {
   bot: Option.none(),
   transcript: [],
   status: ConversationStatus.Idle(),
+  unsent: Option.none(),
 };
 
 function isMessage(
@@ -88,9 +115,16 @@ function isMessage(
   return TranscriptItem.$is("Message")(item) && item.id === messageId;
 }
 
-/** Start from what the server stored. A run already in flight was started elsewhere, so a stop goes out at once. */
-export function seedFromSnapshot(snapshot: ConversationSnapshot): ConversationState {
+/**
+Start from what the server stored. A run already in flight was started elsewhere, so a stop goes out at
+once. A message the server turned away is the page's own, so it is kept.
+*/
+export function seedFromSnapshot(
+  state: ConversationState,
+  snapshot: ConversationSnapshot,
+): ConversationState {
   return {
+    ...state,
     bot: Option.some(snapshot.bot),
     transcript: snapshot.messages.map((message) => TranscriptItem.Message(message)),
     status: snapshot.isRunning
@@ -99,7 +133,7 @@ export function seedFromSnapshot(snapshot: ConversationSnapshot): ConversationSt
   };
 }
 
-/** Show the person's message before the server answers. */
+/** Show the person's message before the server answers. Whatever the composer offered again went with it. */
 export function appendUserMessage(
   state: ConversationState,
   messageId: MessageId,
@@ -112,6 +146,7 @@ export function appendUserMessage(
       TranscriptItem.Message({ id: messageId, role: "user", text }),
     ],
     status: ConversationStatus.Running({ phase: RunPhase.Sending({ stopRequested: false }) }),
+    unsent: Option.none(),
   };
 }
 
@@ -123,6 +158,53 @@ export function refuseMessage(state: ConversationState, messageId: MessageId): C
     status: ConversationStatus.Failed({
       code: "busy",
       message: "Bot is still answering. Wait for it to finish or stop it.",
+    }),
+  };
+}
+
+/**
+The server knows no Bot by this id, as when `bots.yaml` no longer lists it. Nothing was stored, so a
+message sent to it is taken back too.
+*/
+export function refuseUnknownBot(
+  state: ConversationState,
+  botId: BotId,
+  messageId: Option.Option<MessageId>,
+): ConversationState {
+  const transcript = Option.match(messageId, {
+    onNone: () => state.transcript,
+    onSome: (id) => state.transcript.filter((item) => !isMessage(item, id)),
+  });
+
+  return {
+    ...state,
+    transcript,
+    status: ConversationStatus.Failed({
+      code: "unknown_bot",
+      message: `The server knows no Bot called ${botId}. Pick one in the sidebar.`,
+    }),
+  };
+}
+
+/**
+The conversation belongs to another Bot than the one the message was sent to, as when another tab sent
+its first message to that Bot. Nothing was stored, so the message is taken back and offered again in the
+composer, where it stays while the page follows the conversation to its own Bot.
+*/
+export function refuseForAnotherBot(
+  state: ConversationState,
+  botId: BotId,
+  messageId: MessageId,
+): ConversationState {
+  const refused = Arr.findFirst(state.transcript, (item) => isMessage(item, messageId));
+
+  return {
+    ...state,
+    transcript: state.transcript.filter((item) => !isMessage(item, messageId)),
+    unsent: Option.map(refused, (message) => ({ id: messageId, text: message.text })),
+    status: ConversationStatus.Failed({
+      code: "another_bot",
+      message: `This conversation is ${botId}'s, so the message was not sent.`,
     }),
   };
 }

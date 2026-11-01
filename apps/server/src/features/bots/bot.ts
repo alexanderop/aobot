@@ -53,5 +53,5 @@ export function turnInstructions(bot: Bot): string {
 
 /** What the page shows about a Bot. */
 export function botSummary(bot: Bot): BotSummary {
-  return { id: bot.id, name: bot.name };
+  return { id: bot.id, name: bot.name, group: bot.group, pinned: bot.pinned };
 }

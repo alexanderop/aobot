@@ -5,7 +5,7 @@ import { LanguageModel, type Response, Toolkit } from "effect/ai";
 import { RpcTest } from "effect/rpc";
 import { layerApi } from "../agent/public.ts";
 import { chatLayer } from "./public.ts";
-import { testBots } from "../bots/testing/test-bots.ts";
+import { assistant, testBots } from "../bots/testing/test-bots.ts";
 import { testDatabase } from "./testing/test-database.ts";
 
 /** A tracer that keeps every span it starts, so a test can read the tree a turn produced. */
@@ -69,6 +69,7 @@ describe("Chat tracing", () => {
 
       yield* client["Chat.send"]({
         conversationId: ConversationId.make("conversation-1"),
+        botId: assistant.id,
         messageId: MessageId.make("user-1"),
         text: "Say hi",
       }).pipe(Stream.runCollect);

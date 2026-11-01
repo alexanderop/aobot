@@ -1,3 +1,4 @@
+import { Option } from "effect";
 import { useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { Attachment, hasReady, stillUploading } from "./attachment-state.ts";
@@ -36,11 +37,12 @@ function AttachmentChip(props: {
 /**
 The message bar. Enter sends, Shift+Enter adds a line, and a stop button replaces send while a run is
 going. `＋` uploads files into the Bot's workspace at once, and the message waits while one is still on
-its way. `onSend` says whether the message went, so a draft it turned away is kept.
+its way. `onSend` says whether the message went, so a draft it turned away is kept. It takes nothing
+until the conversation's Bot is known, and starts from `initialDraft`.
 */
 export function Composer(props: {
-  readonly botName: string;
-  readonly disabled: boolean;
+  readonly initialDraft: string;
+  readonly botName: Option.Option<string>;
   readonly isRunning: boolean;
   readonly attachments: ReadonlyArray<Attachment>;
   readonly onAttach: (files: ReadonlyArray<File>) => void;
@@ -48,13 +50,19 @@ export function Composer(props: {
   readonly onSend: (draft: string) => boolean;
   readonly onStop: () => void;
 }) {
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(props.initialDraft);
   const picker = useRef<HTMLInputElement>(null);
+  const disabled = Option.isNone(props.botName);
   const waiting = stillUploading(props.attachments);
   const empty = draft.trim() === "" && !hasReady(props.attachments);
 
+  const label = Option.match(props.botName, {
+    onNone: () => "Message",
+    onSome: (name) => `Message ${name}`,
+  });
+
   const submit = () => {
-    if (props.disabled || props.isRunning || waiting || empty) return;
+    if (disabled || props.isRunning || waiting || empty) return;
 
     if (props.onSend(draft)) setDraft("");
   };
@@ -101,18 +109,18 @@ export function Composer(props: {
           type="button"
           className="composer__attach"
           aria-label="Attach a file"
-          disabled={props.disabled}
+          disabled={disabled}
           onClick={() => picker.current?.click()}
         >
           <span className="composer__attach-icon" aria-hidden="true" />
         </button>
         <textarea
           className="composer__input"
-          aria-label={`Message ${props.botName}`}
-          placeholder={`Message ${props.botName}`}
+          aria-label={label}
+          placeholder={label}
           rows={1}
           value={draft}
-          disabled={props.disabled}
+          disabled={disabled}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={onKeyDown}
         />
@@ -130,7 +138,7 @@ export function Composer(props: {
             type="submit"
             className="composer__button"
             aria-label="Send"
-            disabled={props.disabled || waiting || empty}
+            disabled={disabled || waiting || empty}
           >
             <span className="composer__send-icon" />
           </button>

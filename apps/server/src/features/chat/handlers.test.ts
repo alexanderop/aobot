@@ -1,4 +1,5 @@
 import {
+  BotId,
   type ChatEvent,
   ChatRpcs,
   ConversationBusy,
@@ -6,18 +7,22 @@ import {
   MessageAlreadySent,
   MessageId,
   ToolCallId,
+  UnknownBot,
+  ConversationOfAnotherBot,
 } from "@aobot/domain";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Layer, Queue, Stream } from "effect";
 import { RpcTest } from "effect/rpc";
-import { AgentEvent, type AgentError, AgentRuntime, Stalled } from "../agent/public.ts";
+import { AgentEvent, type AgentError, AgentRuntime, Stalled, type Turn } from "../agent/public.ts";
 import { ConversationStore, conversationStoreLayer } from "./conversation-store.ts";
 import { chatHandlersLayer } from "./handlers.ts";
 import { chatLayer } from "./public.ts";
-import { testBots } from "../bots/testing/test-bots.ts";
+import { assistant, researcher, testBots } from "../bots/testing/test-bots.ts";
 import { testDatabase } from "./testing/test-database.ts";
 
 const conversationId = ConversationId.make("conversation-1");
+
+const opening = { conversationId, botId: assistant.id };
 
 function chatWith(answer: Stream.Stream<AgentEvent, AgentError>) {
   const agent = Layer.succeed(AgentRuntime, AgentRuntime.of({ run: () => answer }));
@@ -59,7 +64,7 @@ function chatWithSlowStartup(answer: Stream.Stream<AgentEvent, AgentError>) {
 }
 
 function send(text: string, messageId: string) {
-  return { conversationId, messageId: MessageId.make(messageId), text };
+  return { conversationId, botId: assistant.id, messageId: MessageId.make(messageId), text };
 }
 
 const types = (events: ReadonlyArray<ChatEvent>) => events.map((event) => event.type);
@@ -79,7 +84,7 @@ describe("Chat RPCs", () => {
         "RUN_FINISHED",
       ]);
 
-      const snapshot = yield* client["Chat.open"]({ conversationId });
+      const snapshot = yield* client["Chat.open"](opening);
       expect(snapshot.isRunning).toBe(false);
       expect(snapshot.bot.name).toBe("Assistant");
       expect(snapshot.messages.map(({ role, text }) => ({ role, text }))).toEqual([
@@ -146,7 +151,7 @@ describe("Chat RPCs", () => {
         expect(after).toMatchObject({ type: "TEXT_MESSAGE_START" });
         expect(after).not.toEqual(before);
 
-        const snapshot = yield* client["Chat.open"]({ conversationId });
+        const snapshot = yield* client["Chat.open"](opening);
         expect(snapshot.messages.map(({ role, text }) => ({ role, text }))).toEqual([
           { role: "user", text: "Open example.com" },
           { role: "assistant", text: "Opening it." },
@@ -194,14 +199,14 @@ describe("Chat RPCs", () => {
       );
 
       expect(refused).toEqual(new ConversationBusy({ conversationId }));
-      expect((yield* client["Chat.open"]({ conversationId })).isRunning).toBe(true);
+      expect((yield* client["Chat.open"](opening)).isRunning).toBe(true);
 
       yield* client["Chat.stop"]({ conversationId });
       const events = yield* Fiber.join(first);
       expect(types(events).slice(-2)).toEqual(["TEXT_MESSAGE_END", "RUN_ERROR"]);
       expect(events.at(-1)).toMatchObject({ type: "RUN_ERROR", code: "stopped" });
 
-      const snapshot = yield* client["Chat.open"]({ conversationId });
+      const snapshot = yield* client["Chat.open"](opening);
       expect(snapshot.isRunning).toBe(false);
       expect(snapshot.messages.map(({ role, text }) => ({ role, text }))).toEqual([
         { role: "user", text: "Count to a million" },
@@ -223,7 +228,7 @@ describe("Chat RPCs", () => {
 
       expect(events.at(-1)?.type).toBe("RUN_FINISHED");
 
-      const snapshot = yield* client["Chat.open"]({ conversationId });
+      const snapshot = yield* client["Chat.open"](opening);
       expect(snapshot.messages.map(({ role, text }) => ({ role, text }))).toEqual([
         { role: "user", text: "First" },
         { role: "assistant", text: "Ok" },
@@ -275,7 +280,7 @@ describe("Chat RPCs", () => {
         expect(types(events)).toEqual(["RUN_STARTED", "RUN_ERROR"]);
         expect(events.at(-1)).toMatchObject({ type: "RUN_ERROR", code: "stopped" });
 
-        const snapshot = yield* client["Chat.open"]({ conversationId });
+        const snapshot = yield* client["Chat.open"](opening);
         expect(snapshot.isRunning).toBe(false);
         expect(snapshot.messages.map(({ role, text }) => ({ role, text }))).toEqual([
           { role: "user", text: "Say hi" },
@@ -298,7 +303,7 @@ describe("Chat RPCs", () => {
         Stream.tap((event) =>
           event.type === "RUN_FINISHED"
             ? Effect.gen(function* () {
-                const snapshot = yield* client["Chat.open"]({ conversationId });
+                const snapshot = yield* client["Chat.open"](opening);
 
                 const next = yield* client["Chat.send"](send("Second", "user-2")).pipe(
                   Stream.runCollect,
@@ -341,11 +346,11 @@ describe("Chat RPCs", () => {
 
       yield* Fiber.interrupt(first);
 
-      let snapshot = yield* client["Chat.open"]({ conversationId });
+      let snapshot = yield* client["Chat.open"](opening);
 
       for (let attempt = 0; snapshot.isRunning && attempt < 100; attempt++) {
         yield* Effect.yieldNow;
-        snapshot = yield* client["Chat.open"]({ conversationId });
+        snapshot = yield* client["Chat.open"](opening);
       }
 
       expect(snapshot.isRunning).toBe(false);
@@ -388,7 +393,7 @@ describe("Chat RPCs", () => {
       expect(refused).toEqual(new MessageAlreadySent({ messageId: MessageId.make("user-1") }));
       expect(runs).toBe(1);
 
-      const snapshot = yield* client["Chat.open"]({ conversationId });
+      const snapshot = yield* client["Chat.open"](opening);
       expect(snapshot.isRunning).toBe(false);
       expect(snapshot.messages.map(({ role, text }) => ({ role, text }))).toEqual([
         { role: "user", text: "Say hi" },
@@ -399,4 +404,67 @@ describe("Chat RPCs", () => {
       expect(next.at(-1)?.type).toBe("RUN_FINISHED");
     }).pipe(Effect.provide(chatLayer.pipe(Layer.provide([agent, testDatabase, testBots]))));
   });
+
+  it.effect(
+    "runs a conversation as the Bot of its first message, and refuses another Bot naming its own",
+    () => {
+      const turns: Array<Turn> = [];
+
+      const agent = Layer.succeed(
+        AgentRuntime,
+        AgentRuntime.of({
+          run: (turn) => {
+            turns.push(turn);
+
+            return Stream.make(AgentEvent.TextDelta({ text: "Ok" }), AgentEvent.Done());
+          },
+        }),
+      );
+
+      return Effect.gen(function* () {
+        const client = yield* RpcTest.makeClient(ChatRpcs);
+        const asResearcher = { ...send("Look this up", "user-1"), botId: researcher.id };
+
+        expect((yield* client["Chat.open"]({ conversationId, botId: researcher.id })).bot.id).toBe(
+          researcher.id,
+        );
+        yield* client["Chat.send"](asResearcher).pipe(Stream.runCollect);
+
+        const sentAsAssistant = yield* client["Chat.send"](send("And this", "user-2")).pipe(
+          Stream.runCollect,
+          Effect.flip,
+        );
+
+        const ownBot = new ConversationOfAnotherBot({ conversationId, botId: researcher.id });
+
+        expect(sentAsAssistant).toEqual(ownBot);
+        expect(yield* Effect.flip(client["Chat.open"](opening))).toEqual(ownBot);
+        expect(
+          (yield* client["Chat.open"]({ conversationId, botId: researcher.id })).messages.map(
+            (message) => message.text,
+          ),
+        ).toEqual(["Look this up", "Ok"]);
+        expect(turns.map((turn) => turn.bot)).toEqual([researcher.id]);
+        expect(turns[0]?.instructions).toContain("You are Researcher.");
+      }).pipe(Effect.provide(chatLayer.pipe(Layer.provide([agent, testDatabase, testBots]))));
+    },
+  );
+
+  it.effect("refuses a Bot the server does not know, storing nothing and running no turn", () =>
+    Effect.gen(function* () {
+      const client = yield* RpcTest.makeClient(ChatRpcs);
+      const ghost = BotId.make("ghost");
+
+      const opened = yield* Effect.flip(client["Chat.open"]({ conversationId, botId: ghost }));
+
+      const sent = yield* client["Chat.send"]({ ...send("Hi", "user-1"), botId: ghost }).pipe(
+        Stream.runCollect,
+        Effect.flip,
+      );
+
+      expect(opened).toEqual(new UnknownBot({ botId: ghost }));
+      expect(sent).toEqual(new UnknownBot({ botId: ghost }));
+      expect((yield* client["Chat.open"](opening)).messages).toEqual([]);
+    }).pipe(Effect.provide(chatWith(Stream.die("no turn runs for an unknown Bot")))),
+  );
 });

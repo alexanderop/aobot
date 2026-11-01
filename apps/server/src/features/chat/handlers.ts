@@ -1,16 +1,20 @@
 import {
+  type BotId,
   type ChatEvent,
   ChatRpcs,
   ConversationBusy,
   type ConversationId,
+  ConversationOfAnotherBot,
   type ConversationRef,
   type Message,
   MessageAlreadySent,
   MessageId,
+  type OpenConversation,
   RunId,
   type SendMessage,
+  UnknownBot,
 } from "@aobot/domain";
-import { Array, Deferred, Effect, MutableHashMap, Option, Ref, Stream } from "effect";
+import { Deferred, Effect, MutableHashMap, Option, Ref, Stream } from "effect";
 import { AgentRuntime } from "../agent/public.ts";
 import { Bots, botSummary, turnInstructions } from "../bots/public.ts";
 import { ConversationStore } from "./conversation-store.ts";
@@ -32,17 +36,35 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
   Effect.gen(function* () {
     const store = yield* ConversationStore;
     const agent = yield* AgentRuntime;
-    // Until the page picks a Bot, every conversation is with the first Bot in the file.
-    const bot = Array.headNonEmpty((yield* Bots).list);
+    const bots = yield* Bots;
 
     // One server process owns every run, so this map is the whole "one run per conversation" rule:
     // an entry exists exactly while a turn runs, and a restart starts with none. Its value is that
     // turn's stop signal.
     const runs = MutableHashMap.empty<ConversationId, Deferred.Deferred<void>>();
 
+    /**
+    The Bot the page picked, unless the conversation belongs to another. A Bot no longer in `bots.yaml` is
+    unknown, so its old conversations open no more.
+    */
+    const botOf = Effect.fnUntraced(function* (conversationId: ConversationId, picked: BotId) {
+      const own = yield* store.bot(conversationId);
+
+      if (Option.isSome(own) && own.value !== picked) {
+        return yield* new ConversationOfAnotherBot({ conversationId, botId: own.value });
+      }
+
+      return yield* Option.match(bots.get(picked), {
+        onNone: () => Effect.fail(new UnknownBot({ botId: picked })),
+        onSome: Effect.succeed,
+      });
+    });
+
     const open = Effect.fn("Chat.open")(function* ({
       conversationId,
-    }: typeof ConversationRef.Type) {
+      botId,
+    }: typeof OpenConversation.Type) {
+      const bot = yield* botOf(conversationId, botId);
       const messages = yield* store.messages(conversationId);
 
       return {
@@ -82,6 +104,8 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
         ),
         () => release,
       );
+
+      const bot = yield* botOf(conversationId, message.botId);
 
       yield* store.ensure(conversationId, bot.id);
 

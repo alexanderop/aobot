@@ -1,6 +1,7 @@
 import { Option } from "effect";
 import { useEffect, useRef } from "react";
-import type { ConversationId } from "@aobot/domain";
+import type { BotId, ConversationId } from "@aobot/domain";
+import { BotAvatar } from "../bots/public.ts";
 import { Bubble } from "./Bubble.tsx";
 import { Composer } from "./Composer.tsx";
 import { TranscriptItem } from "./conversation-state.ts";
@@ -9,11 +10,17 @@ import "./chat.css";
 import { useAttachments } from "./use-attachments.ts";
 import { useConversation } from "./use-conversation.ts";
 
-/** One conversation with a Bot: the name pill, the transcript, and the composer. */
-export function ConversationView(props: { readonly conversationId: ConversationId }) {
-  const { bot, transcript, isRunning, error, send, stop } = useConversation(props.conversationId);
+/** One conversation with a Bot: the pill with its avatar and name, the transcript, and the composer. */
+export function ConversationView(props: {
+  readonly conversationId: ConversationId;
+  readonly botId: BotId;
+}) {
+  const { bot, transcript, isRunning, error, unsent, send, stop } = useConversation(
+    props.conversationId,
+    props.botId,
+  );
+
   const files = useAttachments(props.conversationId, send);
-  const botName = Option.match(bot, { onNone: () => "Bot", onSome: (summary) => summary.name });
   const bottom = useRef<HTMLDivElement>(null);
   const last = transcript.at(-1);
 
@@ -25,8 +32,22 @@ export function ConversationView(props: { readonly conversationId: ConversationI
     <main className="conversation">
       <header className="conversation__header">
         <span className="pill">
-          <span className="pill__dot" />
-          {Option.isSome(bot) ? botName : "Connecting…"}
+          {Option.match(bot, {
+            onNone: () => (
+              <>
+                <span
+                  className={Option.isSome(error) ? "pill__dot pill__dot--failed" : "pill__dot"}
+                />
+                {Option.isSome(error) ? "Unavailable" : "Connecting…"}
+              </>
+            ),
+            onSome: (summary) => (
+              <>
+                <BotAvatar bot={summary.id} size={22} />
+                {summary.name}
+              </>
+            ),
+          })}
         </span>
       </header>
       <div className="conversation__messages" role="log" aria-live="polite" aria-busy={isRunning}>
@@ -47,8 +68,10 @@ export function ConversationView(props: { readonly conversationId: ConversationI
         ),
       })}
       <Composer
-        botName={botName}
-        disabled={Option.isNone(bot)}
+        // A message the server turned away starts a new draft holding its text.
+        key={Option.match(unsent, { onNone: () => "draft", onSome: ({ id }) => id })}
+        initialDraft={Option.match(unsent, { onNone: () => "", onSome: ({ text }) => text })}
+        botName={Option.map(bot, (summary) => summary.name)}
         isRunning={isRunning}
         attachments={files.attachments}
         onAttach={files.attach}

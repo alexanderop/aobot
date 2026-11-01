@@ -8,7 +8,7 @@ import { SqlClient } from "effect/sql";
 import { layerApi } from "../features/agent/public.ts";
 import { auditLogLayer, migrateAudit } from "../features/audit/public.ts";
 import { botToolkit } from "../features/bots/public.ts";
-import { testBots } from "../features/bots/testing/test-bots.ts";
+import { assistant, researcher, testBots } from "../features/bots/testing/test-bots.ts";
 import { chatLayer, migrateChat } from "../features/chat/public.ts";
 import { Computers } from "../features/computers/public.ts";
 import { fakeComputer } from "../features/computers/testing/fake-computer.ts";
@@ -138,6 +138,7 @@ describe("a tool call in an api turn", () => {
 
         yield* client["Chat.send"]({
           conversationId: ConversationId.make("conversation-1"),
+          botId: assistant.id,
           messageId: MessageId.make("user-1"),
           text: "Open example.com and tell me the page title.",
         }).pipe(Stream.runCollect);
@@ -191,6 +192,7 @@ describe("a tool call in an api turn", () => {
 
         yield* chat["Chat.send"]({
           conversationId: ConversationId.make("conversation-1"),
+          botId: assistant.id,
           messageId: MessageId.make("user-1"),
           text: "Open example.com and tell me the page title.",
         }).pipe(Stream.runCollect);
@@ -246,6 +248,7 @@ describe("a tool call in an api turn", () => {
 
       yield* client["Chat.send"]({
         conversationId: ConversationId.make("conversation-1"),
+        botId: assistant.id,
         messageId: MessageId.make("user-1"),
         text: "Type my password into the search box.",
       }).pipe(Stream.runCollect);
@@ -272,4 +275,66 @@ describe("a tool call in an api turn", () => {
       Effect.provide(toolInputsRedacted.pipe(Layer.provide(recorder.layer))),
     );
   });
+
+  it.effect(
+    "refuses a tool the turn's Bot was not granted, before the computer hears of it",
+    () => {
+      const model = steppingModel([
+        [
+          { type: "tool-call", id: "call-1", name: "run", params: { command: "ls" } },
+          { type: "finish", reason: "tool-calls", usage },
+        ],
+        [
+          { type: "text-delta", id: "text-1", delta: "I may not run commands." },
+          { type: "finish", reason: "stop", usage },
+        ],
+      ]);
+
+      const untouched = Layer.succeed(
+        Computers,
+        Computers.of({
+          ensure: Effect.die("the computer is never asked"),
+          running: Effect.die("the computer is never asked"),
+          stop: Effect.void,
+          reset: Effect.void,
+          list: Effect.succeed([]),
+          screen: Stream.never,
+        }),
+      );
+
+      const gateway = gatewayLayer.pipe(Layer.provide([auditLogLayer, untouched, testBots]));
+
+      const agent = layerApi(botToolkit, { maxSteps: 4, stallTimeout: Duration.seconds(60) }).pipe(
+        Layer.provide(botToolHandlers),
+        Layer.provide(gateway),
+        Layer.provide(model.layer),
+      );
+
+      return Effect.gen(function* () {
+        const client = yield* RpcTest.makeClient(ChatRpcs);
+        const sql = yield* SqlClient.SqlClient;
+
+        yield* client["Chat.send"]({
+          conversationId: ConversationId.make("conversation-1"),
+          botId: researcher.id,
+          messageId: MessageId.make("user-1"),
+          text: "Run ls.",
+        }).pipe(Stream.runCollect);
+
+        expect(yield* sql`SELECT decision, action, detail FROM audit_rows ORDER BY seq`).toEqual([
+          {
+            decision: "deny",
+            action: "run",
+            detail: JSON.stringify({ reason: "not granted to researcher" }),
+          },
+        ]);
+        expect(JSON.stringify(model.prompts[1]?.content)).toContain(
+          "run did not run: it is not granted to researcher",
+        );
+      }).pipe(
+        Effect.provide(chatLayer.pipe(Layer.provide([agent, testBots]))),
+        Effect.provide(database),
+      );
+    },
+  );
 });
