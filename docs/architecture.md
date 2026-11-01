@@ -107,10 +107,32 @@ fails when a tool in `botToolkit` is missing here or a row here names no tool. E
 row first, then one outcome row linked to it by `outcome_of`. Both carry the turn's `trace_id`; the outcome row
 copies the action, and its `detail` says why for `failed` and `unknown`.
 
-| Tool       | Parameters | Computer action                         | Audit rows                                                                 |
-| ---------- | ---------- | --------------------------------------- | -------------------------------------------------------------------------- |
-| `navigate` | `url`      | `POST /act {"action":"navigate","url"}` | `navigate · allow` with `{ url }`, then `succeeded`, `failed` or `unknown` |
-| `snapshot` | none       | `POST /act {"action":"snapshot"}`       | `snapshot · allow` with `{}`, then `succeeded`, `failed` or `unknown`      |
+| Tool       | Parameters    | Computer action                                               | Audit rows                                                                                                                                  |
+| ---------- | ------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `navigate` | `url`         | `POST /act {"action":"navigate","url"}`                       | `navigate · allow` with `{ url }`, then `succeeded`, `failed` or `unknown`                                                                  |
+| `snapshot` | none          | `POST /act {"action":"snapshot"}`                             | `snapshot · allow` with `{}`, then `succeeded`, `failed` or `unknown`                                                                       |
+| `click`    | `ref`         | `POST /act {"action":"click","target":{ref,role,name}}`       | `click · allow` with `{ ref, role, name }`, then `succeeded`, `failed` or `unknown`; `click · deny` with `{ ref, reason }`                  |
+| `type`     | `ref`, `text` | `POST /act {"action":"type","target":{ref,role,name},"text"}` | `type · allow` with `{ ref, role, name, text: "[N chars]" }`, then `succeeded`, `failed` or `unknown`; `type · deny` with `{ ref, reason }` |
+
+Every action answers with the page read afresh: its URL, title and snapshot, capped at 12,000 characters.
+`type` replaces what the field holds and never presses Enter.
+
+### Refs
+
+A ref such as `e12` names one element of the latest snapshot the Bot was shown. The gateway stores that
+snapshot per Bot in the database (`bot_snapshots`), replacing it after every action that answered, so any
+replica resolves a ref the same way. Before any rule runs, `click` and `type` resolve their ref to the
+element's role and name. A ref that is not in the stored snapshot is a `deny` row, the computer never
+hears of it, and the model reads:
+
+> click did not run: e12 is not a ref in your latest snapshot. Take a snapshot and use a ref from it.
+
+The computer sends the resolved element, not just its ref, and reads the page afresh before acting. When
+the element at that ref is gone or no longer has that role and name (the page changed, or a navigation
+started Playwright's ref counter again), it refuses with:
+
+> The page changed since your latest snapshot, so e12 is not the button it was. Take a snapshot again and
+> use a ref from it.
 
 A tool result reaches the model through one seam: `markUntrusted()`, a 20,000-character cap with a visible
 `[truncated: N characters]` note, and a per-tool timeout. A failed call is a result the model reads, not a

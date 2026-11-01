@@ -60,8 +60,8 @@ function recordingGateway() {
     Gateway,
     Gateway.of({
       refuse: (refusal) => Effect.sync(() => void refusals.push(refusal)),
-      act: (action) =>
-        Effect.die(`the contract suite offers no computer, but ${action.action} ran`),
+      act: (_bot, request) =>
+        Effect.die(`the contract suite offers no computer, but ${request.action} ran`),
     }),
   );
 

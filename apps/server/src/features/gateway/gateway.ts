@@ -1,5 +1,5 @@
-import { ComputerAction, type ComputerActResult } from "@aobot/domain";
-import { Context, Duration, Effect, Layer, Match, Option, Result, type Schema } from "effect";
+import { type BotId, ComputerAction, type ComputerActResult, snapshotRefs } from "@aobot/domain";
+import { Context, Duration, Effect, Layer, Match, Option, Result, Schema } from "effect";
 import { AuditLog, type Outcome } from "../audit/public.ts";
 import {
   type ComputerActFailed,
@@ -15,6 +15,7 @@ import {
   toolResult,
 } from "../../shared/tool-result.ts";
 import { redact } from "../../shared/redact.ts";
+import { snapshotStore } from "./snapshot-store.ts";
 
 /** Something an agent asked for that the gateway turned down. `detail` is already redacted. */
 export interface Refusal {
@@ -25,20 +26,46 @@ export interface Refusal {
   readonly detail: Schema.JsonObject;
 }
 
+/**
+What a Bot asks for, in the words of its tools: an element is a ref from its latest snapshot. The gateway
+resolves each ref into the {@link RefTarget} the computer is sent.
+*/
+export const BotRequest = Schema.Union([
+  Schema.Struct({ action: Schema.Literal("navigate"), url: Schema.String }),
+  Schema.Struct({ action: Schema.Literal("snapshot") }),
+  Schema.Struct({ action: Schema.Literal("click"), ref: Schema.String }),
+  Schema.Struct({ action: Schema.Literal("type"), ref: Schema.String, text: Schema.String }),
+]).pipe(Schema.toTaggedUnion("action"));
+
+/** A decoded {@link BotRequest}. */
+export type BotRequest = typeof BotRequest.Type;
+
 /** The only door a Bot's actions go through. */
 export class Gateway extends Context.Service<
   Gateway,
   {
     readonly refuse: (refusal: Refusal) => Effect.Effect<void>;
     /**
-    Records the call, forwards it to the computer, records what became of it, and answers what the model
-    reads. A call the computer could not carry out is a `ToolFailed` the model reads, never a dead turn.
+    Resolves the call's ref against the Bot's latest snapshot, records the call, forwards it to the
+    computer, records what became of it, and answers what the model reads. A call that could not be
+    carried out is a `ToolFailed` the model reads, never a dead turn.
     */
-    readonly act: (action: ComputerAction) => Effect.Effect<string, ToolFailed>;
+    readonly act: (bot: BotId, request: BotRequest) => Effect.Effect<string, ToolFailed>;
   }
 >()("aobot/gateway/Gateway") {}
 
 type ActionName = ComputerAction["action"];
+
+/** A ref the gateway could not find in the Bot's latest snapshot, so the call is denied. */
+class UnknownRef extends Schema.TaggedError<UnknownRef>()("UnknownRef", {
+  ref: Schema.String,
+  reason: Schema.String,
+}) {}
+
+/** What the model reads when its ref is not in its latest snapshot. */
+function unknownRefAnswer(action: ActionName, ref: string): string {
+  return `${action} did not run: ${ref} is not a ref in your latest snapshot. Take a snapshot and use a ref from it.`;
+}
 
 /** How long the computer may take over each action once it is running. Starting it is not counted. */
 const timeouts = {
@@ -128,6 +155,7 @@ export const gatewayLayer = Layer.effect(
   Effect.gen(function* () {
     const audit = yield* AuditLog;
     const computers = yield* Computers;
+    const snapshots = yield* snapshotStore;
 
     // Before anything is forwarded: a call an earlier run allowed and never heard back from is
     // recorded as unknown, never run again.
@@ -156,9 +184,73 @@ export const gatewayLayer = Layer.effect(
         .pipe(Effect.orDie);
     });
 
-    const act = Effect.fn("Gateway.act")(function* (action: ComputerAction) {
+    const targetOf = Effect.fn("Gateway.resolveRef")(function* (bot: BotId, ref: string) {
+      const latest = yield* snapshots
+        .latest(bot)
+        .pipe(
+          Effect.mapError(
+            () => new UnknownRef({ ref, reason: "the latest snapshot could not be read" }),
+          ),
+        );
+
+      if (Option.isNone(latest)) {
+        return yield* new UnknownRef({ ref, reason: "there is no snapshot yet" });
+      }
+
+      const target = snapshotRefs(latest.value).get(ref);
+
+      if (target === undefined) {
+        return yield* new UnknownRef({ ref, reason: "not in the latest snapshot" });
+      }
+
+      return target;
+    });
+
+    const resolve = (bot: BotId, request: BotRequest): Effect.Effect<ComputerAction, UnknownRef> =>
+      BotRequest.match(request, {
+        navigate: (navigate) => Effect.succeed(navigate),
+        snapshot: (snapshot) => Effect.succeed(snapshot),
+        click: ({ ref }) =>
+          Effect.map(targetOf(bot, ref), (target) => ({ action: "click", target }) as const),
+        type: ({ ref, text }) =>
+          Effect.map(targetOf(bot, ref), (target) => ({ action: "type", target, text }) as const),
+      });
+
+    const deny = Effect.fn("Gateway.deny")(function* (
+      request: BotRequest,
+      { ref, reason }: UnknownRef,
+    ) {
       const span = yield* Effect.option(Effect.currentSpan);
-      yield* Effect.annotateCurrentSpan({ "gateway.action": action.action });
+      yield* Effect.annotateCurrentSpan({ "gateway.outcome": "deny" });
+
+      yield* audit
+        .record({
+          traceId: Option.map(span, (current) => current.traceId),
+          initiatorKind: "person",
+          actorId,
+          decision: "deny",
+          action: request.action,
+          detail: { ref, reason },
+        })
+        .pipe(
+          Effect.catchTag("AuditWriteFailed", (error) =>
+            Effect.logError("A deny row could not be written").pipe(
+              Effect.annotateLogs({ action: request.action, reason: error.message }),
+            ),
+          ),
+        );
+
+      return yield* new ToolFailed({ message: unknownRefAnswer(request.action, ref) });
+    });
+
+    const act = Effect.fn("Gateway.act")(function* (bot: BotId, request: BotRequest) {
+      const span = yield* Effect.option(Effect.currentSpan);
+      yield* Effect.annotateCurrentSpan({ "gateway.action": request.action });
+
+      // A ref is resolved before anything else, so the rules E2 brings judge the element, not its ref.
+      const action = yield* resolve(bot, request).pipe(
+        Effect.catchTag("UnknownRef", (unknown) => deny(request, unknown)),
+      );
 
       // Grants and rules arrive with E2. Until then everything is allowed, and still recorded first.
       const allowRow = yield* audit
@@ -197,12 +289,20 @@ export const gatewayLayer = Layer.effect(
       const forwarded = yield* Effect.gen(function* () {
         const computer = yield* computers.ensure;
 
-        return yield* computer
-          .act(action)
-          .pipe(
-            Effect.map(present),
-            toolResult({ source: "web page", timeout: timeouts[action.action] }),
-          );
+        return yield* computer.act(action).pipe(
+          Effect.tap((result) =>
+            snapshots.save(bot, result.snapshot).pipe(
+              // Its refs then resolve against an older page, which the computer refuses as stale.
+              Effect.catchTag("SqlError", (error) =>
+                Effect.logWarning("The latest snapshot could not be stored").pipe(
+                  Effect.annotateLogs({ action: action.action, reason: error.message }),
+                ),
+              ),
+            ),
+          ),
+          Effect.map(present),
+          toolResult({ source: "web page", timeout: timeouts[action.action] }),
+        );
       }).pipe(
         Effect.result,
         Effect.onInterrupt(() => recordOutcome("unknown", { reason: "the turn was stopped" })),
