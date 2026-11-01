@@ -2,7 +2,7 @@
 id: E1-3
 title: Run shell commands in the workspace
 epic: E1
-status: todo
+status: done
 depends_on: [E1-1]
 estimate: 1d
 ---

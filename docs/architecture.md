@@ -243,6 +243,12 @@ locally as much as on AWS:
   exists for local fixtures and stops the server from starting in production.
 - **Single-user mode never faces the internet.** With it on, every request is one administrator. The
   server refuses to start if its public URL resolves to a public address, and warns on a private one.
+- **A command does not inherit the computer's environment.** It gets PATH, the locale, `HOME=/workspace`
+  and proxy variables naming the computer's egress filter, from an allow-list, so `env` never prints
+  `COMPUTER_TOKEN` or a secret added later. A command that honours those variables is held to the
+  browser's destinations, and private hosts stay refused to it even where `COMPUTER_ALLOW_PRIVATE_HOSTS`
+  opens them to the browser. A command can still unset them and connect directly; network limits close
+  that (E5-3). `bash -c`, never a login shell, so a `.bash_profile` the Bot wrote cannot run first.
 - **Computers run unprivileged.** The browser and shell run as a non-root user in a container with all
   capabilities dropped, `no-new-privileges`, and pids and memory limits. A page exploit or a fork bomb stays
   inside one person's computer and cannot take it over.
