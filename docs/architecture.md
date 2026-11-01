@@ -113,9 +113,16 @@ copies the action, and its `detail` says why for `failed` and `unknown`.
 | `snapshot` | none          | `POST /act {"action":"snapshot"}`                             | `snapshot · allow` with `{}`, then `succeeded`, `failed` or `unknown`                                                                       |
 | `click`    | `ref`         | `POST /act {"action":"click","target":{ref,role,name}}`       | `click · allow` with `{ ref, role, name }`, then `succeeded`, `failed` or `unknown`; `click · deny` with `{ ref, reason }`                  |
 | `type`     | `ref`, `text` | `POST /act {"action":"type","target":{ref,role,name},"text"}` | `type · allow` with `{ ref, role, name, text: "[N chars]" }`, then `succeeded`, `failed` or `unknown`; `type · deny` with `{ ref, reason }` |
+| `run`      | `command`     | `POST /act {"action":"run","command"}`                        | `run · allow` with `{ command }` (capped at 2,000 characters), then `succeeded`, `failed` or `unknown`                                      |
 
-Every action answers with the page read afresh: its URL, title and snapshot, capped at 12,000 characters.
-`type` replaces what the field holds and never presses Enter.
+Every browser action answers with the page read afresh: its URL, title and snapshot, capped at 12,000
+characters. `type` replaces what the field holds and never presses Enter.
+
+`run` answers how the command ended: its exit code, and the last 8,000 characters of each of stdout and
+stderr, with a note when anything before them was dropped. A command that exits non-zero still
+`succeeded`: the computer ran it, and the model reads the exit code. One still running after 30 seconds is
+killed with everything it started and answers that it was stopped. Its exit code is on the `Gateway.act`
+span as `gateway.exit_code`; the command is in the audit row, never in a span or a log.
 
 ### Refs
 

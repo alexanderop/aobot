@@ -1,5 +1,5 @@
-import { BotId, type BotSummary } from "@aobot/domain";
-import { Schema } from "effect";
+import { BotId, type BotSummary, commandTimeLimitMs } from "@aobot/domain";
+import { Duration, Schema } from "effect";
 import { Tool, Toolkit } from "effect/ai";
 import { ToolFailed } from "../../shared/tool-result.ts";
 import { untrustedGuidance } from "../../shared/untrusted.ts";
@@ -18,6 +18,7 @@ export const assistant: Bot = {
   instructions: [
     "You are Assistant, a helpful coworker. Answer briefly and plainly. If you do not know, say so.",
     "You have a computer with a browser: navigate opens a page, snapshot reads the open page as text with a ref per element, click and type act on an element by its ref. Every action answers with the page read afresh; use refs from the latest one.",
+    "Your computer also has a shell: run runs a bash command in /workspace, your own folder, where you create and read files.",
     untrustedGuidance,
   ].join("\n"),
 };
@@ -66,11 +67,23 @@ const type = Tool.make("type", {
   failureMode: "return",
 });
 
+const run = Tool.make("run", {
+  description: `Run a bash command in /workspace, your computer's own folder. It is stopped after ${Duration.format(Duration.millis(commandTimeLimitMs))}, with everything it started. Answers its exit code and the end of what it printed to stdout and stderr.`,
+  parameters: Schema.Struct({
+    command: Schema.String.annotate({
+      description: "The command, as you would type it into bash, such as ls -la.",
+    }),
+  }),
+  success: Schema.String,
+  failure: ToolFailed,
+  failureMode: "return",
+});
+
 /**
 The tools every Bot is offered. Each is a gateway call: the gateway implements their handlers, and a
 failure comes back as a result the model reads rather than ending the turn.
 */
-export const botToolkit = Toolkit.make(navigate, snapshot, click, type);
+export const botToolkit = Toolkit.make(navigate, snapshot, click, type, run);
 
 /** What the page shows about a Bot. */
 export function botSummary(bot: Bot): BotSummary {

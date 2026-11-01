@@ -5,6 +5,7 @@ import {
   type ComputerActResult,
   commandTimeLimitMs,
   type PageRead,
+  RunCommand,
   snapshotRefs,
 } from "@aobot/domain";
 import { Context, Duration, Effect, Layer, Match, Option, Result, Schema } from "effect";
@@ -43,6 +44,7 @@ export const BotRequest = Schema.Union([
   Schema.Struct({ action: Schema.Literal("snapshot") }),
   Schema.Struct({ action: Schema.Literal("click"), ref: Schema.String }),
   Schema.Struct({ action: Schema.Literal("type"), ref: Schema.String, text: Schema.String }),
+  RunCommand,
 ]).pipe(Schema.toTaggedUnion("action"));
 
 /** A decoded {@link BotRequest}. */
@@ -276,6 +278,7 @@ export const gatewayLayer = Layer.effect(
           Effect.map(targetOf(bot, ref), (target) => ({ action: "click", target }) as const),
         type: ({ ref, text }) =>
           Effect.map(targetOf(bot, ref), (target) => ({ action: "type", target, text }) as const),
+        run: (run) => Effect.succeed(run),
       });
 
     const deny = Effect.fnUntraced(function* (request: BotRequest, { ref, reason }: UnknownRef) {
