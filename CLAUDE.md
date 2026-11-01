@@ -4,7 +4,7 @@ AI coworkers with their own computer and guardrails. Read `docs/README.md` first
 
 ## Status
 
-E0-1 to E0-4 are done: chat with one Bot over `docker compose up`, each chat turn is one `Chat.turn` trace in Grafana, every test runs on a scripted model, and `vp run check` fails CI when a change breaks one of our rules, proven by `vp run verify E0-1`, `E0-2`, `E0-3` and `E0-4`. The next ticket is `docs/backlog/E0-walking-skeleton/E0-5-chat-on-my-own-subscription.md`.
+E0-1 to E0-5 are done: chat with one Bot over `docker compose up`, or on the host on your own Claude Code or Codex subscription over ACP with their own tools switched off (OpenCode passes the contract suite, not yet the demo); each chat turn is one `Chat.turn` trace in Grafana, every test runs on a scripted model, and `vp run check` fails CI when a change breaks one of our rules, proven by `vp run verify E0-1` to `E0-5`. The next ticket is `docs/backlog/E1-a-computer/E1-1-a-bot-opens-a-page-and-tells-me-its-title.md`.
 
 ## Commands
 
@@ -12,7 +12,9 @@ E0-1 to E0-4 are done: chat with one Bot over `docker compose up`, each chat tur
 - `vp install`: installs with the pinned pnpm. `vp fmt` formats. `vp check --fix` formats and autofixes.
 - Imports: tests use `vite-plus/test`, lint plugins use `vite-plus/lint/plugins` (enforced by `vite-plus/prefer-vite-plus-imports`).
 - `vp run test:smoke` (from E0-3): one turn against the real model in `MODEL_*`. Not part of `check`; runs nightly.
+- `vp run test:contract:agents` (from E0-5): agent runtime contract suite (`*.contract.ts`): `api` and each `acp` CLI against the mock model server, streaming, cancel, and no shell or file access outside the gateway. Starts the real pinned adapters through `npx`. Not part of `check`.
 - `vp run test:contract` (from E1-1): computer provider contract suite. Needs Docker.
+- `acp` on your own subscription (from E0-5): `AGENT_RUNTIME=acp ACP_AGENT=claude-code SINGLE_USER=true HOST=127.0.0.1 node apps/server/src/app/main.ts`, with the CLI signed in as usual. `acp` refuses to start without single-user mode on loopback, so it never runs in compose.
 - `vp run verify <ticket-id>` (from E0-1): the ticket's demo in a real browser with `agent-browser`. A slice is done only when this passes. Its stack publishes the server on 3100 and Grafana on 3400, so it runs beside `docker compose up`. A scenario that exports `stack = false` runs without the stack.
 - `docker compose up` (from E0-1): the server (SQLite file on a volume), `grafana/otel-lgtm` (Grafana on http://localhost:3300, traces under Explore → Tempo from E0-2).
 
