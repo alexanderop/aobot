@@ -16,6 +16,10 @@ export const botToolHandlers = botToolkit.toLayer(
       click: ({ ref }) => gateway.act(assistant.id, { action: "click", ref }),
       type: ({ ref, text }) => gateway.act(assistant.id, { action: "type", ref, text }),
       run: ({ command }) => gateway.act(assistant.id, { action: "run", command }),
+      read_file: ({ path }) => gateway.act(assistant.id, { action: "read_file", path }),
+      write_file: ({ path, contents }) =>
+        gateway.act(assistant.id, { action: "write_file", path, contents }),
+      list_files: ({ path }) => gateway.act(assistant.id, { action: "list_files", path }),
     };
   }),
 );

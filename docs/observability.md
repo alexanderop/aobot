@@ -25,13 +25,21 @@ OpenTelemetry for traces, logs and metrics, from the first ticket.
   ```
 
   RPC and HTTP request spans are off. RPC spans would add a second trace per call, and HTTP carries only
-  the web app's files, the health check and the RPC socket. Logs written inside a span carry its
+  the web app's files, the health check, the RPC socket and a person's files. Logs written inside a span carry its
   `trace_id`.
 
   Taking control and handing it back are traces of their own, `ComputerControl.take` and
   `ComputerControl.handBack`, with span events for each step (`control.door_closed`, `control.taken`,
   `control.released`). A Bot call refused while a person holds the computer adds `control.refused` to its
   `Gateway.act` span.
+
+  A Bot's `read_file` and `write_file` record the file's size on their `Gateway.act` span as
+  `gateway.file_bytes`, and `list_files` the number of entries as `gateway.file_entries`. A person's
+  upload and download are traces of their own, `FileTransfers.upload` and `FileTransfers.download`, with
+  `gateway.action` (`file.uploaded` or `file.downloaded`) and `gateway.file_bytes`. The upload's span
+  lasts until the computer saved the file; the download's until the person's request ended, after its
+  last byte or not. No span holds a path or what a file holds, the HTTP client's spans of the requests
+  to the computer included, which record `path=REDACTED`; the path is in the audit row.
 
 - **Computer.** The server sends a `traceparent` header with every request, so browser actions appear
   inside the same trace.
@@ -41,7 +49,10 @@ OpenTelemetry for traces, logs and metrics, from the first ticket.
 
 ## Audit rows link to traces
 
-Every audit row stores the `trace_id` of the turn that caused it. The audit page links each row to its
+Every audit row stores the `trace_id` of the turn that caused it. A person's file transfers are audited
+too: `file.uploaded` and `file.downloaded`, each an `allow` row with the file's path, name, extension and,
+for an upload, its size, then an outcome row with the size, or a `deny` row with why. A transfer's rows
+carry the `trace_id` of its own trace. The audit page links each row to its
 trace, so "the Bot did X" leads straight to everything that happened around it.
 
 ## Where it goes

@@ -165,4 +165,80 @@ describe("ToolCallCard", () => {
     expect(html).toContain("Could not run a command");
     expect(html).toContain("Your computer could not be started.");
   });
+
+  it("puts a chip that downloads the file under a write_file once it is saved", () => {
+    const html = draw(
+      call(
+        "write_file",
+        '{"path":"reports/expenses-total.csv","contents":"total,20\\n"}',
+        ToolCallStatus.Done({ result: "Saved reports/expenses-total.csv (9 bytes)." }),
+      ),
+    );
+
+    expect(html).toContain('data-tool="write_file"');
+    expect(html).toContain("Saved reports/expenses-total.csv");
+    expect(html).toMatch(
+      /<a class="file-chip" href="\/files\?path=reports%2Fexpenses-total\.csv" download="">.*expenses-total\.csv.*<\/a>/s,
+    );
+    expect(html).not.toContain("total,20");
+  });
+
+  it("names a chip by the file's whole name, \\ and all, as the Linux computer saved it", () => {
+    const html = draw(
+      call(
+        "write_file",
+        '{"path":"reports/a\\\\b.txt","contents":""}',
+        ToolCallStatus.Done({ result: "Saved reports/a\\b.txt (0 bytes)." }),
+      ),
+    );
+
+    expect(html).toMatch(/<a class="file-chip"[^>]*>.*a\\b\.txt.*<\/a>/s);
+  });
+
+  it("offers no chip while a write_file runs or once it failed, and says why it failed", () => {
+    const running = draw(
+      call("write_file", '{"path":"a.csv","contents":""}', ToolCallStatus.Running()),
+    );
+
+    const failed = draw(
+      call(
+        "write_file",
+        '{"path":"/etc/passwd","contents":""}',
+        ToolCallStatus.Failed({
+          result: "write_file did not run: /etc/passwd is outside your workspace.",
+        }),
+      ),
+    );
+
+    expect(running).toContain("Saving a.csv…");
+    expect(running).not.toContain("file-chip");
+    expect(failed).toContain("Could not save /etc/passwd");
+    expect(failed).toContain("outside your workspace");
+    expect(failed).not.toContain("file-chip");
+  });
+
+  it("says which file read_file read, and folds what it read", () => {
+    const html = draw(
+      call(
+        "read_file",
+        '{"path":"expenses.csv"}',
+        ToolCallStatus.Done({ result: "File: expenses.csv (40 bytes)\n\ndate,amount" }),
+      ),
+    );
+
+    expect(html).toContain("Read expenses.csv");
+    expect(html).toMatch(/<details[^>]*>.*date,amount.*<\/details>/s);
+    expect(html).not.toContain("file-chip");
+  });
+
+  it("says list_files listed your files for the whole workspace, and a folder by its name", () => {
+    expect(
+      draw(
+        call("list_files", '{"path":"."}', ToolCallStatus.Done({ result: "notes.txt (5 bytes)" })),
+      ),
+    ).toContain("Listed your files");
+    expect(draw(call("list_files", '{"path":"reports"}', ToolCallStatus.Running()))).toContain(
+      "Listing reports…",
+    );
+  });
 });

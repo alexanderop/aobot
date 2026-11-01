@@ -1,7 +1,9 @@
+import { WorkspacePath } from "@aobot/domain";
 import { Option, Schema } from "effect";
 import type { ReactNode } from "react";
 import { ToolCallStatus } from "./conversation-state.ts";
 import type { ToolCall } from "./conversation-state.ts";
+import { FileChip } from "./FileChip.tsx";
 
 /** Draws one tool call in each of its states. */
 export type ToolCallRenderer = (props: { readonly call: ToolCall }) => ReactNode;
@@ -14,9 +16,17 @@ const decodeRefArgs = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ ref: Schema.String })),
 );
 
+const refOf = (args: string) => Option.map(decodeRefArgs(args), ({ ref }) => ref);
+
 const decodeRunArgs = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ command: Schema.String })),
 );
+
+const decodePathArgs = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ path: WorkspacePath })),
+);
+
+const pathOf = (args: string) => Option.map(decodePathArgs(args), ({ path }) => path);
 
 function Result(props: { readonly summary: string; readonly text: string }) {
   return (
@@ -59,53 +69,74 @@ function SnapshotCall({ call }: { readonly call: ToolCall }) {
   });
 }
 
-/** What a click or type card says in each state, given the element's ref. */
-interface ActionWords {
-  readonly running: (ref: string) => string;
-  readonly done: (ref: string) => string;
-  readonly failed: (ref: string) => string;
-  readonly unfinished: (ref: string) => string;
+/** What a card says in each state, given what its call names: an element's ref, or a file's path. */
+interface CallWords {
+  readonly running: (target: string) => string;
+  readonly done: (target: string) => string;
+  readonly failed: (target: string) => string;
+  readonly unfinished: (target: string) => string;
 }
 
-/** A call that acts on one element by its ref: what it did, then the page it answered with, or why not. */
-function refCall(words: ActionWords): ToolCallRenderer {
-  return function RefCall({ call }) {
-    const ref = Option.match(decodeRefArgs(call.args), {
-      onNone: () => "an element",
-      onSome: (args) => args.ref,
-    });
+/**
+A call on one thing its args name, or `fallback` when they name none: what it did, then `shown` of what
+it answered, or why not.
+*/
+function namedCall(options: {
+  readonly target: (args: string) => Option.Option<string>;
+  readonly fallback: string;
+  readonly words: CallWords;
+  readonly shown: (target: string, result: string) => ReactNode;
+}): ToolCallRenderer {
+  const { words, shown } = options;
+
+  return function NamedCall({ call }) {
+    const target = Option.getOrElse(options.target(call.args), () => options.fallback);
 
     return ToolCallStatus.$match(call.status, {
-      Running: () => <p className="tool-call__title">{words.running(ref)}</p>,
+      Running: () => <p className="tool-call__title">{words.running(target)}</p>,
       Done: ({ result }) => (
         <>
-          <p className="tool-call__title">{words.done(ref)}</p>
-          <Result summary="The page after" text={result} />
+          <p className="tool-call__title">{words.done(target)}</p>
+          {shown(target, result)}
         </>
       ),
       Failed: ({ result }) => (
         <>
-          <p className="tool-call__title">{words.failed(ref)}</p>
+          <p className="tool-call__title">{words.failed(target)}</p>
           <Result summary="Why" text={result} />
         </>
       ),
-      Unfinished: () => <p className="tool-call__title">{words.unfinished(ref)}</p>,
+      Unfinished: () => <p className="tool-call__title">{words.unfinished(target)}</p>,
     });
   };
 }
 
-const ClickCall = refCall({
-  running: (ref) => `Clicking ${ref}…`,
-  done: (ref) => `Clicked ${ref}`,
-  failed: (ref) => `Could not click ${ref}`,
-  unfinished: (ref) => `Did not finish clicking ${ref}`,
+const pageAfter = (_ref: string, result: string) => (
+  <Result summary="The page after" text={result} />
+);
+
+const ClickCall = namedCall({
+  target: refOf,
+  fallback: "an element",
+  words: {
+    running: (ref) => `Clicking ${ref}…`,
+    done: (ref) => `Clicked ${ref}`,
+    failed: (ref) => `Could not click ${ref}`,
+    unfinished: (ref) => `Did not finish clicking ${ref}`,
+  },
+  shown: pageAfter,
 });
 
-const TypeCall = refCall({
-  running: (ref) => `Typing into ${ref}…`,
-  done: (ref) => `Typed into ${ref}`,
-  failed: (ref) => `Could not type into ${ref}`,
-  unfinished: (ref) => `Did not finish typing into ${ref}`,
+const TypeCall = namedCall({
+  target: refOf,
+  fallback: "an element",
+  words: {
+    running: (ref) => `Typing into ${ref}…`,
+    done: (ref) => `Typed into ${ref}`,
+    failed: (ref) => `Could not type into ${ref}`,
+    unfinished: (ref) => `Did not finish typing into ${ref}`,
+  },
+  shown: pageAfter,
 });
 
 function RunCall({ call }: { readonly call: ToolCall }) {
@@ -132,6 +163,46 @@ function RunCall({ call }: { readonly call: ToolCall }) {
     </>
   );
 }
+
+const ReadFileCall = namedCall({
+  target: pathOf,
+  fallback: "a file",
+  words: {
+    running: (path) => `Reading ${path}…`,
+    done: (path) => `Read ${path}`,
+    failed: (path) => `Could not read ${path}`,
+    unfinished: (path) => `Did not finish reading ${path}`,
+  },
+  shown: (_path, result) => <Result summary="What it read" text={result} />,
+});
+
+/** A file the Bot saved: once it is saved, a chip the person downloads it from. */
+const WriteFileCall = namedCall({
+  target: pathOf,
+  fallback: "a file",
+  words: {
+    running: (path) => `Saving ${path}…`,
+    done: (path) => `Saved ${path}`,
+    failed: (path) => `Could not save ${path}`,
+    unfinished: (path) => `Did not finish saving ${path}`,
+  },
+  shown: (path) => <FileChip path={path} />,
+});
+
+/** Where a listing starts, in words: a folder, or the whole workspace for `.`. */
+const folderWords = (path: string) => (path === "." ? "your files" : path);
+
+const ListFilesCall = namedCall({
+  target: pathOf,
+  fallback: "a folder",
+  words: {
+    running: (path) => `Listing ${folderWords(path)}…`,
+    done: (path) => `Listed ${folderWords(path)}`,
+    failed: (path) => `Could not list ${folderWords(path)}`,
+    unfinished: (path) => `Did not finish listing ${folderWords(path)}`,
+  },
+  shown: (_path, result) => <Result summary="What is there" text={result} />,
+});
 
 function DefaultCall({ call }: { readonly call: ToolCall }) {
   return (
@@ -164,6 +235,9 @@ const renderers: ReadonlyMap<string, ToolCallRenderer> = new Map([
   ["click", ClickCall],
   ["type", TypeCall],
   ["run", RunCall],
+  ["read_file", ReadFileCall],
+  ["write_file", WriteFileCall],
+  ["list_files", ListFilesCall],
 ]);
 
 function rendererFor(name: string): ToolCallRenderer {

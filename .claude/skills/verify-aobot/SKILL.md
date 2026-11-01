@@ -89,7 +89,7 @@ JSON
 ```
 
 - Tools the model can call: `navigate {url}`, `snapshot {}`, `click {ref}`, `type {ref, text}`,
-  `run {command}`. Refs are unknown until a page is read: `{"$refTo": {"role": "searchbox", "name": "Search Wikipedia"}}`
+  `run {command}`, `read_file {path}`, `write_file {path, contents}`, `list_files {path}`. Refs are unknown until a page is read: `{"$refTo": {"role": "searchbox", "name": "Search Wikipedia"}}`
   in `params` is filled with the matching ref from the latest snapshot the server sent.
 - A script that runs out mid-turn fails the turn. One `Say` at the end of every script.
 - `stack.sh requests` prints every request the server sent the model since the last `script` — the proof of
@@ -112,18 +112,20 @@ $S wait-answer 1 "The page is called Link." 90   # exact text of answer #1, 90 s
 
 Stable handles (from `apps/web/src`):
 
-| What          | Handle                                                                                                |
-| ------------- | ----------------------------------------------------------------------------------------------------- |
-| Composer      | placeholder / aria-label `Message Assistant`                                                          |
-| Send / Stop   | button aria-label `Send` / `Stop` (Stop only while a turn runs)                                       |
-| Answers       | `.bubble--assistant .bubble__text`                                                                    |
-| Tool card     | `.tool-call[data-tool="<name>"][data-status="running\|done\|failed"]`, result in `.tool-call__result` |
-| Screen panel  | `aside[aria-label="The Bot's screen"]` = `.live-screen`, `data-state="open\|folded"`                  |
-| Folded rail   | button aria-label `Take control`                                                                      |
-| Panel buttons | text `Take control`, `Hand back`, `Start the computer` (use `find role button click --name "<text>"`) |
-| Panel status  | `.live-screen__status` ("The Bot holds its computer.", "You have control. The Bot waits…")            |
-| Live frame    | `img.live-screen__frame`, `data-control="person\|bot"`; a click on it clicks the computer             |
-| Conversation  | URL query `?c=<id>`; reload keeps the conversation                                                    |
+| What          | Handle                                                                                                  |
+| ------------- | ------------------------------------------------------------------------------------------------------- |
+| Composer      | placeholder / aria-label `Message Assistant`                                                            |
+| Send / Stop   | button aria-label `Send` / `Stop` (Stop only while a turn runs)                                         |
+| Answers       | `.bubble--assistant .bubble__text`                                                                      |
+| Tool card     | `.tool-call[data-tool="<name>"][data-status="running\|done\|failed"]`, result in `.tool-call__result`   |
+| Screen panel  | `aside[aria-label="The Bot's screen"]` = `.live-screen`, `data-state="open\|folded"`                    |
+| Folded rail   | button aria-label `Take control`                                                                        |
+| Panel buttons | text `Take control`, `Hand back`, `Start the computer` (use `find role button click --name "<text>"`)   |
+| Panel status  | `.live-screen__status` ("The Bot holds its computer.", "You have control. The Bot waits…")              |
+| Live frame    | `img.live-screen__frame`, `data-control="person\|bot"`; a click on it clicks the computer               |
+| Conversation  | URL query `?c=<id>`; reload keeps the conversation                                                      |
+| Attach        | button aria-label `Attach a file`, `input[type="file"]` (`ab upload`), chips `.attachment[data-status]` |
+| File chip     | `.tool-call[data-tool="write_file"] a.file-chip` (`ab download <sel> <path>`)                           |
 
 Waiting: poll, do not sleep blindly. `wait-answer` polls for you; for anything else:
 

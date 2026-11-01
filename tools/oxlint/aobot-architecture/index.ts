@@ -121,10 +121,11 @@ function publicApiProblem(from: Owner, to: Owner | null, source: string): string
   const imported = workspaceImport(source);
   if (imported && imported.subpath !== "")
     return `Import @aobot/${imported.workspace}, not its internal path ${imported.subpath}.`;
+  if (to?.entry === "testing" && !from.test && from.entry !== "testing")
+    return `Only tests may import ${to.path}: a testing module is no part of the running app.`;
   if (!to?.feature || from.feature === to.feature || to.workspace !== from.workspace) return null;
-  if (to.entry === null)
-    return `Import ${to.feature}/public instead of internal module ${to.path}.`;
-  return null;
+  if (to.entry !== null) return null;
+  return `Import ${to.feature}/public instead of internal module ${to.path}.`;
 }
 
 function domainPurityProblem(from: Owner, _to: Owner | null, source: string): string | null {

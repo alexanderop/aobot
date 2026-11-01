@@ -1,4 +1,10 @@
-import { CommandEnd, type CommandRan, commandOutputLimit, commandTimeLimit } from "@aobot/domain";
+import {
+  CommandEnd,
+  type CommandRan,
+  commandOutputLimit,
+  commandTimeLimit,
+  workspaceRoot,
+} from "@aobot/domain";
 import {
   Context,
   Duration,
@@ -13,7 +19,7 @@ import {
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { startEgressProxyWithoutCredentials } from "../egress/public.ts";
-import { commandEnvironment, type InheritedEnvironment, workspace } from "./environment.ts";
+import { commandEnvironment, type InheritedEnvironment } from "./environment.ts";
 import { outputTail } from "./tail.ts";
 
 /** The shell could not start the command, for example because bash would not start. Answered as `failed` (502). */
@@ -75,7 +81,7 @@ export const shellLayer = (inherited: InheritedEnvironment) =>
           Effect.gen(function* () {
             const child = yield* spawner.spawn(
               ChildProcess.make("bash", ["-c", command], {
-                cwd: workspace,
+                cwd: workspaceRoot,
                 env: environment,
                 stdin: "ignore",
                 killSignal: "SIGKILL",

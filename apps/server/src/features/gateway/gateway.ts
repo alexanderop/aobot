@@ -2,8 +2,12 @@ import {
   type BotId,
   ComputerAction,
   commandTimeLimit,
+  escapesWorkspace,
+  FileAction,
+  type PageAction,
   RunCommand,
   snapshotRefs,
+  workspaceRoot,
 } from "@aobot/domain";
 import { Context, Duration, Effect, Layer, Match, Option, Result, Schema } from "effect";
 import { AuditLog, type Outcome } from "../audit/public.ts";
@@ -12,7 +16,6 @@ import {
   type ComputerActFailed,
   type ComputerLost,
   Computers,
-  type ComputerUnavailable,
 } from "../computers/public.ts";
 import {
   capText,
@@ -23,10 +26,18 @@ import {
 } from "../../shared/tool-result.ts";
 import { redact } from "../../shared/redact.ts";
 import { ComputerControl, controlDoors } from "./control.ts";
-import { personAudit } from "./person-audit.ts";
-import { endAttributes, presentCommand, presentPage } from "./present.ts";
+import { type ComputerFailure, failureOutcome, personAudit } from "./person-audit.ts";
+import { fileTarget } from "./file-target.ts";
+import {
+  endAttributes,
+  fileAttributes,
+  presentCommand,
+  presentFile,
+  presentPage,
+} from "./present.ts";
 import { snapshotStore } from "./snapshot-store.ts";
 import { spanEvent } from "./span-event.ts";
+import { FileTransfers, fileTransfers } from "./transfers.ts";
 
 /** Something an agent asked for that the gateway turned down. `detail` is already redacted. */
 export interface Refusal {
@@ -39,7 +50,7 @@ export interface Refusal {
 
 /**
 What a Bot asks for, in the words of its tools: an element is a ref from its latest snapshot. The gateway
-resolves each ref into the {@link RefTarget} the computer is sent.
+resolves each ref into the {@link RefTarget} the computer is sent. A file is a path inside its workspace.
 */
 export const BotRequest = Schema.Union([
   Schema.Struct({ action: Schema.Literal("navigate"), url: Schema.String }),
@@ -47,6 +58,7 @@ export const BotRequest = Schema.Union([
   Schema.Struct({ action: Schema.Literal("click"), ref: Schema.String }),
   Schema.Struct({ action: Schema.Literal("type"), ref: Schema.String, text: Schema.String }),
   RunCommand,
+  FileAction,
 ]).pipe(Schema.toTaggedUnion("action"));
 
 /** A decoded {@link BotRequest}. */
@@ -75,6 +87,16 @@ class UnknownRef extends Schema.TaggedError<UnknownRef>()("UnknownRef", {
   reason: Schema.String,
 }) {}
 
+/** A file action whose path leaves the workspace as it is written, so the call is denied. */
+class OutsideWorkspace extends Schema.TaggedError<OutsideWorkspace>()("OutsideWorkspace", {
+  action: FileAction,
+}) {}
+
+/** What the model reads when it names a file outside its workspace. */
+function outsideWorkspaceAnswer({ action, path }: FileAction): string {
+  return `${action} did not run: ${path} is outside your workspace. Name a file by its path inside ${workspaceRoot}, such as notes.txt, with no leading / and no "..".`;
+}
+
 /** What the model reads when its ref is not in its latest snapshot. */
 function unknownRefAnswer(action: ActionName, ref: string): string {
   return `${action} did not run: ${ref} is not a ref in your latest snapshot. Take a snapshot and use a ref from it.`;
@@ -96,6 +118,8 @@ const pastTheComputersLimit = Duration.sum(commandTimeLimit, Duration.seconds(5)
 
 const onAPage = "take a snapshot before trying again";
 
+const onAFile = "list your files with list_files before trying again";
+
 const forwarding = {
   navigate: { timeout: Duration.seconds(45), source: "web page", whenUnknown: onAPage },
   snapshot: { timeout: Duration.seconds(20), source: "web page", whenUnknown: onAPage },
@@ -106,13 +130,17 @@ const forwarding = {
     source: "command output",
     whenUnknown: "check the workspace, for example with ls, before running it again",
   },
+  read_file: { timeout: Duration.seconds(20), source: "file contents", whenUnknown: onAFile },
+  write_file: { timeout: Duration.seconds(30), source: "workspace", whenUnknown: onAFile },
+  list_files: { timeout: Duration.seconds(20), source: "file list", whenUnknown: onAFile },
 } satisfies { readonly [Name in ActionName]: Forwarding };
 
 const auditCommandLimit = 2_000;
 
 /**
 The audit row's `detail`. Text a Bot typed into a page goes through `redact()`; a URL is not typed text,
-and the command is what the audit row exists to show.
+and the command is what the audit row exists to show. A file is its path, name and extension, and for a
+write its size: never what it holds.
 */
 const auditDetail = ComputerAction.match({
   navigate: ({ url }): Schema.JsonObject => ({ url }),
@@ -120,10 +148,16 @@ const auditDetail = ComputerAction.match({
   click: ({ target }): Schema.JsonObject => ({ ...target }),
   type: ({ target, text }): Schema.JsonObject => ({ ...target, text: redact(text) }),
   run: ({ command }): Schema.JsonObject => ({ command: capText(command, auditCommandLimit) }),
+  read_file: ({ path }): Schema.JsonObject => ({ ...fileTarget(path) }),
+  write_file: ({ path, contents }): Schema.JsonObject => ({
+    ...fileTarget(path),
+    bytes: new TextEncoder().encode(contents).length,
+  }),
+  list_files: ({ path }): Schema.JsonObject => ({ ...fileTarget(path) }),
 });
 
 /** Why a forwarded call did not come back with a result. */
-type ForwardFailure = ComputerUnavailable | ComputerActFailed | ComputerLost | ToolTimedOut;
+type ForwardFailure = ComputerFailure | ToolTimedOut;
 
 /** What a forwarded call became: its outcome row, and what the model is told. */
 interface Settled {
@@ -131,9 +165,6 @@ interface Settled {
   readonly detail: Schema.JsonObject;
   readonly answer: Result.Result<string, ToolFailed>;
 }
-
-/** The longest computer message kept in an audit row. */
-const auditMessageLimit = 500;
 
 function settle(name: ActionName, result: Result.Result<string, ForwardFailure>): Settled {
   const failed = (message: string) => Result.fail(new ToolFailed({ message }));
@@ -146,21 +177,20 @@ function settle(name: ActionName, result: Result.Result<string, ForwardFailure>)
       answer: Result.succeed(text),
     }),
     onFailure: Match.typeTags<ForwardFailure, Settled>()({
-      ComputerUnavailable: ({ message }) => ({
-        outcome: "failed",
-        detail: { reason: "unavailable", message: capText(message, auditMessageLimit) },
-        answer: failed(`Your computer could not be started, so ${name} did not run. ${message}`),
-      }),
-      ComputerActFailed: ({ reason, message }) => ({
-        outcome: "failed",
-        detail: { reason, message: capText(message, auditMessageLimit) },
+      ComputerUnavailable: (failure) => ({
+        ...failureOutcome(failure),
         answer: failed(
-          `${name} did not happen: the computer ${reason === "refused" ? "refused it" : "tried and failed"}.\n${outsideText(message, "computer")}`,
+          `Your computer could not be started, so ${name} did not run. ${failure.message}`,
         ),
       }),
-      ComputerLost: ({ message }) => ({
-        outcome: "unknown",
-        detail: { reason: "lost", message: capText(message, auditMessageLimit) },
+      ComputerActFailed: (failure) => ({
+        ...failureOutcome(failure),
+        answer: failed(
+          `${name} did not happen: the computer ${failure.reason === "refused" ? "refused it" : "tried and failed"}.\n${outsideText(failure.message, "computer")}`,
+        ),
+      }),
+      ComputerLost: (failure) => ({
+        ...failureOutcome(failure),
         answer: failed(`The computer stopped answering. ${unknownAfter}`),
       }),
       ToolTimedOut: ({ timeoutMs }) => ({
@@ -176,7 +206,8 @@ function settle(name: ActionName, result: Result.Result<string, ForwardFailure>)
 
 /**
 The {@link Gateway}: one audit row per decision, and one outcome row per allowed call. The same layer
-provides {@link ComputerControl}, so a person's take and the Bot's actions meet at one door per Bot.
+provides {@link ComputerControl}, so a person's take and the Bot's actions meet at one door per Bot, and
+{@link FileTransfers}, so a person's files are audited in the same trail.
 */
 export const gatewayLayer = Layer.effectContext(
   Effect.gen(function* () {
@@ -185,6 +216,7 @@ export const gatewayLayer = Layer.effectContext(
     const computers = yield* Computers;
     const snapshots = yield* snapshotStore;
     const doors = yield* controlDoors;
+    const transfers = yield* fileTransfers;
 
     // Before anything is forwarded: a call an earlier run allowed and never heard back from is
     // recorded as unknown, never run again.
@@ -228,27 +260,54 @@ export const gatewayLayer = Layer.effectContext(
       bot: BotId,
       computer: Computer,
       action: ComputerAction,
-    ): Effect.Effect<string, ComputerActFailed | ComputerLost> =>
-      action.action === "run"
-        ? computer.run(action).pipe(
-            Effect.tap(({ end }) => Effect.annotateCurrentSpan(endAttributes(end))),
-            Effect.map(presentCommand),
-          )
-        : computer.browse(action).pipe(
-            Effect.tap((page) =>
-              snapshots.save(bot, page.snapshot).pipe(
-                // Its refs then resolve against an older page, which the computer refuses as stale.
-                Effect.catchTag("SqlError", (error) =>
-                  Effect.logWarning("The latest snapshot could not be stored").pipe(
-                    Effect.annotateLogs({ action: page.action, reason: error.message }),
-                  ),
+    ): Effect.Effect<string, ComputerActFailed | ComputerLost> => {
+      const browse = (page: PageAction) =>
+        computer.browse(page).pipe(
+          Effect.tap((read) =>
+            snapshots.save(bot, read.snapshot).pipe(
+              // Its refs then resolve against an older page, which the computer refuses as stale.
+              Effect.catchTag("SqlError", (error) =>
+                Effect.logWarning("The latest snapshot could not be stored").pipe(
+                  Effect.annotateLogs({ action: read.action, reason: error.message }),
                 ),
               ),
             ),
-            Effect.map(presentPage),
-          );
+          ),
+          Effect.map(presentPage),
+        );
 
-    const resolve = (bot: BotId, request: BotRequest): Effect.Effect<ComputerAction, UnknownRef> =>
+      const files = (file: FileAction) =>
+        computer.files(file).pipe(
+          Effect.tap((answer) => Effect.annotateCurrentSpan(fileAttributes(answer))),
+          Effect.map(presentFile),
+        );
+
+      return ComputerAction.match(action, {
+        navigate: browse,
+        snapshot: browse,
+        click: browse,
+        type: browse,
+        run: (command) =>
+          computer.run(command).pipe(
+            Effect.tap(({ end }) => Effect.annotateCurrentSpan(endAttributes(end))),
+            Effect.map(presentCommand),
+          ),
+        read_file: files,
+        write_file: files,
+        list_files: files,
+      });
+    };
+
+    /** A file action as it is, unless its path leaves the workspace. Links only the computer can see. */
+    const inWorkspace = (file: FileAction) =>
+      escapesWorkspace(file.path)
+        ? Effect.fail(new OutsideWorkspace({ action: file }))
+        : Effect.succeed(file);
+
+    const resolve = (
+      bot: BotId,
+      request: BotRequest,
+    ): Effect.Effect<ComputerAction, UnknownRef | OutsideWorkspace> =>
       BotRequest.match(request, {
         navigate: (navigate) => Effect.succeed(navigate),
         snapshot: (snapshot) => Effect.succeed(snapshot),
@@ -257,6 +316,9 @@ export const gatewayLayer = Layer.effectContext(
         type: ({ ref, text }) =>
           Effect.map(targetOf(bot, ref), (target) => ({ action: "type", target, text }) as const),
         run: (run) => Effect.succeed(run),
+        read_file: inWorkspace,
+        write_file: inWorkspace,
+        list_files: inWorkspace,
       });
 
     /** Records a `deny` row for `action` and tells the model `answer`. */
@@ -266,22 +328,14 @@ export const gatewayLayer = Layer.effectContext(
       answer: string,
     ) {
       yield* Effect.annotateCurrentSpan({ "gateway.outcome": "deny" });
-
-      yield* rows
-        .decide("deny", action, detail)
-        .pipe(
-          Effect.catchTag("AuditWriteFailed", (error) =>
-            Effect.logError("A deny row could not be written").pipe(
-              Effect.annotateLogs({ action, reason: error.message }),
-            ),
-          ),
-        );
+      yield* rows.deny(action, detail);
 
       return yield* new ToolFailed({ message: answer });
     });
 
     const carryOut = Effect.fnUntraced(function* (bot: BotId, request: BotRequest) {
       // A ref is resolved before anything else, so the rules E2 brings judge the element, not its ref.
+      // A path outside the workspace is denied here; the computer still confines every path itself.
       const action = yield* resolve(bot, request);
 
       // Grants and rules arrive with E2. Until then everything is allowed, and still recorded first.
@@ -337,12 +391,19 @@ export const gatewayLayer = Layer.effectContext(
             ),
           UnknownRef: ({ ref, reason }) =>
             deny(request.action, { ref, reason }, unknownRefAnswer(request.action, ref)),
+          OutsideWorkspace: ({ action }) =>
+            deny(
+              action.action,
+              { ...fileTarget(action.path), reason: "outside workspace" },
+              outsideWorkspaceAnswer(action),
+            ),
         }),
       );
     });
 
     return Context.make(Gateway, Gateway.of({ refuse, act })).pipe(
       Context.add(ComputerControl, doors.control),
+      Context.add(FileTransfers, transfers),
     );
   }),
 );

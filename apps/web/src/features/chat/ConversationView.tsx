@@ -6,11 +6,13 @@ import { Composer } from "./Composer.tsx";
 import { TranscriptItem } from "./conversation-state.ts";
 import { ToolCallCard } from "./ToolCallCard.tsx";
 import "./chat.css";
+import { useAttachments } from "./use-attachments.ts";
 import { useConversation } from "./use-conversation.ts";
 
 /** One conversation with a Bot: the name pill, the transcript, and the composer. */
 export function ConversationView(props: { readonly conversationId: ConversationId }) {
   const { bot, transcript, isRunning, error, send, stop } = useConversation(props.conversationId);
+  const files = useAttachments(props.conversationId, send);
   const botName = Option.match(bot, { onNone: () => "Bot", onSome: (summary) => summary.name });
   const bottom = useRef<HTMLDivElement>(null);
   const last = transcript.at(-1);
@@ -48,7 +50,10 @@ export function ConversationView(props: { readonly conversationId: ConversationI
         botName={botName}
         disabled={Option.isNone(bot)}
         isRunning={isRunning}
-        onSend={send}
+        attachments={files.attachments}
+        onAttach={files.attach}
+        onDismiss={files.dismiss}
+        onSend={files.send}
         onStop={stop}
       />
     </main>

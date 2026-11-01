@@ -1,4 +1,4 @@
-import { Duration, Schema } from "effect";
+import { Duration, Schema, SchemaTransformation } from "effect";
 
 /** The longest snapshot the computer returns, in UTF-16 code units. A longer one is cut and marked `truncated`. */
 export const snapshotLimit = 12_000;
@@ -11,6 +11,60 @@ How much of each of a command's output streams comes back, in UTF-16 code units,
 together stay well under what a tool result may hold.
 */
 export const commandOutputLimit = 8_000;
+
+/**
+How much of a file `read_file` hands the model, in bytes from its start. Decoded, it stays well under what
+a tool result may hold.
+*/
+export const fileReadLimit = 16_000;
+
+/** The most bytes one `write_file` may save, so a loop cannot fill the workspace. */
+export const fileWriteLimit = 1_000_000;
+
+/** The most entries one `list_files` answers, so a Bot cannot paste a whole disk into its context. */
+export const fileListLimit = 500;
+
+/** The most bytes a person may upload into the workspace or download from it in one file: 100 MiB. */
+export const fileTransferLimit = 100 * 1024 * 1024;
+
+/** The Bot's own folder: where its commands run, their HOME, and where its files live, named relative to it. */
+export const workspaceRoot = "/workspace";
+
+/**
+Whether `path` reaches outside the workspace as the computer, which runs Linux, reads it: an absolute path,
+or one that goes up a folder with `..`. `\` is part of a name there, not a separator. Only the computer can
+see where a symlink inside the workspace leads.
+*/
+export function escapesWorkspace(path: string): boolean {
+  return path.startsWith("/") || path.split("/").includes("..");
+}
+
+/**
+A path inside the workspace as a Bot or a person names it, relative to it. `""` decodes as `.`, the
+workspace itself, so the gateway and the computer judge one spelling. Never trimmed: `a.txt ` is a file of
+its own, and the gateway and the computer must see the same name.
+*/
+export const WorkspacePath = Schema.String.pipe(
+  Schema.decode(
+    SchemaTransformation.transform({
+      decode: (path) => (path === "" ? "." : path),
+      encode: (path) => path,
+    }),
+  ),
+);
+
+/** The last part of `path`, the name a file is saved under, split as {@link escapesWorkspace} splits it. */
+export function fileName(path: string): string {
+  return (
+    path
+      .split("/")
+      .filter((part) => part !== "")
+      .at(-1) ?? ""
+  );
+}
+
+/** The query of a person's `GET` or `PUT /files`, on the server and on the computer: which file. */
+export const FileQuery = Schema.Struct({ path: WorkspacePath });
 
 /** An element of a page as the gateway resolved it from the Bot's latest snapshot. */
 export const RefTarget = Schema.Struct({
@@ -41,8 +95,26 @@ export const RunCommand = Schema.Struct({ action: Schema.Literal("run"), command
 /** A decoded {@link RunCommand}. */
 export type RunCommand = typeof RunCommand.Type;
 
+/**
+Something a Bot asks of the files in its workspace, by its {@link WorkspacePath}. `read_file` answers with
+a {@link FileRead}, `write_file` with a {@link FileWritten}, and `list_files`, where `.` names the
+workspace itself, with a {@link FileList}.
+*/
+export const FileAction = Schema.Union([
+  Schema.Struct({ action: Schema.Literal("read_file"), path: WorkspacePath }),
+  Schema.Struct({
+    action: Schema.Literal("write_file"),
+    path: WorkspacePath,
+    contents: Schema.String,
+  }),
+  Schema.Struct({ action: Schema.Literal("list_files"), path: WorkspacePath }),
+]).pipe(Schema.toTaggedUnion("action"));
+
+/** A decoded {@link FileAction}. */
+export type FileAction = typeof FileAction.Type;
+
 /** One thing a Bot asks its computer to do. The body of `POST /act`, discriminated by `action`. */
-export const ComputerAction = Schema.Union([PageAction, RunCommand]).pipe(
+export const ComputerAction = Schema.Union([PageAction, RunCommand, FileAction]).pipe(
   Schema.toTaggedUnion("action"),
 );
 
@@ -104,15 +176,83 @@ export const CommandRan = Schema.Struct({
 /** A decoded {@link CommandRan}. */
 export type CommandRan = typeof CommandRan.Type;
 
+/**
+The start of a text file: its first {@link fileReadLimit} bytes as UTF-8, `truncated` when there were more,
+and the size of the whole file.
+*/
+export const FileRead = Schema.Struct({
+  action: Schema.Literal("read_file"),
+  path: Schema.String,
+  text: Schema.String,
+  truncated: Schema.Boolean,
+  bytes: Schema.Int,
+});
+
+/** A decoded {@link FileRead}. */
+export type FileRead = typeof FileRead.Type;
+
+/** A file a Bot's `write_file` saved in the workspace, and how many bytes it holds. */
+export const FileWritten = Schema.Struct({
+  action: Schema.Literal("write_file"),
+  path: Schema.String,
+  bytes: Schema.Int,
+});
+
+/** A decoded {@link FileWritten}. */
+export type FileWritten = typeof FileWritten.Type;
+
+/** A file a person uploaded, saved in the workspace at `path`, and how many bytes it holds. */
+export const FileSaved = Schema.Struct({ path: Schema.String, bytes: Schema.Int });
+
+/** A decoded {@link FileSaved}. */
+export type FileSaved = typeof FileSaved.Type;
+
+/**
+One file or folder in the workspace, by its path relative to it. Only a file has a size. `unreadable` is a
+folder that could not be opened or a file that could not be sized, so the rest of the listing still comes
+back.
+*/
+export const FileEntry = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("file"), path: Schema.String, bytes: Schema.Int }),
+  Schema.Struct({ kind: Schema.Literal("folder"), path: Schema.String }),
+  Schema.Struct({ kind: Schema.Literal("unreadable"), path: Schema.String }),
+]).pipe(Schema.toTaggedUnion("kind"));
+
+/** A decoded {@link FileEntry}. */
+export type FileEntry = typeof FileEntry.Type;
+
+/**
+The files and folders under a folder of the workspace, every level down, at most {@link fileListLimit},
+`truncated` when there were more.
+*/
+export const FileList = Schema.Struct({
+  action: Schema.Literal("list_files"),
+  path: Schema.String,
+  entries: Schema.Array(FileEntry),
+  truncated: Schema.Boolean,
+});
+
+/** A decoded {@link FileList}. */
+export type FileList = typeof FileList.Type;
+
+/** What the computer answers to a {@link FileAction}: the shape its own action names. */
+export const FileAnswer = Schema.Union([FileRead, FileWritten, FileList]).pipe(
+  Schema.toTaggedUnion("action"),
+);
+
+/** A decoded {@link FileAnswer}. */
+export type FileAnswer = typeof FileAnswer.Type;
+
 /** What the computer answers, with status 200, to a {@link ComputerAction} it carried out. */
-export const ComputerActResult = Schema.Union([PageRead, CommandRan]);
+export const ComputerActResult = Schema.Union([PageRead, CommandRan, FileAnswer]);
 
 /** A decoded {@link ComputerActResult}. */
 export type ComputerActResult = typeof ComputerActResult.Type;
 
 /**
-Why the computer did not carry out an action. `refused` (status 403) means it never tried, for example a
-private address; `failed` (status 502) means it tried and the browser or the shell failed.
+Why the computer did not carry out an action. `refused` (status 403, or 413 for an upload past
+{@link fileTransferLimit}) means it never tried, for example a private address or a path outside the
+workspace; `failed` (status 502) means it tried and the browser, the shell or the file system failed.
 */
 export const ComputerActError = Schema.Struct({
   reason: Schema.Literals(["refused", "failed"]),

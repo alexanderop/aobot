@@ -2,6 +2,9 @@ import {
   type ComputerAction,
   ComputerActError,
   CommandRan,
+  type FileAction,
+  FileAnswer,
+  FileSaved,
   type PageAction,
   PageRead,
   type PersonInput,
@@ -11,6 +14,7 @@ import {
 } from "@aobot/domain";
 import {
   Context,
+  Deferred,
   Duration,
   Effect,
   Option,
@@ -21,7 +25,12 @@ import {
   type Scope,
   Stream,
 } from "effect";
-import { type HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import {
+  HttpClient,
+  type HttpClientError,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/http";
 import { Socket } from "effect/socket";
 
 /** The computer could not be started or reached, so the action was never sent. */
@@ -41,6 +50,12 @@ export class ComputerLost extends Schema.TaggedError<ComputerLost>()("ComputerLo
   message: Schema.String,
 }) {}
 
+/** A file the computer is sending: its size, and its bytes as they arrive. */
+interface FileDownload {
+  readonly bytes: number;
+  readonly body: Stream.Stream<Uint8Array, ComputerLost>;
+}
+
 /** A running computer, ready for actions. Each answers only in the shape its action promises. */
 export interface Computer {
   readonly browse: (
@@ -49,6 +64,25 @@ export interface Computer {
   readonly run: (
     command: RunCommand,
   ) => Effect.Effect<CommandRan, ComputerActFailed | ComputerLost>;
+  /** A Bot's `read_file`, `write_file` or `list_files`, answered as that action's own result. */
+  readonly files: (
+    action: FileAction,
+  ) => Effect.Effect<FileAnswer, ComputerActFailed | ComputerLost>;
+  /**
+  The exact bytes of a file in the workspace, over `GET /files`, for a person's download. The computer's
+  answer is dropped when the scope closes, read to its end or not.
+  */
+  readonly download: (
+    path: string,
+  ) => Effect.Effect<FileDownload, ComputerActFailed | ComputerLost, Scope.Scope>;
+  /**
+  `body` saved at `path` in the workspace, over `PUT /files`, for a person's upload. A body that fails
+  partway fails the upload with its own error, not as a lost computer.
+  */
+  readonly upload: <E>(
+    path: string,
+    body: Stream.Stream<Uint8Array, E>,
+  ) => Effect.Effect<FileSaved, ComputerActFailed | ComputerLost | E>;
   /** What a person in control did on the screen, over `POST /input`. */
   readonly input: (input: PersonInput) => Effect.Effect<void, ComputerActFailed | ComputerLost>;
 }
@@ -94,14 +128,16 @@ function lost(error: { readonly message: string }) {
   return new ComputerLost({ message: error.message });
 }
 
-/** What each of the computer's routes takes. */
-interface Routes {
+/** What each of the computer's JSON routes takes. */
+interface JsonRoutes {
   readonly "/act": ComputerAction;
   readonly "/input": PersonInput;
 }
 
 /** The status each route answers when the computer carried the request out. */
-const done = { "/act": 200, "/input": 204 } as const satisfies Record<keyof Routes, number>;
+const done = { "/act": 200, "/input": 204, "/files": 200 } as const;
+
+type Route = keyof typeof done;
 
 /** What the computer answered, once it carried the request out. */
 type ReadAnswer<A> = (
@@ -110,7 +146,7 @@ type ReadAnswer<A> = (
 
 /** What `response` says of a request to `path`: `read` of it when the computer carried it out. */
 function answered<A>(
-  path: keyof Routes,
+  path: Route,
   response: HttpClientResponse.HttpClientResponse,
   read: ReadAnswer<A>,
 ): Effect.Effect<A, ComputerActFailed | ComputerLost> {
@@ -124,6 +160,7 @@ function answered<A>(
     [done[path]]: (answer: HttpClientResponse.HttpClientResponse) =>
       read(answer).pipe(Effect.mapError(lost)),
     403: refused,
+    413: refused,
     502: refused,
     // Any other 4xx turned the request away before it ran; anything else may have run partway.
     "4xx": (answer) =>
@@ -142,38 +179,106 @@ const decodePage = HttpClientResponse.schemaBodyJson(PageRead);
 
 const decodeCommand = HttpClientResponse.schemaBodyJson(CommandRan);
 
+const decodeFile = HttpClientResponse.schemaBodyJson(FileAnswer);
+
+const decodeSaved = HttpClientResponse.schemaBodyJson(FileSaved);
+
+const decodeLength = Schema.decodeUnknownEffect(
+  Schema.Struct({ "content-length": Schema.NumberFromString }),
+);
+
+/** A request to `/files` for the file at `path`, redacted so no client span records it. */
+function fileRequest(
+  method: "GET" | "PUT",
+  url: URL,
+  path: string,
+): HttpClientRequest.HttpClientRequest {
+  return HttpClientRequest.make(method)(url).pipe(
+    HttpClientRequest.setUrlParam("path", Redacted.make(path)),
+  );
+}
+
 /**
-The computer at `address`, spoken to over `POST /act` and `POST /input`. The client sends `traceparent`
-from the current span, so the computer's work lands inside the gateway's.
+The computer at `address`, spoken to over `POST /act`, `POST /input` and `/files`. The client sends
+`traceparent` from the current span, so the computer's work lands inside the gateway's.
 */
 export function computerAt(address: ComputerAddress, client: HttpClient.HttpClient): Computer {
-  /** Posts `body` to `path`, and `read`s the answer once the computer carried it out. */
-  const send = <Path extends keyof Routes, A>(
-    path: Path,
-    body: Routes[Path],
-    read: ReadAnswer<A>,
-  ) =>
-    client
-      .execute(
-        HttpClientRequest.post(new URL(path, address.url)).pipe(
-          HttpClientRequest.bearerToken(address.token),
-          HttpClientRequest.bodyJsonUnsafe(body),
-        ),
-      )
-      .pipe(
+  const at = (path: Route) => new URL(path, address.url);
+
+  /** Sends `request` to `path` with the token, and `read`s the answer once the computer carried it out. */
+  const sendOver =
+    <R>(over: HttpClient.HttpClient.With<HttpClientError.HttpClientError, R>) =>
+    <A>(path: Route, request: HttpClientRequest.HttpClientRequest, read: ReadAnswer<A>) =>
+      over.execute(HttpClientRequest.bearerToken(request, address.token)).pipe(
         Effect.mapError(lost),
         Effect.flatMap((response) => answered(path, response, read)),
       );
 
+  const send = sendOver(client);
+
+  // A download's answer is aborted with the scope, so one nobody reads to its end does not hold the computer.
+  const sendScoped = sendOver(HttpClient.withScope(client));
+
+  /** Posts `body` as JSON to `path`. */
+  const post = <Path extends keyof JsonRoutes, A>(
+    path: Path,
+    body: JsonRoutes[Path],
+    read: ReadAnswer<A>,
+  ) =>
+    send(path, HttpClientRequest.post(at(path)).pipe(HttpClientRequest.bodyJsonUnsafe(body)), read);
+
   return {
     browse: Effect.fn("Computer.act")(function* (action: PageAction) {
-      return yield* send("/act", action, decodePage);
+      return yield* post("/act", action, decodePage);
     }),
     run: Effect.fn("Computer.act")(function* (command: RunCommand) {
-      return yield* send("/act", command, decodeCommand);
+      return yield* post("/act", command, decodeCommand);
+    }),
+    files: Effect.fn("Computer.act")(function* (action: FileAction) {
+      return yield* post("/act", action, (answer) =>
+        decodeFile(answer).pipe(
+          Effect.filterOrFail(
+            (file) => file.action === action.action,
+            (file) => ({ message: `The computer answered ${action.action} as ${file.action}.` }),
+          ),
+        ),
+      );
+    }),
+    download: Effect.fn("Computer.download")(function* (path: string) {
+      return yield* sendScoped("/files", fileRequest("GET", at("/files"), path), (answer) =>
+        Effect.map(decodeLength(answer.headers), (headers) => ({
+          bytes: headers["content-length"],
+          body: answer.stream.pipe(Stream.mapError(lost)),
+        })),
+      );
+    }),
+    upload: Effect.fn("Computer.upload")(function* <E>(
+      path: string,
+      body: Stream.Stream<Uint8Array, E>,
+    ) {
+      // The client reads a body that fails as a broken connection, so its error is kept aside first.
+      const brokeOff = yield* Deferred.make<never, E>();
+
+      return yield* send(
+        "/files",
+        fileRequest("PUT", at("/files"), path).pipe(
+          HttpClientRequest.bodyStream(
+            Stream.tapError(body, (error) => Deferred.fail(brokeOff, error)),
+          ),
+        ),
+        decodeSaved,
+      ).pipe(
+        Effect.catch((failure) =>
+          Effect.flatMap(
+            Deferred.poll(brokeOff),
+            (body): Effect.Effect<never, E | ComputerActFailed | ComputerLost> =>
+              Option.getOrElse(body, () => Effect.fail(failure)),
+          ),
+        ),
+      );
     }),
     input: Effect.fn("Computer.input")(function* (input: PersonInput) {
-      return yield* send("/input", input, () => Effect.void);
+      return yield* post("/input", input, () => Effect.void);
     }),
   };
 }

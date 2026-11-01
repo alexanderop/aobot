@@ -10,6 +10,7 @@ import { auditLogLayer, migrateAudit } from "../features/audit/public.ts";
 import { botToolkit } from "../features/bots/public.ts";
 import { chatLayer, migrateChat } from "../features/chat/public.ts";
 import { Computers } from "../features/computers/public.ts";
+import { fakeComputer } from "../features/computers/testing/fake-computer.ts";
 import {
   botToolHandlers,
   controlHandlers,
@@ -90,18 +91,18 @@ function navigatingModel() {
 const computers = Layer.succeed(
   Computers,
   Computers.of({
-    ensure: Effect.succeed({
-      run: () => Effect.die("this computer has no shell"),
-      input: () => Effect.die("nobody takes control here"),
-      browse: () =>
-        Effect.succeed({
-          action: "navigate",
-          url: "https://example.com/",
-          title: "Example Domain",
-          snapshot: '- searchbox "Search" [ref=e1]',
-          truncated: false,
-        } as const),
-    }),
+    ensure: Effect.succeed(
+      fakeComputer({
+        browse: () =>
+          Effect.succeed({
+            action: "navigate",
+            url: "https://example.com/",
+            title: "Example Domain",
+            snapshot: '- searchbox "Search" [ref=e1]',
+            truncated: false,
+          } as const),
+      }),
+    ),
     running: Effect.die("nobody clicks here"),
     stop: Effect.void,
     reset: Effect.void,

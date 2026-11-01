@@ -2,7 +2,7 @@
 id: E1-6
 title: Files in and out of the workspace
 epic: E1
-status: todo
+status: done
 depends_on: [E1-3]
 estimate: 2d
 ---

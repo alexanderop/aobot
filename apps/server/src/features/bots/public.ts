@@ -1,4 +1,12 @@
-import { BotId, type BotSummary, commandTimeLimit } from "@aobot/domain";
+import {
+  BotId,
+  type BotSummary,
+  commandTimeLimit,
+  fileReadLimit,
+  fileWriteLimit,
+  WorkspacePath,
+  workspaceRoot,
+} from "@aobot/domain";
 import { Duration, Schema } from "effect";
 import { Tool, Toolkit } from "effect/ai";
 import { ToolFailed } from "../../shared/tool-result.ts";
@@ -18,7 +26,8 @@ export const assistant: Bot = {
   instructions: [
     "You are Assistant, a helpful coworker. Answer briefly and plainly. If you do not know, say so.",
     "You have a computer with a browser: navigate opens a page, snapshot reads the open page as text with a ref per element, click and type act on an element by its ref. Every action answers with the page read afresh; use refs from the latest one.",
-    "Your computer also has a shell: run runs a bash command in /workspace, your own folder, where you create and read files.",
+    `Your computer also has a shell: run runs a bash command in ${workspaceRoot}, your own folder, where you create and read files.`,
+    `list_files, read_file and write_file reach the files in ${workspaceRoot} by their path inside it, such as notes.txt. A file your person gives you lands there. A file you save with write_file is one your person can download from the chat, so save what they ask you to make that way.`,
     untrustedGuidance,
   ].join("\n"),
 };
@@ -68,7 +77,7 @@ const type = Tool.make("type", {
 });
 
 const run = Tool.make("run", {
-  description: `Run a bash command in /workspace, your computer's own folder. It is stopped after ${Duration.format(commandTimeLimit)}. Answers its exit code, or what stopped it, and the last of what it printed to stdout and stderr.`,
+  description: `Run a bash command in ${workspaceRoot}, your computer's own folder. It is stopped after ${Duration.format(commandTimeLimit)}. Answers its exit code, or what stopped it, and the last of what it printed to stdout and stderr.`,
   parameters: Schema.Struct({
     command: Schema.String.annotate({
       description: "The command, as you would type it into bash, such as ls -la.",
@@ -79,11 +88,60 @@ const run = Tool.make("run", {
   failureMode: "return",
 });
 
+// Described on the encoded side: a tool's JSON schema is the string the model writes, not what it decodes to.
+const filePath = WorkspacePath.pipe(
+  Schema.annotateEncoded({
+    description: `The file's path inside ${workspaceRoot}, such as notes.txt or reports/august.csv.`,
+  }),
+);
+
+const readFile = Tool.make("read_file", {
+  description: `Read a text file in ${workspaceRoot}. Answers its first ${fileReadLimit} bytes as text, and its size.`,
+  parameters: Schema.Struct({ path: filePath }),
+  success: Schema.String,
+  failure: ToolFailed,
+  failureMode: "return",
+});
+
+const writeFile = Tool.make("write_file", {
+  description: `Save text as a file in ${workspaceRoot}, replacing a file already there and making the folders it needs. Your person can download it from the chat. At most ${fileWriteLimit} bytes.`,
+  parameters: Schema.Struct({
+    path: filePath,
+    contents: Schema.String.annotate({ description: "Everything the file should hold." }),
+  }),
+  success: Schema.String,
+  failure: ToolFailed,
+  failureMode: "return",
+});
+
+const listFiles = Tool.make("list_files", {
+  description: `List the files and folders in ${workspaceRoot}, or in one folder inside it, every level down, with each file's size.`,
+  parameters: Schema.Struct({
+    path: WorkspacePath.pipe(
+      Schema.annotateEncoded({
+        description: `A folder inside ${workspaceRoot}, such as reports, or "." for all of it.`,
+      }),
+    ),
+  }),
+  success: Schema.String,
+  failure: ToolFailed,
+  failureMode: "return",
+});
+
 /**
 The tools every Bot is offered. Each is a gateway call: the gateway implements their handlers, and a
 failure comes back as a result the model reads rather than ending the turn.
 */
-export const botToolkit = Toolkit.make(navigate, snapshot, click, type, run);
+export const botToolkit = Toolkit.make(
+  navigate,
+  snapshot,
+  click,
+  type,
+  run,
+  readFile,
+  writeFile,
+  listFiles,
+);
 
 /** What the page shows about a Bot. */
 export function botSummary(bot: Bot): BotSummary {

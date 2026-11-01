@@ -57,6 +57,12 @@ screenshot.
   audit row.
 - **Composer:** a full-width rounded bar at the bottom: `＋` for attachments, placeholder
   "Message <Bot name>", a microphone button, and a round accent voice button.
+- **Attachments:** a file picked with `＋` uploads into the Bot's workspace at once and shows above the
+  bar as a chip on `--row-active`: its name, "Uploading…" in `--muted` while it goes, why it failed in
+  `--danger` (too large, say), and `×` to take it away, which also stops an upload still going. Send
+  waits while a file is still uploading, and the chips it named clear once the message went.
+- **File chip:** a file the Bot saved shows in its card as a chip on `--row-active` with an accent page
+  icon and the file's name in bold. Clicking it downloads the file.
 
 ### Live screen
 
@@ -105,6 +111,7 @@ Dark is the main theme. A light theme is a later ticket.
 | [E0-1](backlog/E0-walking-skeleton/E0-1-chat-with-a-bot-locally.md)                 | Tokens, conversation view, composer (text only) |
 | [E1-4](backlog/E1-a-computer/E1-4-watch-the-live-screen.md)                         | Live screen as a side panel                     |
 | [E1-5](backlog/E1-a-computer/E1-5-take-control-and-hand-back.md)                    | Take control rail, control bar                  |
+| [E1-6](backlog/E1-a-computer/E1-6-files-in-and-out-of-the-workspace.md)             | Attachment chips, file chip                     |
 | [E2-1](backlog/E2-roles-and-guardrails/E2-1-bots-from-a-file-with-granted-tools.md) | Sidebar with groups, pinned Bots, avatars       |
 | [E2-5](backlog/E2-roles-and-guardrails/E2-5-ask-before-risky-actions.md)            | Approval card                                   |
 | [E3-2](backlog/E3-people/E3-2-my-conversations-only-mine.md)                        | Last-message previews and unread dots           |
