@@ -12,7 +12,8 @@
     "test:contract": "vp test run --config vite.contract.computers.config.ts",
     "test:contract:agents": "vp test run --config vite.contract.config.ts",
     "knip": "knip",
-    "verify": "node verify/run.ts"
+    "verify": "node verify/run.ts",
+    "dev:acp": "cd apps/web && vp build && cd ../.. && AGENT_RUNTIME=acp ACP_AGENT=${ACP_AGENT:-claude-code} SINGLE_USER=true HOST=127.0.0.1 PORT=${PORT:-3100} node apps/server/src/app/main.ts"
   },
   "dependencies": {
     "effect": "4.1.0"
