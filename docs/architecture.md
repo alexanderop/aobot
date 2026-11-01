@@ -231,11 +231,15 @@ export interface Interface {
   readonly list: Effect.Effect<ReadonlyArray<ComputerStatus>, ComputerUnavailable>;
 }
 
-// A running computer: a URL and a token behind one method, whichever provider started it.
+// A running computer: a URL and a token, whichever provider started it. Both methods are `POST /act`,
+// and each reads only the answer its action promises, so a page answering a command is ComputerLost.
 export interface Computer {
-  readonly act: (
-    action: ComputerAction,
-  ) => Effect.Effect<ComputerActResult, ComputerActFailed | ComputerLost>;
+  readonly browse: (
+    action: PageAction,
+  ) => Effect.Effect<PageRead, ComputerActFailed | ComputerLost>;
+  readonly run: (
+    command: RunCommand,
+  ) => Effect.Effect<CommandRan, ComputerActFailed | ComputerLost>;
 }
 ```
 

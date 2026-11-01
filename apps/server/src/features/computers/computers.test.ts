@@ -1,4 +1,5 @@
 import type { IncomingHttpHeaders } from "node:http";
+import { CommandEnd } from "@aobot/domain";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Redacted, type Schema } from "effect";
 import { FetchHttpClient, HttpClient } from "effect/http";
@@ -21,7 +22,15 @@ function act(url: string) {
   return Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
 
-    return yield* computerAt({ url, token }, client).act({ action: "snapshot" });
+    return yield* computerAt({ url, token }, client).browse({ action: "snapshot" });
+  }).pipe(Effect.provide(FetchHttpClient.layer));
+}
+
+function runCommand(url: string) {
+  return Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+
+    return yield* computerAt({ url, token }, client).run({ action: "run", command: "ls" });
   }).pipe(Effect.provide(FetchHttpClient.layer));
 }
 
@@ -77,6 +86,30 @@ describe("computerAt", () => {
 
       expect(yield* Effect.flip(act(crashed.url))).toBeInstanceOf(ComputerLost);
       expect(yield* Effect.flip(act(garbled.url))).toBeInstanceOf(ComputerLost);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reads an answer in the shape of another action's as not knowing what happened", () =>
+    Effect.gen(function* () {
+      const page = yield* fakeComputer(200, {
+        action: "snapshot",
+        url: "https://example.com/",
+        title: "Example Domain",
+        snapshot: '- heading "Example Domain" [ref=e1]',
+        truncated: false,
+      });
+
+      const command = yield* fakeComputer(200, {
+        action: "run",
+        end: CommandEnd.cases.Exited.make({ code: 0 }),
+        stdout: { text: "", truncated: false },
+        stderr: { text: "", truncated: false },
+        leftOutputOpen: false,
+      });
+
+      expect(yield* Effect.flip(runCommand(page.url))).toBeInstanceOf(ComputerLost);
+      expect(yield* Effect.flip(act(command.url))).toBeInstanceOf(ComputerLost);
+      expect(yield* runCommand(command.url)).toMatchObject({ action: "run" });
     }).pipe(Effect.scoped),
   );
 });

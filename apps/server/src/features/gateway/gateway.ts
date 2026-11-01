@@ -1,7 +1,6 @@
 import {
   type BotId,
   ComputerAction,
-  type ComputerActResult,
   commandTimeLimit,
   RunCommand,
   snapshotRefs,
@@ -9,6 +8,7 @@ import {
 import { Context, Duration, Effect, Layer, Match, Option, Result, Schema, Semaphore } from "effect";
 import { AuditLog, type Outcome } from "../audit/public.ts";
 import {
+  type Computer,
   type ComputerActFailed,
   type ComputerLost,
   Computers,
@@ -230,20 +230,32 @@ export const gatewayLayer = Layer.effect(
     });
 
     /**
-    Records what the computer answered and says it in words for the model, before it is marked
-    untrusted. A page read becomes the Bot's latest snapshot; a command only says how it ended.
+    Sends `action` to the computer, records what it answered and says it in words for the model, before
+    it is marked untrusted. A page read becomes the Bot's latest snapshot; a command only says how it
+    ended.
     */
-    const received = (bot: BotId, result: ComputerActResult): Effect.Effect<string> =>
-      result.action === "run"
-        ? Effect.as(Effect.annotateCurrentSpan(endAttributes(result.end)), presentCommand(result))
-        : snapshots.save(bot, result.snapshot).pipe(
-            // Its refs then resolve against an older page, which the computer refuses as stale.
-            Effect.catchTag("SqlError", (error) =>
-              Effect.logWarning("The latest snapshot could not be stored").pipe(
-                Effect.annotateLogs({ action: result.action, reason: error.message }),
+    const forward = (
+      bot: BotId,
+      computer: Computer,
+      action: ComputerAction,
+    ): Effect.Effect<string, ComputerActFailed | ComputerLost> =>
+      action.action === "run"
+        ? computer.run(action).pipe(
+            Effect.tap(({ end }) => Effect.annotateCurrentSpan(endAttributes(end))),
+            Effect.map(presentCommand),
+          )
+        : computer.browse(action).pipe(
+            Effect.tap((page) =>
+              snapshots.save(bot, page.snapshot).pipe(
+                // Its refs then resolve against an older page, which the computer refuses as stale.
+                Effect.catchTag("SqlError", (error) =>
+                  Effect.logWarning("The latest snapshot could not be stored").pipe(
+                    Effect.annotateLogs({ action: page.action, reason: error.message }),
+                  ),
+                ),
               ),
             ),
-            Effect.as(presentPage(result)),
+            Effect.map(presentPage),
           );
 
     const resolve = (bot: BotId, request: BotRequest): Effect.Effect<ComputerAction, UnknownRef> =>
@@ -327,10 +339,7 @@ export const gatewayLayer = Layer.effect(
       const forwarded = yield* Effect.gen(function* () {
         const computer = yield* computers.ensure;
 
-        return yield* computer.act(action).pipe(
-          Effect.flatMap((result) => received(bot, result)),
-          toolResult(forwarding[action.action]),
-        );
+        return yield* forward(bot, computer, action).pipe(toolResult(forwarding[action.action]));
       }).pipe(
         Effect.result,
         Effect.onInterrupt(() => recordOutcome("unknown", { reason: "the turn was stopped" })),
