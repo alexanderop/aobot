@@ -14,7 +14,7 @@ const call = (id: string) =>
   AgentEvent.ToolCallStarted({ id: ToolCallId.make(id), name: "snapshot", params: {} });
 
 const done = (id: string) =>
-  AgentEvent.ToolCallFinished({ id: ToolCallId.make(id), result: "Example Domain" });
+  AgentEvent.ToolCallFinished({ id: ToolCallId.make(id), result: "Example Domain", failed: false });
 
 describe("turnEvents", () => {
   it.effect("starts a turn with tool calls and no parent message, then opens the answer", () =>
@@ -75,6 +75,44 @@ describe("turnEvents", () => {
           toolCallId: "b",
           toolCallName: "snapshot",
           parentMessageId: "message-1-1",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("says in each tool result's metadata whether the tool failed", () =>
+    Effect.gen(function* () {
+      const events = yield* turnEvents(
+        ids,
+        Stream.make(
+          call("a"),
+          done("a"),
+          call("b"),
+          AgentEvent.ToolCallFinished({
+            id: ToolCallId.make("b"),
+            result: "The computer is not available.",
+            failed: true,
+          }),
+          AgentEvent.Done(),
+        ),
+      ).pipe(Stream.runCollect);
+
+      expect(events.filter((event) => event.type === "TOOL_CALL_RESULT")).toEqual([
+        {
+          type: "TOOL_CALL_RESULT",
+          messageId: "message-1-result-a",
+          toolCallId: "a",
+          content: "Example Domain",
+          role: "tool",
+          metadata: { failed: false },
+        },
+        {
+          type: "TOOL_CALL_RESULT",
+          messageId: "message-1-result-b",
+          toolCallId: "b",
+          content: "The computer is not available.",
+          role: "tool",
+          metadata: { failed: true },
         },
       ]);
     }),

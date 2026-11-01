@@ -148,8 +148,11 @@ function applyToolCall(calls: ToolCalls, update: ToolCallUpdate): ToolCallsTrans
   const set = (call: ToolCall) => new Map(calls).set(id, call);
   const finishes = update.status === "completed" || update.status === "failed";
 
-  const finished = () =>
-    AgentEvent.ToolCallFinished({ id, result: toolResult(update, update.status === "failed") });
+  const finished = () => {
+    const failed = update.status === "failed";
+
+    return AgentEvent.ToolCallFinished({ id, result: toolResult(update, failed), failed });
+  };
 
   return ToolCall.$match(calls.get(id) ?? unseen, {
     Ended: (): ToolCallsTransition => [calls, []],

@@ -49,7 +49,7 @@ const TurnState = Data.taggedEnum<TurnState>();
 type TurnStep = Data.TaggedEnum<{
   Text: { readonly text: string };
   CallTool: { readonly id: ToolCallId; readonly name: string; readonly params: unknown };
-  ToolResult: { readonly id: ToolCallId; readonly result: string };
+  ToolResult: { readonly id: ToolCallId; readonly result: string; readonly failed: boolean };
   Finish: {};
   Fail: { readonly code: RunErrorCode; readonly message: string };
 }>;
@@ -131,12 +131,17 @@ function advance(ids: TurnIds, state: TurnState, step: TurnStep): Transition {
     messageId: segmentMessageId(ids, segment),
   });
 
-  const result = ({ id, result }: Data.TaggedEnum.Value<TurnStep, "ToolResult">): ChatEvent => ({
+  const result = ({
+    id,
+    result,
+    failed,
+  }: Data.TaggedEnum.Value<TurnStep, "ToolResult">): ChatEvent => ({
     type: "TOOL_CALL_RESULT",
     messageId: MessageId.make(`${ids.messageId}-result-${id}`),
     toolCallId: id,
     content: result,
     role: "tool",
+    metadata: { failed },
   });
 
   const finished: ChatEvent = {
@@ -189,8 +194,8 @@ export function isTerminal(event: ChatEvent): boolean {
 /**
 One turn as AG-UI events: `RUN_STARTED`, then the Bot's messages as `TEXT_MESSAGE_START`, `…_CONTENT` and
 `…_END`, with each tool call between them as `TOOL_CALL_START`, `…_ARGS`, `…_END` and later
-`TOOL_CALL_RESULT`, then `RUN_FINISHED`, or `RUN_ERROR` saying why the turn ended early. Text after a
-tool call is a new message.
+`TOOL_CALL_RESULT` (its `metadata.failed` says whether the tool failed), then `RUN_FINISHED`, or `RUN_ERROR`
+saying why the turn ended early. Text after a tool call is a new message.
 */
 export function turnEvents(
   ids: TurnIds,
@@ -201,7 +206,7 @@ export function turnEvents(
       AgentEvent.$match({
         TextDelta: ({ text }) => TurnStep.Text({ text }),
         ToolCallStarted: ({ id, name, params }) => TurnStep.CallTool({ id, name, params }),
-        ToolCallFinished: ({ id, result }) => TurnStep.ToolResult({ id, result }),
+        ToolCallFinished: ({ id, result, failed }) => TurnStep.ToolResult({ id, result, failed }),
         Done: () => TurnStep.Finish(),
       }),
     ),

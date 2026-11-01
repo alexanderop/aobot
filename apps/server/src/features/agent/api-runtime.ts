@@ -65,7 +65,11 @@ function agentEvent<Part extends Response.AnyPart>(part: Part): Result.Result<Ag
 
   if (part.type === "tool-result" && !part.preliminary) {
     return Result.succeed(
-      AgentEvent.ToolCallFinished({ id: ToolCallId.make(part.id), result: resultText(part) }),
+      AgentEvent.ToolCallFinished({
+        id: ToolCallId.make(part.id),
+        result: resultText(part),
+        failed: part.isFailure,
+      }),
     );
   }
 

@@ -161,6 +161,7 @@ describe("Chat RPCs", () => {
               AgentEvent.ToolCallFinished({
                 id: ToolCallId.make("call-1"),
                 result: "Opened https://example.com",
+                failed: false,
               }),
               AgentEvent.TextDelta({ text: "The title is Example Domain." }),
               AgentEvent.Done(),

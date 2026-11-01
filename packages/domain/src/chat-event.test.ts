@@ -23,6 +23,14 @@ const agUiExamples = [
     content: "Opened.",
     role: "tool",
   },
+  {
+    type: "TOOL_CALL_RESULT",
+    messageId: "message-2",
+    toolCallId: "call-1",
+    content: "The computer is not available.",
+    role: "tool",
+    metadata: { failed: true },
+  },
   { type: "RUN_FINISHED", threadId: "thread-1", runId: "run-1" },
   { type: "RUN_ERROR", message: "The model went quiet.", code: "stalled" },
 ];

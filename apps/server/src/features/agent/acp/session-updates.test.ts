@@ -72,7 +72,11 @@ describe("sessionUpdateEvents", () => {
         name: "navigate",
         params: { url: "https://example.com" },
       }),
-      AgentEvent.ToolCallFinished({ id: ToolCallId.make("toolu_1"), result: "Opened" }),
+      AgentEvent.ToolCallFinished({
+        id: ToolCallId.make("toolu_1"),
+        result: "Opened",
+        failed: false,
+      }),
     ]);
   });
 
@@ -114,6 +118,7 @@ describe("sessionUpdateEvents", () => {
       AgentEvent.ToolCallFinished({
         id: ToolCallId.make("call_1"),
         result: '{"title":"Example Domain"}',
+        failed: false,
       }),
     ]);
   });
@@ -142,6 +147,32 @@ describe("sessionUpdateEvents", () => {
     );
   });
 
+  it("reports a call the agent says failed as failed, with the text the tool answered", () => {
+    const events = eventsOf([
+      {
+        sessionUpdate: "tool_call",
+        toolCallId: "t",
+        title: "mcp__aobot__navigate",
+        status: "in_progress",
+        rawInput: { url: "https://example.com" },
+      },
+      {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "t",
+        status: "failed",
+        content: textResult("The computer is not available."),
+      },
+    ]);
+
+    expect(events.at(-1)).toEqual(
+      AgentEvent.ToolCallFinished({
+        id: ToolCallId.make("t"),
+        result: "The computer is not available.",
+        failed: true,
+      }),
+    );
+  });
+
   it("keeps the name of a tool outside the gateway, and says a failure without output failed", () => {
     expect(
       eventsOf([
@@ -150,7 +181,11 @@ describe("sessionUpdateEvents", () => {
       ]),
     ).toEqual([
       AgentEvent.ToolCallStarted({ id: ToolCallId.make("t"), name: "Read file", params: {} }),
-      AgentEvent.ToolCallFinished({ id: ToolCallId.make("t"), result: "The tool failed." }),
+      AgentEvent.ToolCallFinished({
+        id: ToolCallId.make("t"),
+        result: "The tool failed.",
+        failed: true,
+      }),
     ]);
   });
 });

@@ -4,12 +4,13 @@ import { Context, Data, Schema, type Stream } from "effect";
 /**
 What a running turn reports, in order: text as it arrives, each tool call when the Bot makes it and
 again when its result is back, then `Done` once the Bot has answered. `params` is the tool's input as
-JSON; `result` is what the tool answered, as the text the model reads.
+JSON; `result` is what the tool answered, as the text the model reads, and `failed` says the tool could
+not do what it was asked.
 */
 export type AgentEvent = Data.TaggedEnum<{
   TextDelta: { readonly text: string };
   ToolCallStarted: { readonly id: ToolCallId; readonly name: string; readonly params: unknown };
-  ToolCallFinished: { readonly id: ToolCallId; readonly result: string };
+  ToolCallFinished: { readonly id: ToolCallId; readonly result: string; readonly failed: boolean };
   Done: {};
 }>;
 

@@ -99,9 +99,17 @@ describe("AgentRuntime (api)", () => {
 
       expect(events).toEqual([
         AgentEvent.ToolCallStarted({ id: ToolCallId.make("call-1-0"), name: "ping", params: {} }),
-        AgentEvent.ToolCallFinished({ id: ToolCallId.make("call-1-0"), result: "pong" }),
+        AgentEvent.ToolCallFinished({
+          id: ToolCallId.make("call-1-0"),
+          result: "pong",
+          failed: false,
+        }),
         AgentEvent.ToolCallStarted({ id: ToolCallId.make("call-2-0"), name: "ping", params: {} }),
-        AgentEvent.ToolCallFinished({ id: ToolCallId.make("call-2-0"), result: "pong" }),
+        AgentEvent.ToolCallFinished({
+          id: ToolCallId.make("call-2-0"),
+          result: "pong",
+          failed: false,
+        }),
         AgentEvent.TextDelta({ text: "pong" }),
         AgentEvent.Done(),
       ]);
@@ -206,13 +214,61 @@ describe("AgentRuntime (api)", () => {
             name: "forecast",
             params: { city: "Vienna", days: 3 },
           }),
-          AgentEvent.ToolCallFinished({ id: ToolCallId.make("call-1-0"), result: "sunny" }),
+          AgentEvent.ToolCallFinished({
+            id: ToolCallId.make("call-1-0"),
+            result: "sunny",
+            failed: false,
+          }),
           AgentEvent.TextDelta({ text: "Sunny" }),
           AgentEvent.TextDelta({ text: " in" }),
           AgentEvent.TextDelta({ text: " Vienna" }),
           AgentEvent.Done(),
         ]);
       }),
+  );
+
+  it.effect(
+    "reports a tool that answered with its failure as failed, with what the model read",
+    () => {
+      class Unreachable extends Schema.TaggedError<Unreachable>()("Unreachable", {
+        message: Schema.String,
+      }) {}
+
+      const Open = Tool.make("open", {
+        description: "Opens a page",
+        parameters: Schema.Struct({ url: Schema.String }),
+        success: Schema.String,
+        failure: Unreachable,
+        failureMode: "return",
+      });
+
+      const OpenToolkit = Toolkit.make(Open);
+
+      const handlers = OpenToolkit.toLayer({
+        open: () => Effect.fail(new Unreachable({ message: "The computer is not available." })),
+      });
+
+      const script = [
+        ModelStep.CallTools({ calls: [{ name: "open", params: { url: "https://example.com" } }] }),
+        ModelStep.Say({ words: ["Could not open it"] }),
+      ];
+
+      return Effect.gen(function* () {
+        const events = yield* runTurn;
+
+        const [finished, ...more] = events.filter(AgentEvent.$is("ToolCallFinished"));
+
+        expect(more).toEqual([]);
+        expect(finished).toMatchObject({ id: "call-1-0", failed: true });
+        expect(finished?.result).toContain("The computer is not available.");
+      }).pipe(
+        Effect.provide(
+          layerApi(OpenToolkit, limits).pipe(
+            Layer.provide([scriptedModel(replay(script)), handlers]),
+          ),
+        ),
+      );
+    },
   );
 
   it.effect("reports a result that is not text as JSON, the way the model reads it", () => {
@@ -240,6 +296,7 @@ describe("AgentRuntime (api)", () => {
         AgentEvent.ToolCallFinished({
           id: ToolCallId.make("call-1-0"),
           result: JSON.stringify({ title: "Example Domain", words: 28 }),
+          failed: false,
         }),
       ]);
     }).pipe(

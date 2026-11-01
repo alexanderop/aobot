@@ -116,6 +116,7 @@ describe("AgentRuntime (acp)", () => {
         AgentEvent.ToolCallFinished({
           id: ToolCallId.make("toolu_1"),
           result: "Opened https://example.com",
+          failed: false,
         }),
         AgentEvent.TextDelta({ text: "Example Domain" }),
         AgentEvent.Done(),

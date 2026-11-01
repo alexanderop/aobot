@@ -11,6 +11,13 @@ export const RunErrorCode = Schema.Literals(["stalled", "step_limit", "model", "
 export type RunErrorCode = typeof RunErrorCode.Type;
 
 /**
+What a `TOOL_CALL_RESULT` says beyond its content: `failed` when the tool could not do what it was asked.
+AG-UI's result event has no failure field, but it does have an open `metadata` object, and AG-UI's client
+copies that onto the tool message it builds, where an unknown top-level key would be dropped.
+*/
+const ToolResultMetadata = Schema.Struct({ failed: Schema.Boolean });
+
+/**
 One event in a streamed chat turn. Names and fields are AG-UI's (`@ag-ui/core` 1.0.2), discriminated by
 `type`, so an AG-UI client can read the stream through a thin adapter. `threadId` is our conversation.
 */
@@ -55,6 +62,7 @@ export const ChatEvent = Schema.Union([
     toolCallId: ToolCallId,
     content: Schema.String,
     role: Schema.optionalKey(Schema.Literal("tool")),
+    metadata: Schema.optionalKey(ToolResultMetadata),
   }),
   Schema.Struct({
     type: Schema.Literal("RUN_FINISHED"),
