@@ -9,6 +9,7 @@
     "test": "vp test run",
     "test:watch": "vp test watch",
     "test:smoke": "vp test run --config vite.smoke.config.ts",
+    "test:contract": "vp test run --config vite.contract.computers.config.ts",
     "test:contract:agents": "vp test run --config vite.contract.config.ts",
     "knip": "knip",
     "verify": "node verify/run.ts"

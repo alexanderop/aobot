@@ -7,7 +7,7 @@ and the real CLI adapters. Kept out of `vite.config.ts` because it starts real C
 export default defineConfig({
   test: {
     name: "contract",
-    include: ["apps/*/src/**/*.contract.ts"],
+    include: ["apps/server/src/**/*.contract.ts"],
     environment: "node",
     testTimeout: 180_000,
     hookTimeout: 60_000,

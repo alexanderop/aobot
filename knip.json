@@ -8,7 +8,8 @@
         "tools/**/*.test.ts",
         "vite.smoke.config.ts",
         "verify/mock-model.ts",
-        "vite.contract.config.ts"
+        "vite.contract.config.ts",
+        "vite.contract.computers.config.ts"
       ],
       "project": ["tools/**/*.ts", "*.ts"],
       "ignore": ["tools/oxlint/anti-slop/**"],
