@@ -26,6 +26,8 @@ export {
   PageRead,
   RefTarget,
   RunCommand,
+  Screen,
+  ScreenFrame,
   snapshotLimit,
 } from "./computer.ts";
 

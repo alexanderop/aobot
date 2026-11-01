@@ -121,3 +121,22 @@ export const ComputerActError = Schema.Struct({
 
 /** A decoded {@link ComputerActError}. */
 export type ComputerActError = typeof ComputerActError.Type;
+
+/**
+What a person watching a computer is shown. `Frame` is a JPEG as Chromium's screencast painted it, in
+base64, so the page's `data:image/jpeg;base64,…` src can only ever be an image. A frame shows whatever
+the Bot typed, so it never goes into a log, a span or an audit row (decision 8).
+*/
+export const Screen = Schema.TaggedUnion({
+  Blank: {},
+  Frame: { jpeg: Schema.String.check(Schema.isBase64()) },
+});
+
+/** A decoded {@link Screen}. */
+export type Screen = typeof Screen.Type;
+
+/** One picture of the screen: all the computer's `/stream` sends, and what the server passes on as it is. */
+export const ScreenFrame = Screen.cases.Frame;
+
+/** A decoded {@link ScreenFrame}. */
+export type ScreenFrame = typeof ScreenFrame.Type;

@@ -5,6 +5,7 @@ import { FetchHttpClient, HttpMiddleware, HttpRouter } from "effect/http";
 import { Otlp } from "effect/observability";
 import { browserLayer } from "../features/browser/public.ts";
 import { commandDestinationsLayer, destinationsLayer } from "../features/egress/public.ts";
+import { screencastLayer } from "../features/screen/public.ts";
 import { shellLayer } from "../features/shell/public.ts";
 import { computerConfig } from "./config.ts";
 import { routesLayer } from "./http.ts";
@@ -38,7 +39,7 @@ const computer = Layer.unwrap(
     const untracedHttp = Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true);
 
     return HttpRouter.serve(routesLayer(config.token)).pipe(
-      Layer.provide([browser, shell]),
+      Layer.provide([browser, shell, screencastLayer.pipe(Layer.provide(browser))]),
       Layer.provide(listener),
       Layer.provide([telemetry, untracedHttp]),
     );
