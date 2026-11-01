@@ -3,7 +3,6 @@ import { createServer } from "node:http";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MessageId } from "@aobot/domain";
 import {
   NodeChildProcessSpawner,
   NodeFileSystem,
@@ -12,6 +11,7 @@ import {
 } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  Config,
   Context,
   Duration,
   Effect,
@@ -28,11 +28,13 @@ import { botToolkit } from "../bots/public.ts";
 import { Gateway, gatewayMcpLayer, type Refusal } from "../gateway/public.ts";
 import { layerAcp } from "./acp/acp-runtime.ts";
 import { acpAgents, type AcpAgentName, type AcpLauncher } from "./acp/launchers.ts";
-import { AgentEvent, AgentRuntime, type Turn } from "./agent-runtime.ts";
+import { AgentEvent, AgentRuntime } from "./agent-runtime.ts";
 import { layerApi } from "./api-runtime.ts";
 import { languageModelLayer } from "./model-providers.ts";
+import { type Scenario, contractTurn, transcriptFile } from "./testing/acp-scenarios.ts";
 import { type MockModelServer, startMockModel } from "./testing/mock-model-server.ts";
 import { type ModelScript, ModelStep, type ScriptedToolCall } from "./testing/model-script.ts";
+import { recordingSpawner } from "./testing/recording-spawner.ts";
 
 /**
 Tier 3: every agent runtime behaves the same against the mock model server, and none of them lets the
@@ -42,10 +44,10 @@ pinned adapters through npx.
 
 const limits = { maxSteps: 4, stallTimeout: Duration.seconds(90) };
 
-const turn: Turn = {
-  instructions: "Answer briefly.",
-  history: [{ id: MessageId.make("message-1"), role: "user", text: "Say hi" }],
-};
+const turn = contractTurn;
+
+/** `ACP_RECORD=true` writes each CLI turn's ACP messages to `acp/fixtures/` for the replay tests. */
+const recordTranscripts = Config.Boolean("ACP_RECORD").pipe(Config.withDefault(false));
 
 const canary = `aobot-canary-${crypto.randomUUID()}`;
 
@@ -70,7 +72,8 @@ interface Contender {
     mock: MockModelServer,
     gateway: Layer.Layer<Gateway>,
     gatewayMcpUrl: string,
-  ) => Layer.Layer<AgentRuntime>;
+    scenario: Scenario,
+  ) => Layer.Layer<AgentRuntime, Config.ConfigError>;
   /** Calls to the CLI's own shell and file tools: run `env`, read `/etc/passwd`. */
   readonly escape: ReadonlyArray<ScriptedToolCall>;
   /**
@@ -89,8 +92,28 @@ function pointedAtMock(
   agent: AcpAgentName,
   mockEnvironment: (mock: MockModelServer) => Readonly<Record<string, string>>,
 ) {
-  return (mock: MockModelServer, gateway: Layer.Layer<Gateway>, gatewayMcpUrl: string) => {
+  return (
+    mock: MockModelServer,
+    gateway: Layer.Layer<Gateway>,
+    gatewayMcpUrl: string,
+    scenario: Scenario,
+  ) => {
     const launcher: AcpLauncher = acpAgents[agent];
+
+    const spawner = Layer.unwrap(
+      Effect.gen(function* () {
+        const record = yield* recordTranscripts;
+
+        return record
+          ? recordingSpawner({
+              file: transcriptFile(scenario, agent),
+              scenario,
+              agent,
+              gatewayMcpUrl,
+            }).pipe(Layer.provide(NodeChildProcessSpawner.layer))
+          : NodeChildProcessSpawner.layer;
+      }),
+    );
 
     return layerAcp({
       agent,
@@ -109,7 +132,7 @@ function pointedAtMock(
       stallTimeout: limits.stallTimeout,
     }).pipe(
       Layer.provide(gateway),
-      Layer.provide(NodeChildProcessSpawner.layer),
+      Layer.provide(spawner),
       Layer.provide([NodeFileSystem.layer, NodePath.layer]),
     );
   };
@@ -258,7 +281,9 @@ describe.each(names)("the %s agent runtime", (name) => {
 
         return yield* Stream.runCollect(agent.run(turn));
       }).pipe(
-        Effect.provide(contender.runtime(mock, recordingGateway().layer, yield* gatewayMcpUrl)),
+        Effect.provide(
+          contender.runtime(mock, recordingGateway().layer, yield* gatewayMcpUrl, "streams"),
+        ),
       );
 
       expect(textOf(events)).toContain("Hi there, friend");
@@ -292,7 +317,9 @@ describe.each(names)("the %s agent runtime", (name) => {
 
         return interrupted;
       }).pipe(
-        Effect.provide(contender.runtime(mock, recordingGateway().layer, yield* gatewayMcpUrl)),
+        Effect.provide(
+          contender.runtime(mock, recordingGateway().layer, yield* gatewayMcpUrl, "cancel"),
+        ),
       );
 
       expect(Exit.hasInterrupts(exit)).toBe(true);
@@ -317,7 +344,7 @@ describe.each(names)("the %s agent runtime", (name) => {
 
         return yield* Stream.runCollect(agent.run(turn));
       }).pipe(
-        Effect.provide(contender.runtime(mock, gateway.layer, yield* gatewayMcpUrl)),
+        Effect.provide(contender.runtime(mock, gateway.layer, yield* gatewayMcpUrl, "escape")),
         Effect.exit,
       );
 
