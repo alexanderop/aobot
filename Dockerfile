@@ -3,6 +3,7 @@ RUN npm install --global pnpm@11.28.10
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/computer/package.json apps/computer/
 COPY apps/server/package.json apps/server/
 COPY apps/web/package.json apps/web/
 COPY packages/domain/package.json packages/domain/
