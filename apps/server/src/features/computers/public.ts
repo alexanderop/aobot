@@ -10,7 +10,7 @@ export {
   ComputerUnavailable,
 } from "./computers.ts";
 
-export { computerConfig, type ComputerSettings } from "./settings.ts";
+export { computerConfig, ComputerProvider, type ComputerSettings } from "./settings.ts";
 
 /** {@link Computers} from the provider `settings` names. */
 export function computersLayer(
