@@ -57,3 +57,15 @@ export function snapshotRefs(snapshot: string): ReadonlyMap<string, RefTarget> {
       .map((target) => [target.ref, target] as const),
   );
 }
+
+/** The first element in `snapshot` with this role and name, such as the search box a test means. */
+export function findRef(
+  snapshot: string,
+  element: Omit<RefTarget, "ref">,
+): Option.Option<RefTarget> {
+  return Option.fromNullishOr(
+    [...snapshotRefs(snapshot).values()].find(
+      ({ role, name }) => role === element.role && name === element.name,
+    ),
+  );
+}

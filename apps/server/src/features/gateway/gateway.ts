@@ -14,6 +14,7 @@ import {
   type ToolTimedOut,
   toolResult,
 } from "../../shared/tool-result.ts";
+import { redact } from "../../shared/redact.ts";
 
 /** Something an agent asked for that the gateway turned down. `detail` is already redacted. */
 export interface Refusal {
@@ -43,12 +44,16 @@ type ActionName = ComputerAction["action"];
 const timeouts = {
   navigate: Duration.seconds(45),
   snapshot: Duration.seconds(20),
+  click: Duration.seconds(60),
+  type: Duration.seconds(30),
 } satisfies { readonly [Name in ActionName]: Duration.Duration };
 
 /** The audit row's `detail`. Text a Bot typed goes through `redact()`; a URL is not typed text. */
 const auditDetail = ComputerAction.match({
   navigate: ({ url }): Schema.JsonObject => ({ url }),
   snapshot: (): Schema.JsonObject => ({}),
+  click: ({ target }): Schema.JsonObject => ({ ...target }),
+  type: ({ target, text }): Schema.JsonObject => ({ ...target, text: redact(text) }),
 });
 
 /** What the model is told the computer answered, before it is marked untrusted. */

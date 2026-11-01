@@ -2,8 +2,14 @@ import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { type ComputerAction, ComputerActResult } from "@aobot/domain";
-import { Schema } from "effect";
+import {
+  type ComputerAction,
+  ComputerActResult,
+  findRef,
+  type RefTarget,
+  snapshotRefs,
+} from "@aobot/domain";
+import { Option, Schema } from "effect";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 /**
@@ -28,9 +34,15 @@ const fixturePort = 8080;
 const fixturePage = `<!doctype html><title>Contract Fixture</title><h1>A page for the computer</h1>
 <a href="/next">Next page</a><button>Press me</button><label>Name <input></label>`;
 
-const fixtureServer = `require("node:http").createServer((_, res) => {
+// Pressing the button renames it, so its old ref and name no longer match. The form would leave the page
+// if anything submitted it.
+const formPage = `<!doctype html><title>Form Fixture</title><form action="/submitted">
+<label>Name <input name="name"></label>
+<button type="button" onclick="this.textContent = 'Pressed'">Press me</button></form>`;
+
+const fixtureServer = `require("node:http").createServer((req, res) => {
   res.setHeader("content-type", "text/html");
-  res.end(${JSON.stringify(fixturePage)});
+  res.end(req.url.startsWith("/form") ? ${JSON.stringify(formPage)} : ${JSON.stringify(fixturePage)});
 }).listen(${fixturePort}, "0.0.0.0");`;
 
 function docker(...args: ReadonlyArray<string>) {
@@ -97,6 +109,23 @@ function act(computer: Computer, body: ComputerAction, authorization = `Bearer $
   });
 }
 
+async function result(response: Response): Promise<ComputerActResult> {
+  expect(response.status).toBe(200);
+
+  return Schema.decodeUnknownSync(ComputerActResult)(await response.json());
+}
+
+function target(snapshot: string, role: string, name: string): RefTarget {
+  return Option.getOrThrowWith(
+    findRef(snapshot, { role, name }),
+    () => new Error(`no ${role} "${name}" in:\n${snapshot}`),
+  );
+}
+
+/** The documented answer to a ref that no longer names what the Bot saw. */
+const staleRefMessage =
+  /^The page changed since your latest snapshot, so \S+ is not the \S+ it was\. Take a snapshot again and use a ref from it\.$/u;
+
 let local: Computer;
 
 let strict: Computer;
@@ -151,12 +180,79 @@ describe("the docker computer", () => {
   });
 
   it("snapshots the page with refs a Bot can act on", async () => {
-    const response = await act(local, { action: "snapshot" });
-    const body = Schema.decodeUnknownSync(ComputerActResult)(await response.json());
-    expect(response.status).toBe(200);
+    const body = await result(await act(local, { action: "snapshot" }));
     expect(body).toMatchObject({ action: "snapshot", title: "Contract Fixture", truncated: false });
     expect(body.snapshot).toMatch(/button "Press me" \[ref=e\d+\]/u);
     expect(body.snapshot).toMatch(/link "Next page" \[ref=e\d+\]/u);
+  });
+
+  describe("on a form", () => {
+    const formUrl = `http://${suite}-fixture:${fixturePort}/form`;
+
+    it("types into a field by its ref, replacing what it held, without submitting", async () => {
+      const opened = await result(await act(local, { action: "navigate", url: formUrl }));
+      const name = target(opened.snapshot, "textbox", "Name");
+
+      await result(await act(local, { action: "type", target: name, text: "Ada" }));
+
+      const typed = await result(
+        await act(local, { action: "type", target: name, text: "Ada Lovelace" }),
+      );
+
+      expect(typed).toMatchObject({ action: "type", url: formUrl, title: "Form Fixture" });
+      expect(typed.snapshot).toMatch(
+        new RegExp(`textbox "Name" (\\[active\\] )?\\[ref=${name.ref}\\]: Ada Lovelace$`, "mu"),
+      );
+    });
+
+    it("clicks a button by its ref and answers with the page it changed", async () => {
+      const opened = await result(await act(local, { action: "snapshot" }));
+      const button = target(opened.snapshot, "button", "Press me");
+
+      const clicked = await result(await act(local, { action: "click", target: button }));
+
+      expect(clicked.action).toBe("click");
+      expect(Option.isSome(findRef(clicked.snapshot, { role: "button", name: "Pressed" }))).toBe(
+        true,
+      );
+
+      const again = await act(local, { action: "click", target: button });
+      expect(again.status).toBe(403);
+      expect(await again.json()).toEqual({
+        reason: "refused",
+        message: expect.stringMatching(staleRefMessage),
+      });
+    });
+
+    // Playwright 1.64 usually gives each document's refs their own prefix (`f1e4`), but its counter
+    // can also start again at `e1`, so a ref from before a navigation may name something else.
+    it("refuses a ref from before a navigation", async () => {
+      const opened = await result(await act(local, { action: "navigate", url: formUrl }));
+      const name = target(opened.snapshot, "textbox", "Name");
+
+      const elsewhere = await result(
+        await act(local, { action: "navigate", url: `http://${suite}-fixture:${fixturePort}/` }),
+      );
+
+      expect(snapshotRefs(elsewhere.snapshot).get(name.ref)).not.toEqual(name);
+
+      const typed = await act(local, { action: "type", target: name, text: "Ada" });
+      expect(typed.status).toBe(403);
+      expect(await typed.json()).toEqual({
+        reason: "refused",
+        message: expect.stringMatching(staleRefMessage),
+      });
+    });
+
+    it("refuses a ref that names nothing on the page", async () => {
+      const response = await act(local, {
+        action: "click",
+        target: { ref: "e999", role: "button", name: "Press me" },
+      });
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ reason: "refused" });
+    });
   });
 
   it.each([

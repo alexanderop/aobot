@@ -23,4 +23,4 @@ export {
 
 export { tokensMatch } from "./token.ts";
 
-export { snapshotRefs } from "./aria-snapshot.ts";
+export { findRef, snapshotRefs } from "./aria-snapshot.ts";

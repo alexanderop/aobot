@@ -19,6 +19,8 @@ export type RefTarget = typeof RefTarget.Type;
 export const ComputerAction = Schema.Union([
   Schema.Struct({ action: Schema.Literal("navigate"), url: Schema.String }),
   Schema.Struct({ action: Schema.Literal("snapshot") }),
+  Schema.Struct({ action: Schema.Literal("click"), target: RefTarget }),
+  Schema.Struct({ action: Schema.Literal("type"), target: RefTarget, text: Schema.String }),
 ]).pipe(Schema.toTaggedUnion("action"));
 
 /** A decoded {@link ComputerAction}. */
@@ -29,7 +31,7 @@ What the computer answers to a {@link ComputerAction} it carried out, with statu
 after the action, read afresh, so the Bot's refs always come from the page it is looking at.
 */
 export const ComputerActResult = Schema.Struct({
-  action: Schema.Literals(["navigate", "snapshot"]),
+  action: Schema.Literals(["navigate", "snapshot", "click", "type"]),
   url: Schema.String,
   title: Schema.String,
   snapshot: Schema.String,

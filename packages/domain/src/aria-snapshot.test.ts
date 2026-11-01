@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
-import { snapshotRefs } from "./aria-snapshot.ts";
+import { Option } from "effect";
+import { findRef, snapshotRefs } from "./aria-snapshot.ts";
 
 // Captured from Playwright 1.64.1, `page.ariaSnapshot({ mode: "ai" })`, on a sign-up form in Chromium.
 const form = `- generic [active] [ref=e1]:
@@ -98,5 +99,18 @@ describe("snapshotRefs", () => {
   it("finds nothing in text that is not a snapshot", () => {
     expect(snapshotRefs("").size).toBe(0);
     expect(snapshotRefs("click e12 please").size).toBe(0);
+  });
+});
+
+describe("findRef", () => {
+  it("finds the element with that role and name", () => {
+    expect(findRef(wikipedia, { role: "searchbox", name: "Search Wikipedia" })).toEqual(
+      Option.some({ ref: "e23", role: "searchbox", name: "Search Wikipedia" }),
+    );
+  });
+
+  it("finds nothing when only the role or only the name matches", () => {
+    expect(findRef(wikipedia, { role: "button", name: "Search Wikipedia" })).toEqual(Option.none());
+    expect(findRef(wikipedia, { role: "searchbox", name: "Search" })).toEqual(Option.none());
   });
 });

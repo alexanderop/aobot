@@ -12,7 +12,7 @@ const fakeBrowser = Layer.succeed(
   Browser.of({
     act: (action: ComputerAction) =>
       Effect.gen(function* () {
-        if (action.action === "snapshot")
+        if (action.action !== "navigate")
           return yield* new ActionFailed({ message: "Chromium crashed." });
 
         if (action.url.startsWith("file:")) {
