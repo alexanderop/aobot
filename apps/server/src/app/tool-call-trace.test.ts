@@ -10,7 +10,8 @@ import { auditLogLayer, migrateAudit } from "../features/audit/public.ts";
 import { botToolkit } from "../features/bots/public.ts";
 import { chatLayer, migrateChat } from "../features/chat/public.ts";
 import { Computers } from "../features/computers/public.ts";
-import { botToolHandlers, gatewayLayer } from "../features/gateway/public.ts";
+import { botToolHandlers, gatewayLayer, migrateGateway } from "../features/gateway/public.ts";
+import { toolInputsRedacted } from "../shared/span-redaction.ts";
 
 /**
 The `api` runtime wired as `main.ts` wires it, with only the model and the computer faked: a tool call
@@ -48,20 +49,9 @@ const usage = {
   outputTokens: { total: 1, text: undefined, reasoning: undefined },
 };
 
-/** Calls navigate first, then answers; keeps every prompt it was sent. */
-function navigatingModel() {
+/** Answers with `steps` in order, one per call; keeps every prompt it was sent. */
+function steppingModel(steps: ReadonlyArray<ReadonlyArray<Response.StreamPartEncoded>>) {
   const prompts: Array<Prompt.Prompt> = [];
-
-  const steps: ReadonlyArray<ReadonlyArray<Response.StreamPartEncoded>> = [
-    [
-      { type: "tool-call", id: "call-1", name: "navigate", params: { url: "https://example.com" } },
-      { type: "finish", reason: "tool-calls", usage },
-    ],
-    [
-      { type: "text-delta", id: "text-1", delta: "Example Domain" },
-      { type: "finish", reason: "stop", usage },
-    ],
-  ];
 
   const layer = Layer.effect(
     LanguageModel.LanguageModel,
@@ -78,6 +68,20 @@ function navigatingModel() {
   return { prompts, layer };
 }
 
+/** Calls navigate first, then answers. */
+function navigatingModel() {
+  return steppingModel([
+    [
+      { type: "tool-call", id: "call-1", name: "navigate", params: { url: "https://example.com" } },
+      { type: "finish", reason: "tool-calls", usage },
+    ],
+    [
+      { type: "text-delta", id: "text-1", delta: "Example Domain" },
+      { type: "finish", reason: "stop", usage },
+    ],
+  ]);
+}
+
 const computers = Layer.succeed(
   Computers,
   Computers.of({
@@ -87,6 +91,8 @@ const computers = Layer.succeed(
           action: "navigate",
           url: "https://example.com/",
           title: "Example Domain",
+          snapshot: '- searchbox "Search" [ref=e1]',
+          truncated: false,
         } as const),
     }),
     stop: Effect.void,
@@ -95,7 +101,7 @@ const computers = Layer.succeed(
   }),
 );
 
-const database = Layer.effectDiscard(Effect.andThen(migrateChat, migrateAudit)).pipe(
+const database = Layer.effectDiscard(Effect.all([migrateChat, migrateAudit, migrateGateway])).pipe(
   Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })),
   Layer.fresh,
 );
@@ -150,4 +156,64 @@ describe("a tool call in an api turn", () => {
       );
     },
   );
+
+  it.effect("keeps what a Bot typed out of every span, as out of the audit trail", () => {
+    const recorder = recordingTracer();
+    const typed = "hunter2-correct-horse";
+
+    const model = steppingModel([
+      [
+        { type: "tool-call", id: "call-1", name: "snapshot", params: {} },
+        { type: "finish", reason: "tool-calls", usage },
+      ],
+      [
+        { type: "tool-call", id: "call-2", name: "type", params: { ref: "e1", text: typed } },
+        { type: "finish", reason: "tool-calls", usage },
+      ],
+      [
+        { type: "text-delta", id: "text-1", delta: "Typed it." },
+        { type: "finish", reason: "stop", usage },
+      ],
+    ]);
+
+    const gateway = gatewayLayer.pipe(Layer.provide([auditLogLayer, computers]));
+
+    const agent = layerApi(botToolkit, { maxSteps: 4, stallTimeout: Duration.seconds(60) }).pipe(
+      Layer.provide(botToolHandlers),
+      Layer.provide(gateway),
+      Layer.provide(model.layer),
+    );
+
+    return Effect.gen(function* () {
+      const client = yield* RpcTest.makeClient(ChatRpcs);
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* client["Chat.send"]({
+        conversationId: ConversationId.make("conversation-1"),
+        messageId: MessageId.make("user-1"),
+        text: "Type my password into the search box.",
+      }).pipe(Stream.runCollect);
+
+      const rows = yield* sql`SELECT decision, action, detail FROM audit_rows ORDER BY seq`;
+      expect(rows).toContainEqual({
+        decision: "allow",
+        action: "type",
+        detail: JSON.stringify({
+          ref: "e1",
+          role: "searchbox",
+          name: "Search",
+          text: "[21 chars]",
+        }),
+      });
+
+      const attributes = recorder.spans.flatMap((span) => [...span.attributes.values()]);
+      expect(attributes.length).toBeGreaterThan(0);
+      expect(JSON.stringify(attributes)).not.toContain(typed);
+      expect(JSON.stringify(rows)).not.toContain(typed);
+    }).pipe(
+      Effect.provide(chatLayer.pipe(Layer.provide(agent))),
+      Effect.provide(database),
+      Effect.provide(toolInputsRedacted.pipe(Layer.provide(recorder.layer))),
+    );
+  });
 });

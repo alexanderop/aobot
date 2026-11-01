@@ -12,7 +12,7 @@ const fakeBrowser = Layer.succeed(
   Browser.of({
     act: (action: ComputerAction) =>
       Effect.gen(function* () {
-        if (action.action === "snapshot")
+        if (action.action !== "navigate")
           return yield* new ActionFailed({ message: "Chromium crashed." });
 
         if (action.url.startsWith("file:")) {
@@ -31,6 +31,8 @@ const fakeBrowser = Layer.succeed(
           action: "navigate",
           url: action.url,
           title: `${span.name} under ${parent}`,
+          snapshot: '- heading "Example Domain" [level=1] [ref=e1]',
+          truncated: false,
         } as const;
       }),
   }),
@@ -87,6 +89,8 @@ describe("POST /act", () => {
       action: "navigate",
       url: "https://example.com/",
       title: "Computer.act under no parent",
+      snapshot: '- heading "Example Domain" [level=1] [ref=e1]',
+      truncated: false,
     });
   });
 

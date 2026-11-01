@@ -51,11 +51,11 @@ describe("ToolCallCard", () => {
 
   it("says a tool it has no renderer for failed, with why", () => {
     const html = draw(
-      call("click", '{"ref":"e3"}', ToolCallStatus.Failed({ result: "No element e3." })),
+      call("scroll", '{"ref":"e3"}', ToolCallStatus.Failed({ result: "No element e3." })),
     );
 
     expect(html).toContain('data-status="failed"');
-    expect(html).toContain("click failed");
+    expect(html).toContain("scroll failed");
     expect(html).toMatch(/<details[^>]*>.*No element e3\..*<\/details>/s);
   });
 
@@ -75,10 +75,57 @@ describe("ToolCallCard", () => {
   });
 
   it("draws a tool it has no renderer for by name, with its input", () => {
-    const html = draw(call("click", '{"ref":"e3"}', ToolCallStatus.Unfinished()));
+    const html = draw(call("scroll", '{"ref":"e3"}', ToolCallStatus.Unfinished()));
+
+    expect(html).toContain('data-tool="scroll"');
+    expect(html).toContain("Did not finish scroll");
+    expect(html).toContain("{&quot;ref&quot;:&quot;e3&quot;}");
+  });
+
+  it("says which element click clicked, and folds the page it answered with", () => {
+    const html = draw(
+      call("click", '{"ref":"e23"}', ToolCallStatus.Done({ result: 'searchbox "Search"' })),
+    );
 
     expect(html).toContain('data-tool="click"');
-    expect(html).toContain("Did not finish click");
-    expect(html).toContain("{&quot;ref&quot;:&quot;e3&quot;}");
+    expect(html).toContain("Clicked e23");
+    expect(html).toMatch(/<details[^>]*>.*searchbox &quot;Search&quot;.*<\/details>/s);
+  });
+
+  it("says type typed into the element, and shows the field holding the text", () => {
+    const html = draw(
+      call(
+        "type",
+        '{"ref":"e23","text":"Effect TypeScript"}',
+        ToolCallStatus.Done({
+          result: 'searchbox "Search Wikipedia" [ref=e23]: Effect TypeScript',
+        }),
+      ),
+    );
+
+    expect(html).toContain("Typed into e23");
+    expect(html).toMatch(/<details[^>]*>.*\[ref=e23\]: Effect TypeScript.*<\/details>/s);
+  });
+
+  it("says why a click on a stale ref did not happen", () => {
+    const html = draw(
+      call(
+        "click",
+        '{"ref":"e9"}',
+        ToolCallStatus.Failed({
+          result: "click did not run: e9 is not a ref in your latest snapshot.",
+        }),
+      ),
+    );
+
+    expect(html).toContain('data-status="failed"');
+    expect(html).toContain("Could not click e9");
+    expect(html).toContain("e9 is not a ref in your latest snapshot");
+  });
+
+  it("shows type as still typing while it runs", () => {
+    expect(draw(call("type", '{"ref":"e2","text":"Ada"}', ToolCallStatus.Running()))).toContain(
+      "Typing into e2…",
+    );
   });
 });

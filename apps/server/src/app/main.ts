@@ -25,7 +25,13 @@ import { auditLogLayer, migrateAudit } from "../features/audit/public.ts";
 import { botToolkit } from "../features/bots/public.ts";
 import { chatLayer, migrateChat } from "../features/chat/public.ts";
 import { computersLayer } from "../features/computers/public.ts";
-import { botToolHandlers, gatewayLayer, gatewayMcpLayer } from "../features/gateway/public.ts";
+import {
+  botToolHandlers,
+  gatewayLayer,
+  gatewayMcpLayer,
+  migrateGateway,
+} from "../features/gateway/public.ts";
+import { toolInputsRedacted } from "../shared/span-redaction.ts";
 import { serverConfig } from "./config.ts";
 
 const server = Layer.unwrap(
@@ -41,7 +47,9 @@ const server = Layer.unwrap(
       }),
     ).pipe(Layer.provide([NodeFileSystem.layer, NodePath.layer]));
 
-    const database = Layer.effectDiscard(Effect.andThen(migrateChat, migrateAudit)).pipe(
+    const database = Layer.effectDiscard(
+      Effect.all([migrateChat, migrateAudit, migrateGateway]),
+    ).pipe(
       Layer.provideMerge(SqliteClient.layer({ filename: config.databasePath })),
       Layer.provide(databaseFolder),
     );
@@ -119,7 +127,7 @@ const server = Layer.unwrap(
     return HttpRouter.serve(Layer.mergeAll(rpc, webApp, runtime.routes)).pipe(
       Layer.merge(runtime.beside),
       Layer.provide(listener),
-      Layer.provide([telemetry, untracedHttp]),
+      Layer.provide([toolInputsRedacted.pipe(Layer.provide(telemetry)), untracedHttp]),
     );
   }),
 );

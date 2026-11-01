@@ -52,20 +52,21 @@ const canary = `aobot-canary-${crypto.randomUUID()}`;
 /** A line of `/etc/passwd`, on macOS and Linux alike. */
 const passwdLine = /root:[^:\n]*:0:0:/u;
 
-/** A gateway that keeps what it refused, so a test can show what the CLI asked for. */
+/** A gateway that keeps what it refused and what it was asked to do, and answers every call with a blank page. */
 function recordingGateway() {
   const refusals: Array<Refusal> = [];
+  const requests: Array<Parameters<Gateway["Service"]["act"]>[1]> = [];
 
   const layer = Layer.succeed(
     Gateway,
     Gateway.of({
       refuse: (refusal) => Effect.sync(() => void refusals.push(refusal)),
-      act: (action) =>
-        Effect.die(`the contract suite offers no computer, but ${action.action} ran`),
+      act: (_bot, request) =>
+        Effect.sync(() => void requests.push(request)).pipe(Effect.as("The page is blank.")),
     }),
   );
 
-  return { refusals, layer };
+  return { refusals, requests, layer };
 }
 
 /** One runtime under test: how to build it against a mock model, and how its model would try to escape. */
@@ -82,6 +83,11 @@ interface Contender {
   on to answer. Either way nothing ran.
   */
   readonly afterEscape: "fails" | "answers";
+  /**
+  The name the model calls the gateway's `snapshot` tool by. None for Codex: it offers MCP tools as one
+  Responses `namespace` tool, and the mock model cannot answer with a namespaced call yet.
+  */
+  readonly snapshotTool: Option.Option<string>;
   /** A pattern in the command line of the CLI's processes, to see that none outlive a turn. */
   readonly processPattern: Option.Option<string>;
 }
@@ -162,6 +168,7 @@ const contenders = {
       { name: "read_file", params: { path: "/etc/passwd" } },
     ],
     afterEscape: "fails",
+    snapshotTool: Option.some("snapshot"),
     processPattern: Option.none(),
   }),
   "claude-code": contender({
@@ -174,6 +181,7 @@ const contenders = {
       { name: "Read", params: { file_path: "/etc/passwd" } },
     ],
     afterEscape: "answers",
+    snapshotTool: Option.some("mcp__aobot__snapshot"),
     processPattern: Option.some("claude-agent-acp"),
   }),
   codex: contender({
@@ -199,6 +207,7 @@ const contenders = {
       { name: "shell", params: { command: ["cat", "/etc/passwd"] } },
     ],
     afterEscape: "answers",
+    snapshotTool: Option.none(),
     processPattern: Option.some("codex-acp"),
   }),
   opencode: contender({
@@ -208,21 +217,24 @@ const contenders = {
       { name: "read", params: { filePath: "/etc/passwd" } },
     ],
     afterEscape: "answers",
+    snapshotTool: Option.some("aobot_snapshot"),
     processPattern: Option.some("opencode-ai"),
   }),
 } satisfies { readonly [Name in "api" | AcpAgentName]: Contender };
 
 /** The gateway's MCP server on a free port, as the CLIs reach it from a running server. */
-const gatewayMcpUrl = Effect.gen(function* () {
-  const context = yield* Layer.build(
-    HttpRouter.serve(gatewayMcpLayer).pipe(
-      Layer.provide(recordingGateway().layer),
-      Layer.provideMerge(NodeHttpServer.layer(createServer, { port: 0, host: "127.0.0.1" })),
-    ),
-  );
+function gatewayMcpUrl(gateway: Layer.Layer<Gateway> = recordingGateway().layer) {
+  return Effect.gen(function* () {
+    const context = yield* Layer.build(
+      HttpRouter.serve(gatewayMcpLayer).pipe(
+        Layer.provide(gateway),
+        Layer.provideMerge(NodeHttpServer.layer(createServer, { port: 0, host: "127.0.0.1" })),
+      ),
+    );
 
-  return `${HttpServer.formatAddress(Context.get(context, HttpServer.HttpServer).address)}/mcp`;
-});
+    return `${HttpServer.formatAddress(Context.get(context, HttpServer.HttpServer).address)}/mcp`;
+  });
+}
 
 function mockModel(script: ModelScript, delayMs: number) {
   return Effect.acquireRelease(
@@ -265,7 +277,7 @@ describe.each(names)("the %s agent runtime", (name) => {
 
         return yield* Stream.runCollect(agent.run(turn));
       }).pipe(
-        Effect.provide(contender.runtime(mock, recordingGateway().layer, yield* gatewayMcpUrl)),
+        Effect.provide(contender.runtime(mock, recordingGateway().layer, yield* gatewayMcpUrl())),
       );
 
       expect(textOf(events)).toContain("Hi there, friend");
@@ -299,7 +311,7 @@ describe.each(names)("the %s agent runtime", (name) => {
 
         return interrupted;
       }).pipe(
-        Effect.provide(contender.runtime(mock, recordingGateway().layer, yield* gatewayMcpUrl)),
+        Effect.provide(contender.runtime(mock, recordingGateway().layer, yield* gatewayMcpUrl())),
       );
 
       expect(Exit.hasInterrupts(exit)).toBe(true);
@@ -324,7 +336,7 @@ describe.each(names)("the %s agent runtime", (name) => {
 
         return yield* Stream.runCollect(agent.run(turn));
       }).pipe(
-        Effect.provide(contender.runtime(mock, gateway.layer, yield* gatewayMcpUrl)),
+        Effect.provide(contender.runtime(mock, gateway.layer, yield* gatewayMcpUrl())),
         Effect.exit,
       );
 
@@ -343,4 +355,37 @@ describe.each(names)("the %s agent runtime", (name) => {
       expect(sentToModel).not.toMatch(passwdLine);
     });
   });
+
+  it.live.skipIf(Option.isNone(contender.snapshotTool))(
+    "runs a gateway tool the model calls without asking anyone for permission",
+    () => {
+      const gateway = recordingGateway();
+      const tool = Option.getOrElse(contender.snapshotTool, () => "");
+
+      return Effect.gen(function* () {
+        const mock = yield* mockModel(
+          [
+            ModelStep.CallTools({ calls: [{ name: tool, params: {} }] }),
+            ModelStep.Say({ words: ["Read", " it", "."] }),
+          ],
+          0,
+        );
+
+        const events = yield* Effect.gen(function* () {
+          const agent = yield* AgentRuntime;
+
+          return yield* Stream.runCollect(agent.run(turn));
+        }).pipe(
+          Effect.provide(
+            contender.runtime(mock, gateway.layer, yield* gatewayMcpUrl(gateway.layer)),
+          ),
+        );
+
+        expect(gateway.refusals).toEqual([]);
+        expect(gateway.requests).toEqual([{ action: "snapshot" }]);
+        expect(textOf(events)).toContain("Read it.");
+        expect(mock.requests().join("\n")).toContain("The page is blank.");
+      });
+    },
+  );
 });

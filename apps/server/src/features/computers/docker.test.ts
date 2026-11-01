@@ -115,6 +115,8 @@ interface FakeDockerState {
   container: FakeContainer | undefined;
   readonly calls: Array<string>;
   readonly acts: Array<string>;
+  /** How many health polls to leave unanswered, as a computer caught mid-start does. */
+  unansweredHealthPolls: number;
 }
 
 const CreateBody = Schema.fromJsonString(
@@ -126,13 +128,30 @@ const CreateBody = Schema.fromJsonString(
 
 /** A Docker Engine on a unix socket that knows one container, and the computer it runs on loopback. */
 const fakeDocker = Effect.gen(function* () {
-  const state: FakeDockerState = { container: undefined, calls: [], acts: [] };
+  const state: FakeDockerState = {
+    container: undefined,
+    calls: [],
+    acts: [],
+    unansweredHealthPolls: 0,
+  };
 
   const computer = yield* serve((request, response) => {
+    if (request.url === "/health" && state.unansweredHealthPolls > 0) {
+      state.unansweredHealthPolls -= 1;
+
+      return;
+    }
+
     if (request.url === "/health") return reply(response, 200);
 
     state.acts.push(String(request.headers.authorization));
-    reply(response, 200, { action: "navigate", url: "https://example.com/", title: "Example" });
+    reply(response, 200, {
+      action: "navigate",
+      url: "https://example.com/",
+      title: "Example",
+      snapshot: "",
+      truncated: false,
+    });
   });
 
   const socketPath = join(tmpdir(), `aobot-docker-${crypto.randomUUID().slice(0, 8)}.sock`);
@@ -207,6 +226,24 @@ describe("dockerComputers", () => {
         expect(yield* computers.list).toEqual([{ name: "aobot-computer", running: true }]);
       }).pipe(Effect.provide(docker.layer));
     }).pipe(Effect.scoped),
+  );
+
+  it.live("starts the computer when a health poll caught mid-start is never answered", () =>
+    Effect.gen(function* () {
+      const docker = yield* fakeDocker;
+      docker.state.unansweredHealthPolls = 1;
+
+      const result = yield* Computers.use((computers) =>
+        computers.ensure.pipe(
+          Effect.flatMap((computer) =>
+            computer.act({ action: "navigate", url: "https://example.com" }),
+          ),
+        ),
+      ).pipe(Effect.provide(docker.layer));
+
+      expect(docker.state.unansweredHealthPolls).toBe(0);
+      expect(result).toMatchObject({ title: "Example" });
+    }).pipe(Effect.scoped, Effect.timeout("10 seconds")),
   );
 
   it.effect(

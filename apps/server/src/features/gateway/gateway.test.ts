@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import type { ComputerAction, ComputerActResult } from "@aobot/domain";
+import { BotId, type ComputerAction, type ComputerActResult } from "@aobot/domain";
 import { NodeHttpServer } from "@effect/platform-node";
 import { SqliteClient } from "@effect/sql-sqlite-node";
 import { describe, expect, it } from "@effect/vitest";
@@ -18,6 +18,7 @@ import {
 } from "../computers/public.ts";
 import { Gateway, gatewayLayer } from "./gateway.ts";
 import { gatewayMcpLayer } from "./mcp.ts";
+import { migrateGateway } from "./snapshot-store.ts";
 
 /** A computer that answers with `act`, and keeps every action it was sent. */
 function fakeComputers(act: Computer["act"]) {
@@ -45,19 +46,15 @@ function fakeComputers(act: Computer["act"]) {
 }
 
 const exampleDomain = (action: ComputerAction): Effect.Effect<ComputerActResult> =>
-  Effect.succeed(
-    action.action === "navigate"
-      ? { action: "navigate", url: "https://example.com/", title: "Example Domain" }
-      : {
-          action: "snapshot",
-          url: "https://example.com/",
-          title: "Example Domain",
-          snapshot: '- heading "Example Domain" [level=1] [ref=e1]',
-          truncated: false,
-        },
-  );
+  Effect.succeed({
+    action: action.action,
+    url: "https://example.com/",
+    title: "Example Domain",
+    snapshot: '- heading "Example Domain" [level=1] [ref=e1]',
+    truncated: false,
+  });
 
-const database = Layer.effectDiscard(migrateAudit).pipe(
+const database = Layer.effectDiscard(Effect.andThen(migrateAudit, migrateGateway)).pipe(
   Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })),
   Layer.fresh,
 );
@@ -75,6 +72,8 @@ const auditRows = Effect.gen(function* () {
     FROM audit_rows ORDER BY seq
   `;
 });
+
+const bot = BotId.make("assistant");
 
 const navigate = { action: "navigate", url: "https://example.com" } as const;
 
@@ -115,7 +114,7 @@ describe("Gateway", () => {
         const computer = fakeComputers(exampleDomain);
 
         const [answer, traceId] = yield* Effect.all([
-          Gateway.use((gateway) => gateway.act(navigate)),
+          Gateway.use((gateway) => gateway.act(bot, navigate)),
           Effect.map(Effect.currentSpan, (span) => span.traceId),
         ]).pipe(Effect.withSpan("Chat.turn"), Effect.provide(startGateway(computer.layer)));
 
@@ -152,7 +151,7 @@ describe("Gateway", () => {
         );
 
         const error = yield* Gateway.use((gateway) =>
-          Effect.flip(gateway.act({ action: "navigate", url: "http://10.0.0.1" })),
+          Effect.flip(gateway.act(bot, { action: "navigate", url: "http://10.0.0.1" })),
         ).pipe(Effect.provide(startGateway(computer.layer)));
 
         expect(error).toBeInstanceOf(ToolFailed);
@@ -174,7 +173,7 @@ describe("Gateway", () => {
         }),
       );
 
-      const error = yield* Gateway.use((gateway) => Effect.flip(gateway.act(navigate))).pipe(
+      const error = yield* Gateway.use((gateway) => Effect.flip(gateway.act(bot, navigate))).pipe(
         Effect.provide(startGateway(unavailable)),
       );
 
@@ -189,7 +188,7 @@ describe("Gateway", () => {
       const computer = fakeComputers(exampleDomain);
 
       const error = yield* Gateway.use((gateway) =>
-        sql`DROP TABLE audit_rows`.pipe(Effect.andThen(Effect.flip(gateway.act(navigate)))),
+        sql`DROP TABLE audit_rows`.pipe(Effect.andThen(Effect.flip(gateway.act(bot, navigate)))),
       ).pipe(Effect.provide(startGateway(computer.layer)));
 
       expect(error).toBeInstanceOf(ToolFailed);
@@ -209,7 +208,7 @@ describe("Gateway", () => {
         }),
       );
 
-      const answer = yield* Gateway.use((gateway) => gateway.act({ action: "snapshot" })).pipe(
+      const answer = yield* Gateway.use((gateway) => gateway.act(bot, { action: "snapshot" })).pipe(
         Effect.provide(startGateway(computer.layer)),
       );
 
@@ -224,7 +223,7 @@ describe("Gateway", () => {
       const computer = fakeComputers(() => Effect.never);
 
       const running = yield* Gateway.use((gateway) =>
-        Effect.flip(gateway.act({ action: "snapshot" })),
+        Effect.flip(gateway.act(bot, { action: "snapshot" })),
       ).pipe(Effect.provide(startGateway(computer.layer)), Effect.forkChild);
 
       yield* TestClock.adjust(Duration.minutes(1));
@@ -246,7 +245,7 @@ describe("Gateway", () => {
         );
 
         // The first run forwards and never hears back; the next start of the server finds its row.
-        yield* Gateway.use((gateway) => gateway.act(navigate)).pipe(
+        yield* Gateway.use((gateway) => gateway.act(bot, navigate)).pipe(
           Effect.provide(startGateway(hanging.layer)),
           Effect.forkChild,
         );
@@ -264,6 +263,161 @@ describe("Gateway", () => {
         });
         expect(hanging.actions).toEqual([navigate]);
       }).pipe(Effect.provide(database)),
+  );
+});
+
+/** A computer whose every answer is the page `snapshots` shows next, the last one from then on. */
+function pages(...snapshots: ReadonlyArray<string>) {
+  let shown = 0;
+
+  return fakeComputers((action) =>
+    Effect.sync(() => ({
+      action: action.action,
+      url: "https://example.com/form",
+      title: "Form",
+      snapshot: snapshots[Math.min(shown++, snapshots.length - 1)] ?? "",
+      truncated: false,
+    })),
+  );
+}
+
+const form = `- generic [ref=e1]:
+  - textbox "Name" [ref=e2]
+  - button "Send" [ref=e3]`;
+
+const sent = `- generic [ref=e1]:
+  - heading "Thank you" [level=1] [ref=e4]`;
+
+describe("Gateway refs", () => {
+  it.effect(
+    "denies a click on a ref missing from the latest snapshot, before the computer hears of it",
+    () =>
+      Effect.gen(function* () {
+        const computer = pages(form);
+
+        const error = yield* Gateway.use((gateway) =>
+          gateway
+            .act(bot, { action: "snapshot" })
+            .pipe(Effect.andThen(Effect.flip(gateway.act(bot, { action: "click", ref: "e9" })))),
+        ).pipe(Effect.provide(startGateway(computer.layer)));
+
+        expect(error).toBeInstanceOf(ToolFailed);
+        expect(error.message).toBe(
+          "click did not run: e9 is not a ref in your latest snapshot. Take a snapshot and use a ref from it.",
+        );
+        expect(computer.actions).toEqual([{ action: "snapshot" }]);
+
+        const deny = (yield* auditRows).at(-1);
+        expect(deny).toMatchObject({
+          decision: "deny",
+          action: "click",
+          detail: JSON.stringify({ ref: "e9", reason: "not in the latest snapshot" }),
+          outcome_of: null,
+        });
+      }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("denies a ref before the Bot has seen any page", () =>
+    Effect.gen(function* () {
+      const computer = pages(form);
+
+      const error = yield* Gateway.use((gateway) =>
+        Effect.flip(gateway.act(bot, { action: "type", ref: "e2", text: "Ada" })),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(error.message).toContain("e2 is not a ref in your latest snapshot");
+      expect(computer.actions).toEqual([]);
+      expect(yield* auditRows).toMatchObject([
+        {
+          decision: "deny",
+          action: "type",
+          detail: JSON.stringify({ ref: "e2", reason: "there is no snapshot yet" }),
+        },
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect(
+    "sends the computer the element the ref names, and records its role and name with the typed text redacted",
+    () =>
+      Effect.gen(function* () {
+        const computer = pages(form);
+
+        yield* Gateway.use((gateway) =>
+          Effect.all([
+            gateway.act(bot, { action: "snapshot" }),
+            gateway.act(bot, { action: "type", ref: "e2", text: "hunter2 is my password" }),
+            gateway.act(bot, { action: "click", ref: "e3" }),
+          ]),
+        ).pipe(Effect.provide(startGateway(computer.layer)));
+
+        expect(computer.actions.slice(1)).toEqual([
+          {
+            action: "type",
+            target: { ref: "e2", role: "textbox", name: "Name" },
+            text: "hunter2 is my password",
+          },
+          { action: "click", target: { ref: "e3", role: "button", name: "Send" } },
+        ]);
+
+        const rows = yield* auditRows;
+        const allowed = rows.filter((row) => row["decision"] === "allow");
+
+        expect(allowed.map((row) => [row["action"], row["detail"]])).toEqual([
+          ["snapshot", "{}"],
+          [
+            "type",
+            JSON.stringify({ ref: "e2", role: "textbox", name: "Name", text: "[22 chars]" }),
+          ],
+          ["click", JSON.stringify({ ref: "e3", role: "button", name: "Send" })],
+        ]);
+        expect(JSON.stringify(rows)).not.toContain("hunter2");
+      }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("resolves the next ref against the page the last action answered with", () =>
+    Effect.gen(function* () {
+      const computer = pages(form, sent);
+
+      const [clicked, gone, thanked] = yield* Gateway.use((gateway) =>
+        Effect.gen(function* () {
+          yield* gateway.act(bot, { action: "navigate", url: "https://example.com/form" });
+
+          const clicked = yield* gateway.act(bot, { action: "click", ref: "e3" });
+          const gone = yield* Effect.flip(gateway.act(bot, { action: "click", ref: "e3" }));
+          const thanked = yield* gateway.act(bot, { action: "click", ref: "e4" });
+
+          return [clicked, gone, thanked] as const;
+        }),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(clicked).toContain('heading "Thank you"');
+      expect(gone.message).toContain("e3 is not a ref in your latest snapshot");
+      expect(thanked).toContain('heading "Thank you"');
+      expect(computer.actions.map((action) => action.action)).toEqual([
+        "navigate",
+        "click",
+        "click",
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("keeps each Bot's latest snapshot apart", () =>
+    Effect.gen(function* () {
+      const computer = pages(form);
+
+      const error = yield* Gateway.use((gateway) =>
+        gateway
+          .act(bot, { action: "snapshot" })
+          .pipe(
+            Effect.andThen(
+              Effect.flip(gateway.act(BotId.make("other"), { action: "click", ref: "e3" })),
+            ),
+          ),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(error.message).toContain("e3 is not a ref in your latest snapshot");
+    }).pipe(Effect.provide(database)),
   );
 });
 

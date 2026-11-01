@@ -6,6 +6,8 @@ import { Array, Effect, Option, Result, Schema } from "effect";
 import type { ModelProvider } from "../model-providers.ts";
 import {
   decodeModelScript,
+  fillRefs,
+  jsonStrings,
   type ModelScript,
   ModelStep,
   type ScriptedToolCall,
@@ -261,6 +263,22 @@ const decodeSideCall = Schema.decodeUnknownOption(
   ),
 );
 
+const decodeBody = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json));
+
+/** `calls` with every ref the script names by role and name read from the pages in `body`. */
+function filledCalls(
+  calls: ReadonlyArray<ScriptedToolCall>,
+  body: string,
+): Result.Result<ReadonlyArray<ScriptedToolCall>, string> {
+  const texts = Option.match(decodeBody(body), { onNone: () => [], onSome: jsonStrings });
+
+  return Result.all(
+    calls.map(({ name, params }) =>
+      Result.map(fillRefs(params, texts), (filled) => ({ name, params: filled })),
+    ),
+  );
+}
+
 const routes = new Map(Object.values(wireFormats).map((format) => [format.path, format]));
 
 /** Which step answers call N once the script has run out: none, or the script again from the top. */
@@ -318,7 +336,8 @@ Responses and OpenAI Chat Completions. Call N answers with step N, whichever rou
 also answers the model lookups the server makes at startup. `PUT /mock/script` with a JSON
 {@link ModelScript} replaces the script and starts counting calls and recording requests afresh, so a
 verify scenario scripts its own turn on a running stack. `GET /mock/requests` answers
-`{ "requests": [...] }`, every body since then, so the scenario can check what the model was shown. Plain Node, so `verify/mock-model.ts` runs it without a build.
+`{ "requests": [...] }`, every body since then, so the scenario can check what the model was shown. A
+tool input written as {@link refTo} is filled in from the latest page in the request being answered. Plain Node, so `verify/mock-model.ts` runs it without a build.
 */
 export function startMockModel(options: MockModelOptions): Promise<MockModelServer> {
   let script = options.script;
@@ -379,13 +398,17 @@ export function startMockModel(options: MockModelOptions): Promise<MockModelServ
           error: { type: "script_overrun", message: scriptOverrun(script, call) },
         }),
       onSome: (answer) =>
-        stream(
-          response,
+        Result.match(
           ModelStep.$match(answer, {
-            Say: ({ words }) => format.say(words, call),
-            CallTools: ({ calls: toolCalls }) => format.callTools(toolCalls, call),
+            Say: ({ words }) => Result.succeed(format.say(words, call)),
+            CallTools: ({ calls: toolCalls }) =>
+              Result.map(filledCalls(toolCalls, body), (filled) => format.callTools(filled, call)),
           }),
-          options.delayMs,
+          {
+            onFailure: async (message) =>
+              sendJson(response, 500, { error: { type: "unfilled_ref", message } }),
+            onSuccess: (events) => stream(response, events, options.delayMs),
+          },
         ),
     });
   });

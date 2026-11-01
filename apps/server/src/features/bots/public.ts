@@ -17,14 +17,14 @@ export const assistant: Bot = {
   name: "Assistant",
   instructions: [
     "You are Assistant, a helpful coworker. Answer briefly and plainly. If you do not know, say so.",
-    "You have a computer with a browser: navigate opens a page, snapshot reads the open page as text.",
+    "You have a computer with a browser: navigate opens a page, snapshot reads the open page as text with a ref per element, click and type act on an element by its ref. Every action answers with the page read afresh; use refs from the latest one.",
     untrustedGuidance,
   ].join("\n"),
 };
 
 const navigate = Tool.make("navigate", {
   description:
-    "Open a web page in your computer's browser. Answers with the page's address and title.",
+    "Open a web page in your computer's browser. Answers with the page's address, title and text, with a ref for each element.",
   parameters: Schema.Struct({
     url: Schema.String.annotate({ description: "The page's http or https address." }),
   }),
@@ -41,11 +41,36 @@ const snapshot = Tool.make("snapshot", {
   failureMode: "return",
 });
 
+const ref = Schema.String.annotate({
+  description: "The element's ref, such as e12, from the latest page you were shown.",
+});
+
+const click = Tool.make("click", {
+  description:
+    "Click an element of the page open in your computer's browser. Answers with the page read afresh.",
+  parameters: Schema.Struct({ ref }),
+  success: Schema.String,
+  failure: ToolFailed,
+  failureMode: "return",
+});
+
+const type = Tool.make("type", {
+  description:
+    "Put text in a field of the page open in your computer's browser, replacing what it held. Does not press Enter, so nothing is submitted. Answers with the page read afresh.",
+  parameters: Schema.Struct({
+    ref,
+    text: Schema.String.annotate({ description: "What the field should hold." }),
+  }),
+  success: Schema.String,
+  failure: ToolFailed,
+  failureMode: "return",
+});
+
 /**
 The tools every Bot is offered. Each is a gateway call: the gateway implements their handlers, and a
 failure comes back as a result the model reads rather than ending the turn.
 */
-export const botToolkit = Toolkit.make(navigate, snapshot);
+export const botToolkit = Toolkit.make(navigate, snapshot, click, type);
 
 /** What the page shows about a Bot. */
 export function botSummary(bot: Bot): BotSummary {
