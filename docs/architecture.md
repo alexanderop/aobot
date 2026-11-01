@@ -196,7 +196,7 @@ so there is one door for all of them, and a person who holds the computer holds 
    click. A click the page holds up past 5 seconds fails, and the browser is free for the next action.
    A person's clicks are not audited: the rows around them say who held the computer.
 6. `Control.handBack` writes `control_released · allow`, and in one transaction deletes the
-   `computer_control` row, forgets every Bot's latest snapshot, since the person may have changed the
+   `computer_control` row, forgets the latest snapshot, since the person may have changed the
    page, and writes `succeeded`. Old refs are then refused like any ref without a snapshot, so a Bot reads
    the page again before it acts on an element.
 
@@ -316,13 +316,21 @@ file holds.
 
 ### Refs
 
-A ref such as `e12` names one element of the latest snapshot the Bot was shown. The gateway stores that
-snapshot per Bot in the database (`bot_snapshots`), replacing it after every action that answered, so any
-replica resolves a ref the same way. Before any rule runs, `click` and `type` resolve their ref to the
-element's role and name. A ref that is not in the stored snapshot is a `deny` row, the computer never
-hears of it, and the model reads:
+A ref such as `e12` names one element of the latest snapshot of the page. Every Bot drives the one
+browser on the computer they share, so the gateway stores one snapshot for that computer in the database
+(`computer_snapshot`), with the Bot whose browser action read it (`read_by`), replacing both after every
+browser action that answered, whichever Bot asked. Any replica resolves a ref the same way. Before any
+rule runs, `click` and `type` resolve their ref to the element's role and name. A ref resolves only for
+the Bot that read the latest snapshot: another Bot's refs name a page it saw before the page changed, and
+the same ref can name a different element on the new page, which the computer's own check would not
+catch. Such a ref is a `deny` row with `another Bot read the page since`, the computer never hears of it,
+and the model reads:
 
-> click did not run: e12 is not a ref in your latest snapshot. Take a snapshot and use a ref from it.
+> click did not run: the page changed since you last read it. Take a snapshot and use a ref from it.
+
+A ref that is not in the snapshot its Bot read is a `deny` row too, and the model reads:
+
+> click did not run: e12 is not a ref in the page's latest snapshot. Take a snapshot and use a ref from it.
 
 The computer sends the resolved element, not just its ref, and reads the page afresh before acting. When
 the element at that ref is gone or no longer has that role and name (the page changed, or a navigation

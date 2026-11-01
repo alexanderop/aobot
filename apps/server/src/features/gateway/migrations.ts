@@ -45,6 +45,27 @@ const shareComputerControl = Effect.gen(function* () {
   yield* sql`DROP TABLE bot_control`;
 });
 
+const shareComputerSnapshot = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+
+  // Every Bot drives the one browser, so there is one latest page; read_by is the Bot whose refs name it.
+  yield* sql`
+    CREATE TABLE computer_snapshot (
+      id integer PRIMARY KEY CHECK (id = 1),
+      snapshot text NOT NULL,
+      read_by text NOT NULL,
+      updated_at text NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    )
+  `;
+
+  yield* sql`
+    INSERT INTO computer_snapshot (id, snapshot, read_by, updated_at)
+    SELECT 1, snapshot, bot_id, updated_at FROM bot_snapshots ORDER BY updated_at DESC LIMIT 1
+  `;
+
+  yield* sql`DROP TABLE bot_snapshots`;
+});
+
 /** Brings the gateway's tables up to date. Safe to run at every boot. */
 export const migrateGateway = SqliteMigrator.run({
   table: "gateway_migrations",
@@ -52,5 +73,6 @@ export const migrateGateway = SqliteMigrator.run({
     "0001_create_bot_snapshots": createBotSnapshots,
     "0002_create_bot_control": createBotControl,
     "0003_share_computer_control": shareComputerControl,
+    "0004_share_computer_snapshot": shareComputerSnapshot,
   }),
 });

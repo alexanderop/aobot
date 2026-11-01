@@ -177,7 +177,7 @@ export const controlDoors = Effect.gen(function* () {
   }).pipe(Effect.withSpan("ComputerControl.take"));
 
   /**
-  Hands the computer back to the Bots and forgets every latest snapshot, since the person may have changed
+  Hands the computer back to the Bots and forgets the latest snapshot, since the person may have changed
   the page: old refs are refused, and a Bot must read the page again before it acts on an element. The
   `succeeded` row commits with the holder and the snapshots, so it is on record exactly when the Bots hold
   the computer again.
@@ -193,7 +193,7 @@ export const controlDoors = Effect.gen(function* () {
 
         yield* Effect.all([
           store.release(),
-          snapshots.forgetAll(),
+          snapshots.forget,
           rows.outcome(allowRow, "succeeded", {}),
         ]).pipe(
           sql.withTransaction,

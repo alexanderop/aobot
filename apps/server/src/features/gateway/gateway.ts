@@ -50,7 +50,7 @@ export interface Refusal {
 }
 
 /**
-What a Bot asks for, in the words of its tools: an element is a ref from its latest snapshot. The gateway
+What a Bot asks for, in the words of its tools: an element is a ref from the latest snapshot. The gateway
 resolves each ref into the {@link RefTarget} the computer is sent. A file is a path inside its workspace.
 */
 export const BotRequest = Schema.Union([
@@ -108,10 +108,21 @@ const claimedName = Claim.match({
   Unnamed: () => "an unnamed Bot",
 });
 
-/** A ref the gateway could not find in the Bot's latest snapshot, so the call is denied. */
+/** Another Bot read the page after the Bot that sent the ref, so its refs name a page it has not seen. */
+const readByAnother = "another Bot read the page since";
+
+/** Why a ref did not resolve, as its deny row says. */
+const RefMiss = Schema.Literals([
+  "there is no snapshot yet",
+  "the latest snapshot could not be read",
+  "not in the latest snapshot",
+  readByAnother,
+]);
+
+/** A ref the gateway could not resolve for the Bot that sent it, so the call is denied. */
 class UnknownRef extends Schema.TaggedError<UnknownRef>()("UnknownRef", {
   ref: Schema.String,
-  reason: Schema.String,
+  reason: RefMiss,
 }) {}
 
 /** A file action whose path leaves the workspace as it is written, so the call is denied. */
@@ -124,9 +135,11 @@ function outsideWorkspaceAnswer({ action, path }: FileAction): string {
   return `${action} did not run: ${path} is outside your workspace. Name a file by its path inside ${workspaceRoot}, such as notes.txt, with no leading / and no "..".`;
 }
 
-/** What the model reads when its ref is not in its latest snapshot. */
-function unknownRefAnswer(action: ActionName, ref: string): string {
-  return `${action} did not run: ${ref} is not a ref in your latest snapshot. Take a snapshot and use a ref from it.`;
+/** What the model reads when its ref does not resolve. */
+function unknownRefAnswer(action: ActionName, { ref, reason }: UnknownRef): string {
+  return reason === readByAnother
+    ? `${action} did not run: the page changed since you last read it. Take a snapshot and use a ref from it.`
+    : `${action} did not run: ${ref} is not a ref in the page's latest snapshot. Take a snapshot and use a ref from it.`;
 }
 
 /** What the model reads when it asks for a tool it was not granted. */
@@ -268,19 +281,23 @@ export const gatewayLayer = Layer.effectContext(
     });
 
     const targetOf = Effect.fn("Gateway.resolveRef")(function* (bot: BotId, ref: string) {
-      const latest = yield* snapshots
-        .latest(bot)
-        .pipe(
-          Effect.mapError(
-            () => new UnknownRef({ ref, reason: "the latest snapshot could not be read" }),
-          ),
-        );
+      const latest = yield* snapshots.latest.pipe(
+        Effect.mapError(
+          () => new UnknownRef({ ref, reason: "the latest snapshot could not be read" }),
+        ),
+      );
 
       if (Option.isNone(latest)) {
         return yield* new UnknownRef({ ref, reason: "there is no snapshot yet" });
       }
 
-      const target = snapshotRefs(latest.value).get(ref);
+      // The role and name come from this snapshot, so the computer's check against the page it shows
+      // passes for any ref in it, also one from a page this Bot read before another Bot navigated.
+      if (latest.value.readBy !== bot) {
+        return yield* new UnknownRef({ ref, reason: readByAnother });
+      }
+
+      const target = snapshotRefs(latest.value.snapshot).get(ref);
 
       if (target === undefined) {
         return yield* new UnknownRef({ ref, reason: "not in the latest snapshot" });
@@ -290,14 +307,14 @@ export const gatewayLayer = Layer.effectContext(
     });
 
     const forward = (
-      bot: BotId,
       computer: Computer,
+      bot: BotId,
       action: ComputerAction,
     ): Effect.Effect<string, ComputerActFailed | ComputerLost> => {
       const browse = (page: PageAction) =>
         computer.browse(page).pipe(
           Effect.tap((read) =>
-            snapshots.save(bot, read.snapshot).pipe(
+            snapshots.save(read.snapshot, bot).pipe(
               // Its refs then resolve against an older page, which the computer refuses as stale.
               Effect.catchTag("SqlError", (error) =>
                 Effect.logWarning("The latest snapshot could not be stored").pipe(
@@ -390,7 +407,7 @@ export const gatewayLayer = Layer.effectContext(
       const forwarded = yield* Effect.gen(function* () {
         const computer = yield* computers.ensure;
 
-        return yield* forward(bot, computer, action).pipe(toolResult(forwarding[action.action]));
+        return yield* forward(computer, bot, action).pipe(toolResult(forwarding[action.action]));
       }).pipe(
         Effect.result,
         Effect.onInterrupt(() =>
@@ -425,7 +442,7 @@ export const gatewayLayer = Layer.effectContext(
       const queued = request.action === "run";
 
       return yield* grant(claim, request.action).pipe(
-        Effect.flatMap((bot) => doors.admit(carryOut(bot, request), { queued })),
+        Effect.flatMap((granted) => doors.admit(carryOut(granted, request), { queued })),
         Effect.catchTags({
           NotGranted: (refused) =>
             deny(
@@ -443,8 +460,12 @@ export const gatewayLayer = Layer.effectContext(
                 ),
               ),
             ),
-          UnknownRef: ({ ref, reason }) =>
-            deny(request.action, { ref, reason }, unknownRefAnswer(request.action, ref)),
+          UnknownRef: (unknown) =>
+            deny(
+              request.action,
+              { ref: unknown.ref, reason: unknown.reason },
+              unknownRefAnswer(request.action, unknown),
+            ),
           OutsideWorkspace: ({ action }) =>
             deny(
               action.action,

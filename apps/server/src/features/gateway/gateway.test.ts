@@ -454,7 +454,7 @@ describe("Gateway refs", () => {
 
         expect(error).toBeInstanceOf(ToolFailed);
         expect(error.message).toBe(
-          "click did not run: e9 is not a ref in your latest snapshot. Take a snapshot and use a ref from it.",
+          "click did not run: e9 is not a ref in the page's latest snapshot. Take a snapshot and use a ref from it.",
         );
         expect(computer.actions).toEqual([{ action: "snapshot" }]);
 
@@ -476,7 +476,7 @@ describe("Gateway refs", () => {
         Effect.flip(gateway.act(bot, { action: "type", ref: "e2", text: "Ada" })),
       ).pipe(Effect.provide(startGateway(computer.layer)));
 
-      expect(error.message).toContain("e2 is not a ref in your latest snapshot");
+      expect(error.message).toContain("e2 is not a ref in the page's latest snapshot");
       expect(computer.actions).toEqual([]);
       expect(yield* auditRows).toMatchObject([
         {
@@ -543,7 +543,7 @@ describe("Gateway refs", () => {
       ).pipe(Effect.provide(startGateway(computer.layer)));
 
       expect(clicked).toContain('heading "Thank you"');
-      expect(gone.message).toContain("e3 is not a ref in your latest snapshot");
+      expect(gone.message).toContain("e3 is not a ref in the page's latest snapshot");
       expect(thanked).toContain('heading "Thank you"');
       expect(computer.actions.map((action) => action.action)).toEqual([
         "navigate",
@@ -553,18 +553,72 @@ describe("Gateway refs", () => {
     }).pipe(Effect.provide(database)),
   );
 
-  it.effect("keeps each Bot's latest snapshot apart", () =>
+  it.effect("refuses a Bot's ref once another Bot read the page, even one the new page has", () =>
     Effect.gen(function* () {
-      const computer = pages(form);
+      const computer = pages(form, sent);
 
-      const error = yield* Gateway.use((gateway) =>
-        gateway
-          .act(bot, { action: "snapshot" })
-          .pipe(Effect.andThen(Effect.flip(gateway.act(otherBot, { action: "click", ref: "e3" })))),
+      const [stale, current] = yield* Gateway.use((gateway) =>
+        Effect.gen(function* () {
+          yield* gateway.act(bot, { action: "snapshot" });
+          yield* gateway.act(otherBot, navigate);
+
+          return [
+            yield* Effect.flip(gateway.act(bot, { action: "click", ref: "e1" })),
+            yield* gateway.act(otherBot, { action: "click", ref: "e4" }),
+          ] as const;
+        }),
       ).pipe(Effect.provide(startGateway(computer.layer)));
 
-      expect(error.message).toContain("e3 is not a ref in your latest snapshot");
+      expect(stale.message).toBe(
+        "click did not run: the page changed since you last read it. Take a snapshot and use a ref from it.",
+      );
+      expect(current).toContain('heading "Thank you"');
+      expect(computer.actions.map((action) => action.action)).toEqual([
+        "snapshot",
+        "navigate",
+        "click",
+      ]);
+      expect(computer.actions.at(-1)).toEqual({
+        action: "click",
+        target: { ref: "e4", role: "heading", name: "Thank you" },
+      });
+      expect((yield* auditRows).find((row) => row["decision"] === "deny")).toMatchObject({
+        action: "click",
+        detail: JSON.stringify({ ref: "e1", reason: "another Bot read the page since" }),
+      });
     }).pipe(Effect.provide(database)),
+  );
+
+  it.effect(
+    "keeps the page a Bot read last, and that it read it, once every Bot shares the one snapshot",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`DROP TABLE computer_snapshot`;
+        yield* sql`
+        CREATE TABLE bot_snapshots (bot_id text PRIMARY KEY, snapshot text NOT NULL, updated_at text NOT NULL)
+      `;
+        yield* sql`
+        INSERT INTO bot_snapshots VALUES
+          ('assistant', ${form}, '2026-10-01T09:00:00.000Z'),
+          ('researcher', ${sent}, '2026-10-01T09:05:00.000Z')
+      `;
+        yield* sql`DELETE FROM gateway_migrations WHERE name = 'share_computer_snapshot'`;
+
+        yield* migrateGateway;
+
+        const computer = pages(sent);
+
+        const [clicked, refused] = yield* Gateway.use((gateway) =>
+          Effect.all([
+            gateway.act(otherBot, { action: "click", ref: "e4" }),
+            Effect.flip(gateway.act(bot, { action: "click", ref: "e1" })),
+          ]),
+        ).pipe(Effect.provide(startGateway(computer.layer)));
+
+        expect(clicked).toContain('heading "Thank you"');
+        expect(refused.message).toContain("the page changed since you last read it");
+      }).pipe(Effect.provide(database)),
   );
 });
 
@@ -885,40 +939,38 @@ describe("Gateway run", () => {
     }).pipe(Effect.provide(database)),
   );
 
-  it.effect(
-    "never takes a page the computer answers a command with as the Bot's latest snapshot",
-    () =>
-      Effect.gen(function* () {
-        const [ran, clicked] = yield* Gateway.use((gateway) =>
-          Effect.gen(function* () {
-            yield* gateway.act(bot, { action: "snapshot" });
+  it.effect("never takes a page the computer answers a command with as the latest snapshot", () =>
+    Effect.gen(function* () {
+      const [ran, clicked] = yield* Gateway.use((gateway) =>
+        Effect.gen(function* () {
+          yield* gateway.act(bot, { action: "snapshot" });
 
-            const ran = yield* Effect.flip(gateway.act(bot, { action: "run", command: "ls" }));
-            const clicked = yield* Effect.flip(gateway.act(bot, { action: "click", ref: "e9" }));
+          const ran = yield* Effect.flip(gateway.act(bot, { action: "run", command: "ls" }));
+          const clicked = yield* Effect.flip(gateway.act(bot, { action: "click", ref: "e9" }));
 
-            return [ran, clicked] as const;
-          }),
-        ).pipe(
-          Effect.provide(
-            startGateway(
-              pagesOverHttp('- heading "Example Domain" [ref=e1]', '- button "Delete" [ref=e9]'),
-            ),
+          return [ran, clicked] as const;
+        }),
+      ).pipe(
+        Effect.provide(
+          startGateway(
+            pagesOverHttp('- heading "Example Domain" [ref=e1]', '- button "Delete" [ref=e9]'),
           ),
-        );
+        ),
+      );
 
-        expect(ran.message).toContain("The computer stopped answering.");
-        expect(clicked.message).toContain("e9 is not a ref in your latest snapshot");
-        expect((yield* auditRows).map((row) => [row["decision"], row["action"]])).toEqual([
-          ["allow", "snapshot"],
-          ["succeeded", "snapshot"],
-          ["allow", "run"],
-          ["unknown", "run"],
-          ["deny", "click"],
-        ]);
-        expect((yield* auditRows).at(-1)?.["detail"]).toBe(
-          JSON.stringify({ ref: "e9", reason: "not in the latest snapshot" }),
-        );
-      }).pipe(Effect.provide(database)),
+      expect(ran.message).toContain("The computer stopped answering.");
+      expect(clicked.message).toContain("e9 is not a ref in the page's latest snapshot");
+      expect((yield* auditRows).map((row) => [row["decision"], row["action"]])).toEqual([
+        ["allow", "snapshot"],
+        ["succeeded", "snapshot"],
+        ["allow", "run"],
+        ["unknown", "run"],
+        ["deny", "click"],
+      ]);
+      expect((yield* auditRows).at(-1)?.["detail"]).toBe(
+        JSON.stringify({ ref: "e9", reason: "not in the latest snapshot" }),
+      );
+    }).pipe(Effect.provide(database)),
   );
 
   it.effect("keeps the Bot's latest page when a command answers, so its refs still resolve", () =>
@@ -1286,7 +1338,13 @@ describe("Gateway control", () => {
       yield* sql`DROP TABLE computer_control`;
       yield* sql`CREATE TABLE bot_control (bot_id text PRIMARY KEY, since text NOT NULL)`;
       yield* sql`INSERT INTO bot_control VALUES ('assistant', '2026-10-01T09:00:00.000Z')`;
-      yield* sql`DELETE FROM gateway_migrations WHERE name = 'share_computer_control'`;
+      yield* sql`DROP TABLE computer_snapshot`;
+      yield* sql`
+        CREATE TABLE bot_snapshots (bot_id text PRIMARY KEY, snapshot text NOT NULL, updated_at text NOT NULL)
+      `;
+      yield* sql`
+        DELETE FROM gateway_migrations WHERE name IN ('share_computer_control', 'share_computer_snapshot')
+      `;
 
       yield* migrateGateway;
 
@@ -1298,28 +1356,26 @@ describe("Gateway control", () => {
     }).pipe(Effect.provide(database)),
   );
 
-  it.effect(
-    "forgets every Bot's latest snapshot on hand back, since the page may have changed",
-    () =>
-      Effect.gen(function* () {
-        const stale = yield* withControl((gateway, control) =>
-          Effect.gen(function* () {
-            yield* gateway.act(bot, { action: "snapshot" });
-            yield* gateway.act(otherBot, { action: "snapshot" });
-            yield* control.take;
-            yield* control.handBack;
+  it.effect("forgets the latest snapshot on hand back, since the page may have changed", () =>
+    Effect.gen(function* () {
+      const stale = yield* withControl((gateway, control) =>
+        Effect.gen(function* () {
+          yield* gateway.act(bot, { action: "snapshot" });
+          yield* gateway.act(otherBot, { action: "snapshot" });
+          yield* control.take;
+          yield* control.handBack;
 
-            return yield* Effect.forEach([bot, otherBot], (asking) =>
-              Effect.flip(gateway.act(asking, { action: "click", ref: "e1" })),
-            );
-          }),
-        ).pipe(Effect.provide(startGateway(fakeComputers({ browse: exampleDomain }).layer)));
+          return yield* Effect.forEach([bot, otherBot], (asking) =>
+            Effect.flip(gateway.act(asking, { action: "click", ref: "e1" })),
+          );
+        }),
+      ).pipe(Effect.provide(startGateway(fakeComputers({ browse: exampleDomain }).layer)));
 
-        expect(stale.map((error) => error.message)).toEqual([
-          expect.stringContaining("e1 is not a ref in your latest snapshot"),
-          expect.stringContaining("e1 is not a ref in your latest snapshot"),
-        ]);
-      }).pipe(Effect.provide(database)),
+      expect(stale.map((error) => error.message)).toEqual([
+        expect.stringContaining("e1 is not a ref in the page's latest snapshot"),
+        expect.stringContaining("e1 is not a ref in the page's latest snapshot"),
+      ]);
+    }).pipe(Effect.provide(database)),
   );
 
   it.effect("refuses the Bot's old refs after hand back, until it reads the page again", () =>
@@ -1342,7 +1398,7 @@ describe("Gateway control", () => {
       ).pipe(Effect.provide(startGateway(computer.layer)));
 
       expect(handedBack).toEqual(Control.cases.Bot.make({}));
-      expect(stale.message).toContain("e1 is not a ref in your latest snapshot");
+      expect(stale.message).toContain("e1 is not a ref in the page's latest snapshot");
       expect(yield* auditTrail).toEqual([
         "snapshot · allow",
         "snapshot · succeeded",

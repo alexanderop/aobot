@@ -66,7 +66,7 @@ export function fileName(path: string): string {
 /** The query of a person's `GET` or `PUT /files`, on the server and on the computer: which file. */
 export const FileQuery = Schema.Struct({ path: WorkspacePath });
 
-/** An element of a page as the gateway resolved it from the Bot's latest snapshot. */
+/** An element of a page as the gateway resolved it from the latest snapshot. */
 export const RefTarget = Schema.Struct({
   /** The element's ref in that snapshot, such as `e12`. */
   ref: Schema.String,
