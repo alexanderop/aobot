@@ -5,3 +5,5 @@ export { migrateGateway } from "./snapshot-store.ts";
 export { gatewayMcpLayer, gatewayMcpName } from "./mcp.ts";
 
 export { botToolHandlers } from "./tools.ts";
+
+export { screenHandlers } from "./screen.ts";
