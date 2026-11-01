@@ -12,6 +12,7 @@ import {
   Schema,
   Stream,
 } from "effect";
+import { HttpTraceContext } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { Gateway, gatewayMcpName } from "../../gateway/public.ts";
 import {
@@ -193,13 +194,28 @@ export function layerAcp(options: AcpRuntimeOptions) {
           Option.getOrElse(() => false),
         );
 
+        // The CLI sends these on every call to the gateway, so its tool calls land in this turn's trace.
+        const traceHeaders = Option.match(yield* Effect.option(Effect.currentSpan), {
+          onNone: () => [],
+          onSome: (span) => [
+            { name: "traceparent", value: HttpTraceContext.toHeaders(span).traceparent },
+          ],
+        });
+
         const { sessionId } = yield* ask(
           connection,
           "session/new",
           {
             cwd: folder,
             mcpServers: offersHttpMcp
-              ? [{ type: "http", name: gatewayMcpName, url: options.gatewayMcpUrl, headers: [] }]
+              ? [
+                  {
+                    type: "http",
+                    name: gatewayMcpName,
+                    url: options.gatewayMcpUrl,
+                    headers: traceHeaders,
+                  },
+                ]
               : [],
             _meta: launcher.sessionMeta,
           },
