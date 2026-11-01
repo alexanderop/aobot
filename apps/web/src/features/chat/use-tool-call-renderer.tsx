@@ -14,6 +14,10 @@ const decodeRefArgs = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ ref: Schema.String })),
 );
 
+const decodeRunArgs = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ command: Schema.String })),
+);
+
 function Result(props: { readonly summary: string; readonly text: string }) {
   return (
     <details className="tool-call__details">
@@ -104,6 +108,43 @@ const TypeCall = refCall({
   unfinished: (ref) => `Did not finish typing into ${ref}`,
 });
 
+/** A shell command: what ran, then how it ended and what it printed, or why it did not run. */
+function RunCall({ call }: { readonly call: ToolCall }) {
+  const command = Option.match(decodeRunArgs(call.args), {
+    onNone: () => null,
+    onSome: (args) => <code className="tool-call__args">{args.command}</code>,
+  });
+
+  return ToolCallStatus.$match(call.status, {
+    Running: () => (
+      <>
+        <p className="tool-call__title">Running a command…</p>
+        {command}
+      </>
+    ),
+    Done: ({ result }) => (
+      <>
+        <p className="tool-call__title">Ran a command</p>
+        {command}
+        <Result summary="What it printed" text={result} />
+      </>
+    ),
+    Failed: ({ result }) => (
+      <>
+        <p className="tool-call__title">Could not run a command</p>
+        {command}
+        <Result summary="Why" text={result} />
+      </>
+    ),
+    Unfinished: () => (
+      <>
+        <p className="tool-call__title">Did not finish a command</p>
+        {command}
+      </>
+    ),
+  });
+}
+
 function DefaultCall({ call }: { readonly call: ToolCall }) {
   return (
     <>
@@ -134,6 +175,7 @@ const renderers: ReadonlyMap<string, ToolCallRenderer> = new Map([
   ["snapshot", SnapshotCall],
   ["click", ClickCall],
   ["type", TypeCall],
+  ["run", RunCall],
 ]);
 
 function rendererFor(name: string): ToolCallRenderer {
