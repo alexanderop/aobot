@@ -1,0 +1,28 @@
+name: PR evidence
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+concurrency:
+  group: pr-evidence-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  evidence:
+    name: PR shows a screenshot or video
+    runs-on: ubuntu-24.04
+    permissions: {}
+    timeout-minutes: 2
+    steps:
+      - env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if printf '%s' "$BODY" | grep -Eiq '!\[[^]]*\]\([^)]+\)|<img |<video |user-attachments/assets/|\.(png|jpe?g|gif|webp|mp4|webm|mov)\b'; then
+            echo "Evidence found."
+          else
+            echo "::error::The PR body has no screenshot or video. See .claude/skills/pr/SKILL.md § Evidence."
+            exit 1
+          fi
