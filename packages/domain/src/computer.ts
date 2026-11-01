@@ -93,6 +93,12 @@ export const CommandRan = Schema.Struct({
   end: CommandEnd,
   stdout: CommandOutput,
   stderr: CommandOutput,
+  /**
+  Whether something the command left running, such as `sleep 600 &`, still held its output open half a
+  second after bash ended, so the computer stopped it there. What it would have printed later is missing.
+  Anything left running is stopped when bash ends; this says only that it was cut off mid-output.
+  */
+  leftOutputOpen: Schema.Boolean,
 });
 
 /** A decoded {@link CommandRan}. */

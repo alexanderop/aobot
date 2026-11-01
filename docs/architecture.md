@@ -122,10 +122,13 @@ characters. `type` replaces what the field holds and never presses Enter.
 a note when its start was dropped. It ended `Exited` with bash's exit code, `Signalled` when a signal the
 computer did not send ended bash (`kill -TERM $$`, a crash, the out-of-memory killer), or `TimedOut` when
 it was still running after 30 seconds. A command that exits non-zero still `succeeded`: the computer ran
-it, and the model reads how it ended. Once bash exits, its output gets half a second more, then the
-computer kills the command's process group, so a background job such as `sleep 600 &` neither holds the
-answer until the time limit nor outlives it. A timeout and a Stop kill the group the same way. A Bot's
-commands wait for each other in the gateway, so each one's time limit starts when the one before is done.
+it, and the model reads how it ended. Once bash ends, the computer kills the command's process group, so
+a background job such as `sleep 600 &` neither holds the answer until the time limit nor outlives it.
+After a non-zero exit that happens at once. After exit 0 or a signal, the output first gets half a second
+more, and when something still holds it open then, the model reads that the computer stopped what the
+command left running. The time limit counts only until bash ends. A timeout and a Stop kill the group the
+same way. A Bot's commands wait for each other in the gateway, so each one's time limit starts when the
+one before is done.
 The `Gateway.act` span records `gateway.command_end` (`exited`, `signalled` or `timed_out`) with
 `gateway.exit_code` or `gateway.signal`; the command is in the audit row, never in a span or a log.
 

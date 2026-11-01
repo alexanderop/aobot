@@ -329,6 +329,7 @@ describe("the docker computer", () => {
         end: Exited.make({ code: 0 }),
         stdout: { text: "pwuser\n/workspace\n/workspace\nbash\n", truncated: false },
         stderr: { text: "", truncated: false },
+        leftOutputOpen: false,
       });
     });
 
@@ -399,6 +400,7 @@ describe("the docker computer", () => {
         end: Signalled.make({ signal: "SIGTERM" }),
         stdout: { text: "before\n", truncated: false },
         stderr: { text: "", truncated: false },
+        leftOutputOpen: false,
       });
     });
 
@@ -408,6 +410,7 @@ describe("the docker computer", () => {
 
       expect(exited.end).toEqual(Exited.make({ code: 0 }));
       expect(exited.stdout.text).toBe("hi\n");
+      expect(exited.leftOutputOpen).toBe(true);
       expect(Date.now() - started).toBeLessThan(5_000);
       expect(await processes(local)).not.toContain("sleep 602");
     });
@@ -417,7 +420,16 @@ describe("the docker computer", () => {
 
       expect(finished.end).toEqual(Exited.make({ code: 0 }));
       expect(finished.stdout.text).toBe("finished\n");
+      expect(finished.leftOutputOpen).toBe(true);
       expect(await processes(local)).not.toContain("sleep 603");
+    });
+
+    it("stops a background job still holding its output after a signal ends bash, and says so", async () => {
+      const ended = await ran(await runCommand(local, "sleep 604 & echo hi; kill -TERM $$"));
+
+      expect(ended.end).toEqual(Signalled.make({ signal: "SIGTERM" }));
+      expect(ended.leftOutputOpen).toBe(true);
+      expect(await processes(local)).not.toContain("sleep 604");
     });
 
     it("stops a command that runs past 30 seconds, and everything in its process group", async () => {

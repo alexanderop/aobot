@@ -147,13 +147,19 @@ function presentOutput(name: string, { text, truncated }: CommandOutput): Readon
   ];
 }
 
-function presentCommand({ end, stdout, stderr }: CommandRan): string {
+function presentCommand({ end, stdout, stderr, leftOutputOpen }: CommandRan): string {
   return [
     presentEnd(end),
     "",
     ...presentOutput("stdout", stdout),
     "",
     ...presentOutput("stderr", stderr),
+    ...(leftOutputOpen
+      ? [
+          "",
+          "[the computer stopped what the command left running, so anything it printed later is missing]",
+        ]
+      : []),
   ].join("\n");
 }
 

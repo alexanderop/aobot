@@ -29,7 +29,8 @@ export class Shell extends Context.Service<
 
 /**
 How long output may still arrive once bash has exited. A background job such as `sleep 600 &` keeps the
-pipes open, and would otherwise hold the answer until the time limit.
+pipes open, and would otherwise hold the answer until the time limit. After a non-zero exit the spawner
+has already killed the process group, so the pipes close at once.
 */
 const outputGrace = Duration.millis(500);
 
@@ -72,7 +73,7 @@ export const shellLayer = (inherited: InheritedEnvironment) =>
             Stream.runForEach((piece) => Effect.sync(() => tail.add(piece))),
           );
 
-        const end = yield* Effect.scoped(
+        const { end, leftOutputOpen } = yield* Effect.scoped(
           Effect.gen(function* () {
             const child = yield* spawner.spawn(
               ChildProcess.make("bash", ["-c", command], {
@@ -102,11 +103,13 @@ export const shellLayer = (inherited: InheritedEnvironment) =>
               Effect.timeoutOption(commandTimeLimit),
             );
 
-            if (Option.isNone(ended)) return CommandEnd.cases.TimedOut.make({});
+            if (Option.isNone(ended)) {
+              return { end: CommandEnd.cases.TimedOut.make({}), leftOutputOpen: false };
+            }
 
-            yield* Effect.timeoutOption(Fiber.join(output), outputGrace);
+            const drained = yield* Effect.timeoutOption(Fiber.join(output), outputGrace);
 
-            return ended.value;
+            return { end: ended.value, leftOutputOpen: Option.isNone(drained) };
           }),
         ).pipe(
           // Not the error's own message: it carries the command line, which a span would then record.
@@ -123,6 +126,7 @@ export const shellLayer = (inherited: InheritedEnvironment) =>
           end,
           stdout: stdout.read(),
           stderr: stderr.read(),
+          leftOutputOpen,
         } satisfies CommandRan;
       });
 

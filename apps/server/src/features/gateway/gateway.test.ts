@@ -446,6 +446,7 @@ function shell(ran: Partial<Omit<CommandRan, "action">>) {
           end: Exited.make({ code: 0 }),
           stdout: printed(""),
           stderr: printed(""),
+          leftOutputOpen: false,
           ...ran,
         })
       : exampleDomain(action),
@@ -570,6 +571,29 @@ describe("Gateway run", () => {
     }).pipe(Effect.provide(database)),
   );
 
+  it.effect("says when the computer cut off what a command left running, and only then", () =>
+    Effect.gen(function* () {
+      const cutOff = shell({ stdout: printed("hi\n"), leftOutputOpen: true });
+      const drained = shell({ stdout: printed("hi\n") });
+      const command = { action: "run", command: "sleep 600 & echo hi" } as const;
+
+      const [stopped, finished] = yield* Effect.all([
+        Gateway.use((gateway) => gateway.act(bot, command)).pipe(
+          Effect.provide(startGateway(cutOff.layer)),
+        ),
+        Gateway.use((gateway) => gateway.act(bot, command)).pipe(
+          Effect.provide(startGateway(drained.layer)),
+        ),
+      ]);
+
+      const note = "[the computer stopped what the command left running";
+      expect(stopped).toContain("Exit code: 0");
+      expect(stopped).toContain(note);
+      expect(stopped).not.toContain("kept only the end");
+      expect(finished).not.toContain(note);
+    }).pipe(Effect.provide(database)),
+  );
+
   it.effect("waits past the computer's 30 seconds before calling a command unknown", () =>
     Effect.gen(function* () {
       const computer = fakeComputers(() => Effect.never);
@@ -603,6 +627,7 @@ describe("Gateway run", () => {
             end: Exited.make({ code: 0 }),
             stdout: printed(""),
             stderr: printed(""),
+            leftOutputOpen: false,
           } as const),
         ),
       );

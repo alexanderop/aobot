@@ -53,6 +53,7 @@ const fakeShell = Layer.succeed(
             end: Exited.make({ code: 0 }),
             stdout: { text: `${command}\n`, truncated: false },
             stderr: { text: "", truncated: false },
+            leftOutputOpen: false,
           }),
   }),
 );
@@ -176,6 +177,7 @@ describe("POST /act", () => {
       end: Exited.make({ code: 0 }),
       stdout: { text: "echo hi\n", truncated: false },
       stderr: { text: "", truncated: false },
+      leftOutputOpen: false,
     });
   });
 
