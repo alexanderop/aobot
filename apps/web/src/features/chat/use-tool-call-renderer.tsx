@@ -110,39 +110,28 @@ const TypeCall = refCall({
 
 /** A shell command: what ran, then how it ended and what it printed, or why it did not run. */
 function RunCall({ call }: { readonly call: ToolCall }) {
-  const command = Option.match(decodeRunArgs(call.args), {
-    onNone: () => null,
-    onSome: (args) => <code className="tool-call__args">{args.command}</code>,
-  });
-
-  return ToolCallStatus.$match(call.status, {
-    Running: () => (
-      <>
-        <p className="tool-call__title">Running a command…</p>
-        {command}
-      </>
-    ),
-    Done: ({ result }) => (
-      <>
-        <p className="tool-call__title">Ran a command</p>
-        {command}
-        <Result summary="What it printed" text={result} />
-      </>
-    ),
-    Failed: ({ result }) => (
-      <>
-        <p className="tool-call__title">Could not run a command</p>
-        {command}
-        <Result summary="Why" text={result} />
-      </>
-    ),
-    Unfinished: () => (
-      <>
-        <p className="tool-call__title">Did not finish a command</p>
-        {command}
-      </>
-    ),
-  });
+  return (
+    <>
+      <p className="tool-call__title">
+        {ToolCallStatus.$match(call.status, {
+          Running: () => "Running a command…",
+          Done: () => "Ran a command",
+          Failed: () => "Could not run a command",
+          Unfinished: () => "Did not finish a command",
+        })}
+      </p>
+      {Option.match(decodeRunArgs(call.args), {
+        onNone: () => null,
+        onSome: ({ command }) => <code className="tool-call__args">{command}</code>,
+      })}
+      {ToolCallStatus.$match(call.status, {
+        Done: ({ result }) => <Result summary="What it printed" text={result} />,
+        Failed: ({ result }) => <Result summary="Why" text={result} />,
+        Running: () => null,
+        Unfinished: () => null,
+      })}
+    </>
+  );
 }
 
 function DefaultCall({ call }: { readonly call: ToolCall }) {
