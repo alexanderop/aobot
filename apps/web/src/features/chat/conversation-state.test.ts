@@ -200,6 +200,24 @@ describe("given a Bot that calls a tool mid-answer", () => {
     expect(texts(answered)).toEqual(["Say hi in five words", "Opening it.", "Example Domain"]);
   });
 
+  it("marks the call failed with what the tool answered when its result says it failed", () => {
+    const failed = fold(running, [
+      {
+        type: "TOOL_CALL_RESULT",
+        messageId: MessageId.make("r1"),
+        toolCallId: callId,
+        content: "The computer is not available.",
+        role: "tool",
+        metadata: { failed: true },
+      },
+      { type: "RUN_FINISHED", threadId: conversationId, runId },
+    ]);
+
+    expect(failed.transcript.at(-1)).toMatchObject({
+      status: ToolCallStatus.Failed({ result: "The computer is not available." }),
+    });
+  });
+
   it("marks a call that never got its result unfinished once the run ends", () => {
     const stopped = fold(running, [{ type: "RUN_ERROR", message: "Stopped.", code: "stopped" }]);
 

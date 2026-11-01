@@ -26,6 +26,39 @@ describe("ToolCallCard", () => {
     expect(html).toContain("Opened https://example.com");
   });
 
+  it("says navigate could not open the page when it failed, and marks the card failed", () => {
+    const html = draw(
+      call(
+        "navigate",
+        '{"url":"https://example.com"}',
+        ToolCallStatus.Failed({ result: "The computer is not available." }),
+      ),
+    );
+
+    expect(html).toContain('data-status="failed"');
+    expect(html).toContain("Could not open https://example.com");
+    expect(html).not.toContain("Opened");
+  });
+
+  it("says snapshot could not read the page when it failed", () => {
+    const html = draw(
+      call("snapshot", "{}", ToolCallStatus.Failed({ result: "No page is open." })),
+    );
+
+    expect(html).toContain('data-status="failed"');
+    expect(html).toContain("Could not read the page");
+  });
+
+  it("says a tool it has no renderer for failed, with why", () => {
+    const html = draw(
+      call("click", '{"ref":"e3"}', ToolCallStatus.Failed({ result: "No element e3." })),
+    );
+
+    expect(html).toContain('data-status="failed"');
+    expect(html).toContain("click failed");
+    expect(html).toMatch(/<details[^>]*>.*No element e3\..*<\/details>/s);
+  });
+
   it("shows navigate as still opening while it runs", () => {
     expect(
       draw(call("navigate", '{"url":"https://example.com"}', ToolCallStatus.Running())),

@@ -30,6 +30,7 @@ function NavigateCall({ call }: { readonly call: ToolCall }) {
       {ToolCallStatus.$match(call.status, {
         Running: () => `Opening ${url}…`,
         Done: () => `Opened ${url}`,
+        Failed: () => `Could not open ${url}`,
         Unfinished: () => `Did not finish opening ${url}`,
       })}
     </p>
@@ -45,6 +46,7 @@ function SnapshotCall({ call }: { readonly call: ToolCall }) {
         <Result summary="What it read" text={result} />
       </>
     ),
+    Failed: () => <p className="tool-call__title">Could not read the page</p>,
     Unfinished: () => <p className="tool-call__title">Did not finish reading the page</p>,
   });
 }
@@ -56,15 +58,19 @@ function DefaultCall({ call }: { readonly call: ToolCall }) {
         {ToolCallStatus.$match(call.status, {
           Running: () => `Running ${call.name}…`,
           Done: () => `Ran ${call.name}`,
+          Failed: () => `${call.name} failed`,
           Unfinished: () => `Did not finish ${call.name}`,
         })}
       </p>
       {call.args === "" || call.args === "{}" ? null : (
         <code className="tool-call__args">{call.args}</code>
       )}
-      {ToolCallStatus.$is("Done")(call.status) ? (
-        <Result summary="Result" text={call.status.result} />
-      ) : null}
+      {ToolCallStatus.$match(call.status, {
+        Done: ({ result }) => <Result summary="Result" text={result} />,
+        Failed: ({ result }) => <Result summary="Why" text={result} />,
+        Running: () => null,
+        Unfinished: () => null,
+      })}
     </>
   );
 }

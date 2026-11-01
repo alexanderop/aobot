@@ -36,10 +36,14 @@ export type ConversationStatus = Data.TaggedEnum<{
 /** Constructors and matchers for {@link ConversationStatus}. */
 export const ConversationStatus = Data.taggedEnum<ConversationStatus>();
 
-/** Where one tool call stands: running, answered, or cut off when its run ended without a result. */
+/**
+Where one tool call stands: running, answered, answered with a failure, or cut off when its run ended
+without a result.
+*/
 export type ToolCallStatus = Data.TaggedEnum<{
   Running: Record<never, never>;
   Done: { readonly result: string };
+  Failed: { readonly result: string };
   Unfinished: Record<never, never>;
 }>;
 
@@ -236,7 +240,10 @@ export function foldChatEvent(state: ConversationState, event: ChatEvent): Conve
         ...state,
         transcript: updateToolCall(state.transcript, event.toolCallId, (call) => ({
           ...call,
-          status: ToolCallStatus.Done({ result: event.content }),
+          status:
+            event.metadata?.failed === true
+              ? ToolCallStatus.Failed({ result: event.content })
+              : ToolCallStatus.Done({ result: event.content }),
         })),
       };
 

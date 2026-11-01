@@ -82,6 +82,10 @@
   font-style: italic;
 }
 
+.tool-call[data-status="failed"] .tool-call__title {
+  color: var(--danger);
+}
+
 .tool-call__args {
   display: block;
   margin-top: 4px;
