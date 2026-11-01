@@ -266,8 +266,11 @@ reaches when it does not, until network limits (E5-3). These hold locally as muc
   computer's own addresses gets 403 before its token is read, so a command that finds the token cannot
   drive the browser around the gateway. What remains: commands run as the same user as the computer's own
   process, so they can read its environment and memory (`/proc/<pid>/environ`, and likely `ptrace`), and
-  `setsid` lets a command leave its process group and outlive its time limit or a Stop. Running commands
-  as a separate user, or in a sidecar, closes both (see `docs/backlog/later.md`).
+  `setsid` lets a command leave its process group and outlive its time limit or a Stop. The same user also
+  reaches the browser two more ways. Xvfb's socket in `/tmp/.X11-unix` asks for no X authority, so a
+  command can watch the screen and send it keys and clicks. The Chromium profile in `/tmp/aobot-browser-*`
+  holds the cookies of every site the Bot is signed in to. Running commands as a separate user, or in a
+  sidecar, closes all of these (see `docs/backlog/later.md`).
 - **Grafana cannot relay a command to `/act`.** `grafana/otel-lgtm` shares the computers network, because
   the computer exports its spans there, so its requests come from an address `/act` accepts. Its image
   makes every visitor Admin, and Admin can add a data source pointing at the computer and send requests
