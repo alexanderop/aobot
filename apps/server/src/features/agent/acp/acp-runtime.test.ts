@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { MessageId } from "@aobot/domain";
+import { MessageId, ToolCallId } from "@aobot/domain";
 import { NodeChildProcessSpawner, NodeFileSystem, NodePath } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Duration, Effect, Fiber, Layer, Option, Queue, Stream, Tracer } from "effect";
@@ -99,6 +99,63 @@ describe("AgentRuntime (acp)", () => {
         AgentEvent.Done(),
       ]);
     }).pipe(Effect.provide(runtimeWith(launcherFor({ ...quiet, chunks: ["Hi", " there"] })))),
+  );
+
+  it.live("reports a gateway tool call between the text before and after it", () =>
+    Effect.gen(function* () {
+      const events = yield* runTurn;
+
+      expect(events).toEqual([
+        AgentEvent.TextDelta({ text: "Opening it." }),
+        AgentEvent.ToolCallStarted({
+          id: ToolCallId.make("toolu_1"),
+          name: "navigate",
+          params: { url: "https://example.com" },
+        }),
+        AgentEvent.ToolCallFinished({
+          id: ToolCallId.make("toolu_1"),
+          result: "Opened https://example.com",
+        }),
+        AgentEvent.TextDelta({ text: "Example Domain" }),
+        AgentEvent.Done(),
+      ]);
+    }).pipe(
+      Effect.provide(
+        runtimeWith(
+          launcherFor({
+            ...quiet,
+            chunks: [
+              "Opening it.",
+              {
+                sessionUpdate: "tool_call",
+                toolCallId: "toolu_1",
+                name: "mcp__aobot__navigate",
+                title: "mcp__aobot__navigate",
+                status: "pending",
+                rawInput: {},
+              },
+              {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "toolu_1",
+                rawInput: { url: "https://example.com" },
+              },
+              {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "toolu_1",
+                status: "completed",
+                content: [
+                  {
+                    type: "content",
+                    content: { type: "text", text: "Opened https://example.com" },
+                  },
+                ],
+              },
+              "Example Domain",
+            ],
+          }),
+        ),
+      ),
+    ),
   );
 
   it.live(

@@ -24,7 +24,12 @@ import {
 import { ClientDecision, decideClientRequest } from "./client-requests.ts";
 import { type AcpConnection, connect } from "./connection.ts";
 import type { AcpLauncher } from "./launchers.ts";
-import { promptOutcome, sessionUpdateEvent } from "./session-updates.ts";
+import {
+  noToolCalls,
+  promptOutcome,
+  sessionUpdateEvents,
+  type ToolCalls,
+} from "./session-updates.ts";
 import { turnPrompt } from "./turn-prompt.ts";
 
 /** What the `acp` runtime needs: which CLI to start and how, and where the gateway's MCP server is. */
@@ -120,19 +125,26 @@ export function layerAcp(options: AcpRuntimeOptions) {
           Unknown: ({ reply }) => Effect.succeed(reply),
         });
 
-      const signalEvents = Signal.$match({
-        Update: ({ params }): Stream.Stream<AgentEvent, ModelFailed> =>
-          Option.match(sessionUpdateEvent(params), {
-            onNone: () => Stream.empty,
-            onSome: (event) => Stream.make(event),
-          }),
-        Answered: ({ response }) =>
-          Result.match(promptOutcome(response), {
-            onSuccess: (event) => Stream.make(event),
-            onFailure: (failure) => Stream.fail(failure),
-          }),
-        Broken: ({ failure }) => Stream.fail(failure),
-      });
+      type Transition = readonly [ToolCalls, ReadonlyArray<Stream.Stream<AgentEvent, ModelFailed>>];
+
+      const signalEvents = (calls: ToolCalls, signal: Signal): Transition =>
+        Signal.$match(signal, {
+          Update: ({ params }): Transition => {
+            const [next, events] = sessionUpdateEvents(calls, params);
+
+            return [next, [Stream.fromIterable(events)]];
+          },
+          Answered: ({ response }): Transition => [
+            calls,
+            [
+              Result.match(promptOutcome(response), {
+                onSuccess: (event) => Stream.make(event),
+                onFailure: (failure) => Stream.fail(failure),
+              }),
+            ],
+          ],
+          Broken: ({ failure }): Transition => [calls, [Stream.fail(failure)]],
+        });
 
       const startTurn = Effect.fnUntraced(function* (turn: Turn) {
         const folder = yield* fs.makeTempDirectoryScoped({ prefix: "aobot-acp-" });
@@ -245,7 +257,8 @@ export function layerAcp(options: AcpRuntimeOptions) {
             orElse: () => Stream.fail(stalled),
           }),
           Stream.takeUntil((signal) => !Signal.$is("Update")(signal)),
-          Stream.flatMap(signalEvents),
+          Stream.mapAccum(() => noToolCalls, signalEvents),
+          Stream.flatten(),
         );
       });
 
