@@ -1,4 +1,4 @@
-import { MessageId, ToolCallId } from "@aobot/domain";
+import { MessageId } from "@aobot/domain";
 import { describe, expect, it } from "@effect/vitest";
 import { Duration, Effect, Layer, Option, Redacted, Ref, Schema, Stream } from "effect";
 import { Tool, Toolkit } from "effect/ai";
@@ -164,26 +164,29 @@ describe("the mock model server", () => {
         ),
       );
 
-    it.live("answers with the new script from its first step, each time it is sent", () =>
-      Effect.gen(function* () {
-        const origin = yield* running;
+    it.live(
+      "answers with the new script from its first step, each time it is sent, never reusing a tool call id",
+      () =>
+        Effect.gen(function* () {
+          const origin = yield* running;
+          const ids: Array<string> = [];
 
-        for (const attempt of [1, 2]) {
-          const answer = yield* putScript(origin, JSON.stringify(script));
-          expect(answer.status, `PUT number ${attempt}`).toBe(200);
+          for (const attempt of [1, 2]) {
+            const answer = yield* putScript(origin, JSON.stringify(script));
+            expect(answer.status, `PUT number ${attempt}`).toBe(200);
 
-          const events = yield* askWith(origin);
+            const events = yield* askWith(origin);
+            const started = events.filter(AgentEvent.$is("ToolCallStarted"));
 
-          expect(events.filter(AgentEvent.$is("ToolCallStarted"))).toEqual([
-            AgentEvent.ToolCallStarted({
-              id: ToolCallId.make("call_1_0"),
-              name: "forecast",
-              params: { city: "Vienna", days: 3 },
-            }),
-          ]);
-          expect(events.at(-1)).toEqual(AgentEvent.Done());
-        }
-      }),
+            expect(started.map(({ name, params }) => ({ name, params }))).toEqual([
+              { name: "forecast", params: { city: "Vienna", days: 3 } },
+            ]);
+            expect(events.at(-1)).toEqual(AgentEvent.Done());
+            ids.push(...started.map(({ id }) => id));
+          }
+
+          expect(new Set(ids).size).toBe(2);
+        }),
     );
 
     it.live("answers GET /mock/requests with what the model was sent since the script", () =>

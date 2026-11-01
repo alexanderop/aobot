@@ -342,6 +342,8 @@ tool input written as {@link refTo} is filled in from the latest page in the req
 export function startMockModel(options: MockModelOptions): Promise<MockModelServer> {
   let script = options.script;
   let calls = 0;
+  // Never reset, so a tool call id is unique across scripts, as a real model's are across turns.
+  let served = 0;
   const bodies: Array<string> = [];
 
   const server = createServer(async (request, response) => {
@@ -388,6 +390,7 @@ export function startMockModel(options: MockModelOptions): Promise<MockModelServ
     }
 
     calls += 1;
+    served += 1;
     const call = calls;
 
     const step = Array.get(script, stepIndex[options.afterLastStep](call, script.length));
@@ -400,9 +403,11 @@ export function startMockModel(options: MockModelOptions): Promise<MockModelServ
       onSome: (answer) =>
         Result.match(
           ModelStep.$match(answer, {
-            Say: ({ words }) => Result.succeed(format.say(words, call)),
+            Say: ({ words }) => Result.succeed(format.say(words, served)),
             CallTools: ({ calls: toolCalls }) =>
-              Result.map(filledCalls(toolCalls, body), (filled) => format.callTools(filled, call)),
+              Result.map(filledCalls(toolCalls, body), (filled) =>
+                format.callTools(filled, served),
+              ),
           }),
           {
             onFailure: async (message) =>
