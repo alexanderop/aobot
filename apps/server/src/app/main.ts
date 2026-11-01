@@ -24,7 +24,8 @@ import {
 import { auditLogLayer, migrateAudit } from "../features/audit/public.ts";
 import { botToolkit } from "../features/bots/public.ts";
 import { chatLayer, migrateChat } from "../features/chat/public.ts";
-import { gatewayLayer, gatewayMcpLayer } from "../features/gateway/public.ts";
+import { computersLayer } from "../features/computers/public.ts";
+import { botToolHandlers, gatewayLayer, gatewayMcpLayer } from "../features/gateway/public.ts";
 import { serverConfig } from "./config.ts";
 
 const server = Layer.unwrap(
@@ -47,10 +48,23 @@ const server = Layer.unwrap(
 
     const ownAddress = isIPv6(config.host) ? `[${config.host}]` : config.host;
 
+    // One gateway for both runtimes and the MCP server: layers are built once per reference.
+    const gateway = gatewayLayer.pipe(
+      Layer.provide(auditLogLayer),
+      Layer.provide(
+        computersLayer(config.computers, { otlpEndpoint: config.otlpEndpoint }).pipe(
+          Layer.provide(FetchHttpClient.layer),
+        ),
+      ),
+      Layer.provide(database),
+    );
+
     // Each runtime brings its agent, what runs beside it, and the routes it serves.
     const runtime = AgentRuntimeSettings.$match(config.runtime, {
       Api: ({ model }) => ({
         agent: layerApi(botToolkit, config.limits).pipe(
+          Layer.provide(botToolHandlers),
+          Layer.provide(gateway),
           Layer.provide(languageModelLayer(model)),
           Layer.provide(FetchHttpClient.layer),
         ),
@@ -67,13 +81,12 @@ const server = Layer.unwrap(
           gatewayMcpUrl: `http://${ownAddress}:${config.port}/mcp`,
           stallTimeout: config.limits.stallTimeout,
         }).pipe(
-          Layer.provide(gatewayLayer),
-          Layer.provide(auditLogLayer),
+          Layer.provide(gateway),
           Layer.provide(NodeChildProcessSpawner.layer),
           Layer.provide([NodeFileSystem.layer, NodePath.layer]),
         ),
         beside: Layer.empty,
-        routes: gatewayMcpLayer,
+        routes: gatewayMcpLayer.pipe(Layer.provide(gateway)),
       }),
     });
 

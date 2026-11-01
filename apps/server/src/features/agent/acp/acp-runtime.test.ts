@@ -44,6 +44,7 @@ function recordingGateway() {
             refusals.push({ refusal, traceId: Option.map(span, (current) => current.traceId) });
           }),
         ),
+      act: (action) => Effect.die(`these tests offer no computer, but ${action.action} ran`),
     }),
   );
 
