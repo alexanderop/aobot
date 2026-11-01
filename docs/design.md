@@ -72,6 +72,7 @@ characters from the reference.
 | `--sidebar`    | `#141415`                                      | sidebar                                 |
 | `--bubble`     | `#1f1f21`                                      | Bot bubbles, cards, composer            |
 | `--row-active` | `#232325`                                      | selected sidebar row                    |
+| `--divider`    | `#232325`                                      | the line between the chat and a panel   |
 | `--fg`         | `#ececed`                                      | text                                    |
 | `--muted`      | `#8a8a8f`                                      | previews, group headings, times         |
 | `--accent`     | `#3fa592`                                      | your bubbles, voice button, answer keys |

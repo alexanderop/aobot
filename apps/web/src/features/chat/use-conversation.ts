@@ -4,7 +4,7 @@ import type { BotSummary, ConversationId } from "@aobot/domain";
 import { Option } from "effect";
 import { useCallback } from "react";
 import { conversation } from "./conversation.ts";
-import { ConversationStatus, isRunning } from "./conversation-state.ts";
+import { ConversationStatus, isRunning, showsScreen } from "./conversation-state.ts";
 import type { FailureCode, TranscriptItem } from "./conversation-state.ts";
 
 /** What went wrong with the last attempt, in words the person can read. */
@@ -19,6 +19,8 @@ export interface UseConversation {
   /** Messages and tool calls, in the order they happened. */
   readonly transcript: ReadonlyArray<TranscriptItem>;
   readonly isRunning: boolean;
+  /** Whether the Bot's screen is worth showing, as {@link showsScreen} decides. */
+  readonly showsScreen: boolean;
   readonly error: Option.Option<ConversationError>;
   readonly send: (text: string) => void;
   readonly stop: () => void;
@@ -52,6 +54,7 @@ export function useConversation(id: ConversationId): UseConversation {
     bot: state.bot,
     transcript: state.transcript,
     isRunning: running,
+    showsScreen: showsScreen(state),
     error: ConversationStatus.$match(state.status, {
       Idle: () => Option.none(),
       Running: () => Option.none(),

@@ -1,6 +1,8 @@
 .conversation {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
+  min-width: 0;
   height: 100%;
   max-width: 860px;
   margin: 0 auto;

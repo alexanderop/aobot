@@ -1,4 +1,4 @@
-import { Data, Option } from "effect";
+import { Array as Arr, Data, Option } from "effect";
 import type {
   BotSummary,
   ChatEvent,
@@ -269,6 +269,26 @@ export function foldChatEvent(state: ConversationState, event: ChatEvent): Conve
 /** True while a run is in flight. */
 export function isRunning(state: ConversationState): boolean {
   return ConversationStatus.$is("Running")(state.status);
+}
+
+/** Whether a tool call came after the person's last message. */
+function calledToolThisTurn(transcript: ReadonlyArray<TranscriptItem>): boolean {
+  return Option.exists(
+    Arr.findLast(
+      transcript,
+      (item) => TranscriptItem.$is("ToolCall")(item) || item.role === "user",
+    ),
+    TranscriptItem.$is("ToolCall"),
+  );
+}
+
+/**
+Whether the Bot's screen is worth showing: a run this page started is in flight and has called a tool this
+turn. A page that joined a running turn sees none of its steps, nor when it ends, so it keeps the screen
+folded.
+*/
+export function showsScreen(state: ConversationState): boolean {
+  return isRunning(state) && calledToolThisTurn(state.transcript);
 }
 
 function isStopWaiting(state: ConversationState): boolean {
