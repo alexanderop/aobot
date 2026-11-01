@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { ConversationId, MessageId, RunId } from "./ids.ts";
+import { ConversationId, MessageId, RunId, ToolCallId } from "./ids.ts";
 
 /**
 Why a run ended without finishing. `busy` never appears here: a second message is refused by
@@ -33,6 +33,28 @@ export const ChatEvent = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("TEXT_MESSAGE_END"),
     messageId: MessageId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("TOOL_CALL_START"),
+    toolCallId: ToolCallId,
+    toolCallName: Schema.String,
+    parentMessageId: Schema.optionalKey(MessageId),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("TOOL_CALL_ARGS"),
+    toolCallId: ToolCallId,
+    delta: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("TOOL_CALL_END"),
+    toolCallId: ToolCallId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("TOOL_CALL_RESULT"),
+    messageId: MessageId,
+    toolCallId: ToolCallId,
+    content: Schema.String,
+    role: Schema.optionalKey(Schema.Literal("tool")),
   }),
   Schema.Struct({
     type: Schema.Literal("RUN_FINISHED"),

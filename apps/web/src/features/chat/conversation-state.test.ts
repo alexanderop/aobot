@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { BotId, ConversationId, MessageId, RunId } from "@aobot/domain";
+import { BotId, ConversationId, MessageId, RunId, ToolCallId } from "@aobot/domain";
 import type { ChatEvent } from "@aobot/domain";
 import { Option } from "effect";
 import {
@@ -14,6 +14,7 @@ import {
   seedFromSnapshot,
 } from "./conversation-state.ts";
 import type { ConversationState } from "./conversation-state.ts";
+import { ToolCallStatus, TranscriptItem } from "./conversation-state.ts";
 
 const conversationId = ConversationId.make("c1");
 
@@ -30,13 +31,18 @@ const reply = (...deltas: string[]): ChatEvent[] => [
   { type: "TEXT_MESSAGE_END", messageId: botId },
 ];
 
+const texts = (state: ConversationState) =>
+  state.transcript.flatMap((item) => (TranscriptItem.$is("Message")(item) ? [item.text] : []));
+
 const fold = (state: ConversationState, events: ChatEvent[]) => events.reduce(foldChatEvent, state);
 
 const asked = appendUserMessage(initialState, userId, "Say hi in five words");
 
 describe("given a message the person just sent", () => {
   it("shows the message at once and counts as running", () => {
-    expect(asked.messages).toEqual([{ id: userId, role: "user", text: "Say hi in five words" }]);
+    expect(asked.transcript).toEqual([
+      TranscriptItem.Message({ id: userId, role: "user", text: "Say hi in five words" }),
+    ]);
     expect(isRunning(asked)).toBe(true);
   });
 
@@ -44,10 +50,7 @@ describe("given a message the person just sent", () => {
     const midway = fold(asked, reply("Hello", " there", " from"));
 
     it("grows one Bot message word by word and keeps running", () => {
-      expect(midway.messages.map((message) => message.text)).toEqual([
-        "Say hi in five words",
-        "Hello there from",
-      ]);
+      expect(texts(midway)).toEqual(["Say hi in five words", "Hello there from"]);
       expect(isRunning(midway)).toBe(true);
     });
 
@@ -55,7 +58,7 @@ describe("given a message the person just sent", () => {
       const done = fold(midway, [{ type: "RUN_FINISHED", threadId: conversationId, runId }]);
 
       expect(isRunning(done)).toBe(false);
-      expect(done.messages).toHaveLength(2);
+      expect(done.transcript).toHaveLength(2);
     });
 
     it("treats a stop as the end of the run, not as an error, and keeps the words so far", () => {
@@ -63,7 +66,7 @@ describe("given a message the person just sent", () => {
 
       expect(isRunning(stopped)).toBe(false);
       expect(ConversationStatus.$is("Idle")(stopped.status)).toBe(true);
-      expect(stopped.messages.at(-1)?.text).toBe("Hello there from");
+      expect(texts(stopped).at(-1)).toBe("Hello there from");
     });
 
     it("reports a failed run with its reason", () => {
@@ -79,7 +82,7 @@ describe("given a message the person just sent", () => {
   it("takes the bubble back and says why when the server refuses it as busy", () => {
     const refused = refuseMessage(asked, userId);
 
-    expect(refused.messages).toEqual([]);
+    expect(refused.transcript).toEqual([]);
     expect(ConversationStatus.$is("Failed")(refused.status)).toBe(true);
     expect(refused.status).toMatchObject({ code: "busy" });
   });
@@ -96,7 +99,7 @@ describe("given a message the person just sent", () => {
       userId,
     );
 
-    expect(resent.messages).toEqual(seeded.messages);
+    expect(resent.transcript).toEqual(seeded.transcript);
     expect(isRunning(resent)).toBe(false);
   });
 
@@ -123,7 +126,7 @@ describe("given a stored conversation", () => {
     });
 
     expect(Option.map(state.bot, (bot) => bot.name)).toEqual(Option.some("Chief"));
-    expect(state.messages).toHaveLength(1);
+    expect(state.transcript).toHaveLength(1);
     expect(isRunning(state)).toBe(false);
   });
 
@@ -135,5 +138,71 @@ describe("given a stored conversation", () => {
     });
 
     expect(isRunning(state)).toBe(true);
+  });
+});
+
+describe("given a Bot that calls a tool mid-answer", () => {
+  const callId = ToolCallId.make("call-1");
+
+  const afterId = MessageId.make("b2");
+
+  const toolCall: ChatEvent[] = [
+    { type: "TEXT_MESSAGE_END", messageId: botId },
+    {
+      type: "TOOL_CALL_START",
+      toolCallId: callId,
+      toolCallName: "navigate",
+      parentMessageId: botId,
+    },
+    { type: "TOOL_CALL_ARGS", toolCallId: callId, delta: '{"url":' },
+    { type: "TOOL_CALL_ARGS", toolCallId: callId, delta: '"https://example.com"}' },
+    { type: "TOOL_CALL_END", toolCallId: callId },
+  ];
+
+  const running = fold(asked, [...reply("Opening it.").slice(0, -1), ...toolCall]);
+
+  it("shows the call after the text before it, running, with its whole input", () => {
+    expect(running.transcript.at(-1)).toEqual(
+      TranscriptItem.ToolCall({
+        id: callId,
+        name: "navigate",
+        args: '{"url":"https://example.com"}',
+        status: ToolCallStatus.Running(),
+      }),
+    );
+    expect(texts(running)).toEqual(["Say hi in five words", "Opening it."]);
+  });
+
+  it("marks the call done with its result, and puts the text after it in a new message", () => {
+    const answered = fold(running, [
+      {
+        type: "TOOL_CALL_RESULT",
+        messageId: MessageId.make("r1"),
+        toolCallId: callId,
+        content: "Opened",
+        role: "tool",
+      },
+      { type: "TEXT_MESSAGE_START", messageId: afterId, role: "assistant" },
+      { type: "TEXT_MESSAGE_CONTENT", messageId: afterId, delta: "Example Domain" },
+      { type: "TEXT_MESSAGE_END", messageId: afterId },
+      { type: "RUN_FINISHED", threadId: conversationId, runId },
+    ]);
+
+    expect(answered.transcript.map((item) => item._tag)).toEqual([
+      "Message",
+      "Message",
+      "ToolCall",
+      "Message",
+    ]);
+    expect(answered.transcript[2]).toMatchObject({
+      status: ToolCallStatus.Done({ result: "Opened" }),
+    });
+    expect(texts(answered)).toEqual(["Say hi in five words", "Opening it.", "Example Domain"]);
+  });
+
+  it("marks a call that never got its result unfinished once the run ends", () => {
+    const stopped = fold(running, [{ type: "RUN_ERROR", message: "Stopped.", code: "stopped" }]);
+
+    expect(stopped.transcript.at(-1)).toMatchObject({ status: ToolCallStatus.Unfinished() });
   });
 });

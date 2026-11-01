@@ -6,6 +6,23 @@ const agUiExamples = [
   { type: "TEXT_MESSAGE_START", messageId: "message-1", role: "assistant" },
   { type: "TEXT_MESSAGE_CONTENT", messageId: "message-1", delta: "Hello" },
   { type: "TEXT_MESSAGE_END", messageId: "message-1" },
+  { type: "TOOL_CALL_START", toolCallId: "call-1", toolCallName: "navigate" },
+  {
+    type: "TOOL_CALL_START",
+    toolCallId: "call-1",
+    toolCallName: "navigate",
+    parentMessageId: "message-1",
+  },
+  { type: "TOOL_CALL_ARGS", toolCallId: "call-1", delta: '{"url":"https://example.com"}' },
+  { type: "TOOL_CALL_END", toolCallId: "call-1" },
+  { type: "TOOL_CALL_RESULT", messageId: "message-2", toolCallId: "call-1", content: "Opened." },
+  {
+    type: "TOOL_CALL_RESULT",
+    messageId: "message-2",
+    toolCallId: "call-1",
+    content: "Opened.",
+    role: "tool",
+  },
   { type: "RUN_FINISHED", threadId: "thread-1", runId: "run-1" },
   { type: "RUN_ERROR", message: "The model went quiet.", code: "stalled" },
 ];
@@ -17,7 +34,19 @@ describe("ChatEvent", () => {
 
   it("rejects an event type AG-UI 1.0.2 has but we do not stream", () => {
     expect(() =>
-      decodeChatEvent({ type: "TOOL_CALL_START", toolCallId: "call-1", toolCallName: "navigate" }),
+      decodeChatEvent({ type: "TOOL_CALL_CHUNK", toolCallId: "call-1", delta: "{}" }),
+    ).toThrow();
+  });
+
+  it("rejects a tool result from a role other than tool", () => {
+    expect(() =>
+      decodeChatEvent({
+        type: "TOOL_CALL_RESULT",
+        messageId: "message-2",
+        toolCallId: "call-1",
+        content: "Opened.",
+        role: "assistant",
+      }),
     ).toThrow();
   });
 

@@ -3,19 +3,21 @@ import { useEffect, useRef } from "react";
 import type { ConversationId } from "@aobot/domain";
 import { Bubble } from "./Bubble.tsx";
 import { Composer } from "./Composer.tsx";
+import { TranscriptItem } from "./conversation-state.ts";
+import { ToolCallCard } from "./ToolCallCard.tsx";
 import "./chat.css";
 import { useConversation } from "./use-conversation.ts";
 
-/** One conversation with a Bot: the name pill, the messages, and the composer. */
+/** One conversation with a Bot: the name pill, the transcript, and the composer. */
 export function ConversationView(props: { readonly conversationId: ConversationId }) {
-  const { bot, messages, isRunning, error, send, stop } = useConversation(props.conversationId);
+  const { bot, transcript, isRunning, error, send, stop } = useConversation(props.conversationId);
   const botName = Option.match(bot, { onNone: () => "Bot", onSome: (summary) => summary.name });
   const bottom = useRef<HTMLDivElement>(null);
-  const lastText = messages.at(-1)?.text;
+  const last = transcript.at(-1);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
-  }, [messages.length, lastText]);
+  }, [transcript.length, last]);
 
   return (
     <main className="conversation">
@@ -26,9 +28,12 @@ export function ConversationView(props: { readonly conversationId: ConversationI
         </span>
       </header>
       <div className="conversation__messages" role="log" aria-live="polite" aria-busy={isRunning}>
-        {messages.map((message) => (
-          <Bubble key={message.id} message={message} />
-        ))}
+        {transcript.map(
+          TranscriptItem.$match({
+            Message: (message) => <Bubble key={`message-${message.id}`} message={message} />,
+            ToolCall: (call) => <ToolCallCard key={`tool-${call.id}`} call={call} />,
+          }),
+        )}
         <div ref={bottom} />
       </div>
       {Option.match(error, {
