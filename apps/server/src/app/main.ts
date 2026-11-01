@@ -1,12 +1,13 @@
 import { createServer } from "node:http";
 import { isIPv6 } from "node:net";
-import { ChatRpcs } from "@aobot/domain";
+import { ChatRpcs, ScreenRpcs } from "@aobot/domain";
 import {
   NodeChildProcessSpawner,
   NodeFileSystem,
   NodeHttpServer,
   NodePath,
   NodeRuntime,
+  NodeWS,
 } from "@effect/platform-node";
 import { SqliteClient } from "@effect/sql-sqlite-node";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
@@ -30,6 +31,7 @@ import {
   gatewayLayer,
   gatewayMcpLayer,
   migrateGateway,
+  screenHandlers,
 } from "../features/gateway/public.ts";
 import { toolInputsRedacted } from "../shared/span-redaction.ts";
 import { serverConfig } from "./config.ts";
@@ -56,14 +58,15 @@ const server = Layer.unwrap(
 
     const ownAddress = isIPv6(config.host) ? `[${config.host}]` : config.host;
 
+    // One Computers for the gateway and the screen: two would start two containers with two tokens.
+    const computers = computersLayer(config.computers, { otlpEndpoint: config.otlpEndpoint }).pipe(
+      Layer.provide([FetchHttpClient.layer, NodeWS.layerWebSocketConstructor]),
+    );
+
     // One gateway for both runtimes and the MCP server: layers are built once per reference.
     const gateway = gatewayLayer.pipe(
       Layer.provide(auditLogLayer),
-      Layer.provide(
-        computersLayer(config.computers, { otlpEndpoint: config.otlpEndpoint }).pipe(
-          Layer.provide(FetchHttpClient.layer),
-        ),
-      ),
+      Layer.provide(computers),
       Layer.provide(database),
     );
 
@@ -100,10 +103,10 @@ const server = Layer.unwrap(
 
     // Off because the handlers name their own spans and `Chat.turn` starts its own trace. The RPC span
     // around each call would only add a second trace of one span.
-    const rpc = RpcServer.layer(ChatRpcs, { disableTracing: true }).pipe(
+    const rpc = RpcServer.layer(ChatRpcs.merge(ScreenRpcs), { disableTracing: true }).pipe(
       Layer.provide(RpcServer.layerProtocolWebsocket({ path: "/rpc" })),
       Layer.provide(RpcSerialization.layerJson),
-      Layer.provide(chatLayer),
+      Layer.provide([chatLayer, screenHandlers.pipe(Layer.provide(computers))]),
       Layer.provide(runtime.agent),
       Layer.provide(database),
     );

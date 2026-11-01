@@ -21,6 +21,7 @@ import {
   Layer,
   Redacted,
   Semaphore,
+  Stream,
   Tracer,
 } from "effect";
 import { McpClient, McpProtocol } from "effect/ai";
@@ -69,6 +70,7 @@ function fakeComputers(answers: Partial<Computer>) {
       stop: Effect.void,
       reset: Effect.void,
       list: Effect.succeed([]),
+      screen: Stream.never,
     }),
   );
 
@@ -206,6 +208,7 @@ describe("Gateway", () => {
           stop: Effect.void,
           reset: Effect.void,
           list: Effect.succeed([]),
+          screen: Stream.never,
         }),
       );
 
@@ -530,6 +533,7 @@ function pagesOverHttp(...snapshots: ReadonlyArray<string>) {
         stop: Effect.void,
         reset: Effect.void,
         list: Effect.succeed([]),
+        screen: Stream.never,
       });
     }),
   ).pipe(Layer.provide(FetchHttpClient.layer));

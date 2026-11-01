@@ -2,7 +2,7 @@
 id: E1-4
 title: Watch the live screen
 epic: E1
-status: todo
+status: done
 depends_on: [E1-1]
 estimate: 2d
 ---

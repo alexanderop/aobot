@@ -9,18 +9,32 @@ import {
   snapshotRefs,
 } from "@aobot/domain";
 import { chromium, type BrowserContext, type Page } from "playwright";
-import { Context, Effect, Layer, Option, Ref, Semaphore } from "effect";
+import { Context, Effect, Layer, Option, Semaphore, Stream, SubscriptionRef } from "effect";
 import { Destinations, refusedHeader, startEgressProxy } from "../egress/public.ts";
 import { ActionFailed, ActionRefused } from "./errors.ts";
 import { checkNavigation } from "./navigation.ts";
 import { capSnapshot } from "./snapshot.ts";
 import { virtualDisplay } from "./virtual-display.ts";
 
+/** What watching the Bot's page may do with it. Nothing here acts on the page: that goes through `act`. */
+export interface WatchedPage {
+  readonly isClosed: () => boolean;
+  /** Calls `listener` once the page closes. The function it returns removes the listener. */
+  readonly onClose: (listener: () => void) => () => void;
+  /** Starts Chromium's screencast of the page, handing each JPEG to `onFrame`. Resolves to its stop. */
+  readonly startScreencast: (onFrame: (jpeg: string) => void) => Promise<() => Promise<void>>;
+}
+
 /** The computer's browser: one Chromium with one page, driven one action at a time. */
 export class Browser extends Context.Service<
   Browser,
   {
     readonly act: (action: PageAction) => Effect.Effect<PageRead, ActionRefused | ActionFailed>;
+    /**
+    The page the Bot acts on, now and each time an action replaces a closed one. It never takes the action
+    semaphore, so watching the page does not wait behind a 30-second navigation.
+    */
+    readonly pages: Stream.Stream<WatchedPage>;
   }
 >()("aobot/computer/browser/Browser") {}
 
@@ -36,13 +50,15 @@ function staleRef(target: RefTarget): string {
   return `The page changed since your latest snapshot, so ${target.ref} is not the ${target.role} it was. Take a snapshot again and use a ref from it.`;
 }
 
+/** `what` failed, with the first line of why: Playwright's later lines are its call log. */
+export function failureMessage(what: string, cause: unknown): string {
+  return `${what} failed: ${cause instanceof Error ? (cause.message.split("\n")[0] ?? "") : String(cause)}`;
+}
+
 function playwright<A>(what: string, run: () => Promise<A>): Effect.Effect<A, ActionFailed> {
   return Effect.tryPromise({
     try: run,
-    catch: (error) =>
-      new ActionFailed({
-        message: `${what} failed: ${error instanceof Error ? (error.message.split("\n")[0] ?? "") : String(error)}`,
-      }),
+    catch: (error) => new ActionFailed({ message: failureMessage(what, error) }),
   });
 }
 
@@ -77,15 +93,58 @@ const element = Effect.fn("Browser.element")(function* (current: Page, target: R
   return current.locator(`aria-ref=${target.ref}`);
 });
 
+/**
+`Page.startScreencast` on a CDP session of its own. Chromium sends the next frame only once the last is
+acknowledged, so each is acknowledged as soon as `onFrame` has it: a slow reader never holds Chromium up.
+*/
+async function startScreencast(page: Page, onFrame: (jpeg: string) => void) {
+  const session = await page.context().newCDPSession(page);
+
+  session.on("Page.screencastFrame", ({ data, sessionId }) => {
+    onFrame(data);
+    session.send("Page.screencastFrameAck", { sessionId }).catch(() => undefined);
+  });
+
+  const stop = () =>
+    session
+      .send("Page.stopScreencast")
+      .catch(() => undefined)
+      .then(() => session.detach())
+      .catch(() => undefined);
+
+  try {
+    await session.send("Page.startScreencast", { format: "jpeg", quality: 70 });
+  } catch (error) {
+    await stop();
+    throw error;
+  }
+
+  return stop;
+}
+
+function watched(page: Page): WatchedPage {
+  return {
+    isClosed: () => page.isClosed(),
+    onClose: (listener) => {
+      page.once("close", listener);
+
+      return () => {
+        page.off("close", listener);
+      };
+    },
+    startScreencast: (onFrame) => startScreencast(page, onFrame),
+  };
+}
+
 /** The page actions run in. A page the site closed is replaced, so the next action still has one. */
-function currentPage(context: BrowserContext, page: Ref.Ref<Page>) {
+function currentPage(context: BrowserContext, page: SubscriptionRef.SubscriptionRef<Page>) {
   return Effect.gen(function* () {
-    const current = yield* Ref.get(page);
+    const current = yield* SubscriptionRef.get(page);
 
     if (!current.isClosed()) return current;
 
     const fresh = yield* playwright("Opening a page", () => context.newPage());
-    yield* Ref.set(page, fresh);
+    yield* SubscriptionRef.set(page, fresh);
 
     return fresh;
   });
@@ -129,7 +188,7 @@ export const browserLayer = (home: string) =>
       const first =
         context.pages()[0] ?? (yield* playwright("Opening a page", () => context.newPage()));
 
-      const page = yield* Ref.make(first);
+      const page = yield* SubscriptionRef.make(first);
       const oneAtATime = yield* Semaphore.make(1);
 
       const navigate = Effect.fn("Browser.navigate")(function* (url: string) {
@@ -199,6 +258,6 @@ export const browserLayer = (home: string) =>
           ),
         );
 
-      return Browser.of({ act });
+      return Browser.of({ act, pages: SubscriptionRef.changes(page).pipe(Stream.map(watched)) });
     }),
   );

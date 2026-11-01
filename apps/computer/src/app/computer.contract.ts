@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { request } from "node:http";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
@@ -10,15 +11,18 @@ import {
   findRef,
   PageRead,
   type RefTarget,
+  ScreenFrame,
   snapshotRefs,
 } from "@aobot/domain";
-import { Option, Schema } from "effect";
+import { NodeWS } from "@effect/platform-node";
+import { Effect, Option, Schema, Stream } from "effect";
+import { Socket } from "effect/socket";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 /**
 Tier 3: the computer image behaves as the wire contract says. Builds `aobot-computer:dev`, runs it twice
-on a network of its own (private hosts allowed, for the fixture, and not), and drives `POST /act` over a
-port published on 127.0.0.1 only. The fixture page is served by a third container from the same image, so
+on a network of its own (private hosts allowed, for the fixture, and not), and drives `POST /act` and `GET /stream`
+over a port published on 127.0.0.1 only. The fixture page is served by a third container from the same image, so
 the suite needs nothing but Docker. `vp run test:contract`.
 */
 
@@ -148,6 +152,47 @@ function target(snapshot: string, role: string, name: string): RefTarget {
   return Option.getOrThrowWith(
     findRef(snapshot, { role, name }),
     () => new Error(`no ${role} "${name}" in:\n${snapshot}`),
+  );
+}
+
+/** The status `/stream` answers a WebSocket handshake with, without a token: 101 means it upgraded. */
+function handshakeStatus(computer: Computer): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const handshake = request(`${computer.url}/stream`, {
+      headers: {
+        connection: "Upgrade",
+        upgrade: "websocket",
+        "sec-websocket-version": "13",
+        "sec-websocket-key": randomBytes(16).toString("base64"),
+      },
+    });
+
+    handshake.on("response", (response) => resolve(response.statusCode ?? 0));
+    handshake.on("upgrade", (_response, socket) => {
+      socket.destroy();
+      resolve(101);
+    });
+    handshake.on("error", reject);
+    handshake.end();
+  });
+}
+
+const decodeFrame = Schema.decodeUnknownSync(Schema.fromJsonString(ScreenFrame));
+
+/** The first frame `/stream` sends the token holder, through the server's own WebSocket client. */
+function firstFrame(computer: Computer): Promise<ScreenFrame> {
+  return Effect.gen(function* () {
+    const socket = yield* Socket.makeWebSocket(`${computer.url.replace(/^http/u, "ws")}/stream`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    return yield* Socket.toStream(socket).pipe(Stream.runHead);
+  }).pipe(
+    Effect.map(Option.getOrThrow),
+    Effect.map((message) => decodeFrame(new TextDecoder().decode(message))),
+    Effect.timeout("5 seconds"),
+    Effect.provide(NodeWS.layerWebSocketConstructor),
+    Effect.runPromise,
   );
 }
 
@@ -292,6 +337,23 @@ describe("the docker computer", () => {
     const response = await act(local, { action: "snapshot" }, { ...asServer, authorization });
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "Not authorised." });
+  });
+
+  describe("its screen", () => {
+    it("refuses /stream without a token, before any upgrade", async () => {
+      expect(await handshakeStatus(local)).toBe(401);
+    });
+
+    // Chromium paints a still page only when asked to start, so this is what a first viewer sees.
+    it("streams a JPEG of a still page to the token holder, at once", async () => {
+      await result(
+        await act(local, { action: "navigate", url: `http://${suite}-fixture:${fixturePort}/` }),
+      );
+
+      const { jpeg } = await firstFrame(local);
+
+      expect(jpeg.startsWith("/9j/")).toBe(true);
+    });
   });
 
   it.each(["http://169.254.169.254/latest/meta-data/", "http://10.0.0.1/", "file:///etc/passwd"])(

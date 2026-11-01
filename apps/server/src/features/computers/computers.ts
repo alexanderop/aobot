@@ -5,9 +5,23 @@ import {
   type PageAction,
   PageRead,
   type RunCommand,
+  Screen,
+  ScreenFrame,
 } from "@aobot/domain";
-import { Context, Effect, type Redacted, Schema } from "effect";
+import {
+  Context,
+  Duration,
+  Effect,
+  Option,
+  Redacted,
+  Schedule,
+  Schema,
+  Queue,
+  type Scope,
+  Stream,
+} from "effect";
 import { type HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { Socket } from "effect/socket";
 
 /** The computer could not be started or reached, so the action was never sent. */
 export class ComputerUnavailable extends Schema.TaggedError<ComputerUnavailable>()(
@@ -55,6 +69,11 @@ export class Computers extends Context.Service<
     /** Throws the computer away, so the next `ensure` starts a fresh one. */
     readonly reset: Effect.Effect<void, ComputerUnavailable>;
     readonly list: Effect.Effect<ReadonlyArray<ComputerStatus>, ComputerUnavailable>;
+    /**
+    The running computer's screen for any number of viewers over one connection, as `Screen.watch`
+    promises. The connection closes a while after the last viewer leaves.
+    */
+    readonly screen: Stream.Stream<Screen>;
   }
 >()("aobot/computers/Computers") {}
 
@@ -126,4 +145,88 @@ export function computerAt(address: ComputerAddress, client: HttpClient.HttpClie
       return yield* answered(yield* send(command), decodeCommand);
     }),
   };
+}
+
+/** The connection to a computer's screen dropped, failed or was refused. Holds no frame. */
+class ScreenLost extends Schema.TaggedError<ScreenLost>()("ScreenLost", {
+  message: Schema.String,
+}) {}
+
+const decodeFrame = Schema.decodeUnknownEffect(Schema.fromJsonString(ScreenFrame));
+
+/**
+The frames of the computer at `address`: `GET /stream` as a WebSocket with the bearer token, only the
+latest kept until it is read. A message that does not decode, or a socket that closes, even cleanly, fails
+as {@link ScreenLost}, so the caller's retry dials again. The socket is read in a fiber of its own, so
+hanging up interrupts the read before the socket closes: a stream that owned the socket would read its own
+hang-up as a dropped connection.
+*/
+function screenAt(
+  address: ComputerAddress,
+): Stream.Stream<ScreenFrame, ScreenLost, Socket.WebSocketConstructor> {
+  const url = new URL("/stream", address.url);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  const decoder = new TextDecoder();
+
+  return Stream.callback<ScreenFrame, ScreenLost, Socket.WebSocketConstructor>(
+    (queue) =>
+      Socket.makeWebSocket(url.href, {
+        headers: { authorization: `Bearer ${Redacted.value(address.token)}` },
+      }).pipe(
+        Effect.flatMap((socket) =>
+          Socket.toStream(socket).pipe(
+            Stream.mapError((error) => new ScreenLost({ message: error.message })),
+            Stream.mapEffect((message) =>
+              decodeFrame(decoder.decode(message)).pipe(
+                // The decoder's own message would quote the frame.
+                Effect.mapError(
+                  () =>
+                    new ScreenLost({ message: "The computer sent something that is not a frame." }),
+                ),
+              ),
+            ),
+            Stream.runForEach((frame) => Queue.offer(queue, frame)),
+          ),
+        ),
+      ),
+    { bufferSize: 1, strategy: "sliding" },
+  );
+}
+
+/** How long the connection to the computer outlives its last viewer, so the next turn shows the screen at once. */
+const screenIdle = Duration.seconds(10);
+
+const blank = Screen.cases.Blank.make({});
+
+/** The live screen of whichever computer `addresses` names, for {@link Computers.screen}. */
+export function liveScreen(
+  addresses: Stream.Stream<Option.Option<ComputerAddress>>,
+  idle: Duration.Input = screenIdle,
+): Effect.Effect<Stream.Stream<Screen>, never, Scope.Scope | Socket.WebSocketConstructor> {
+  return addresses.pipe(
+    Stream.changes,
+    Stream.switchMap(
+      Option.match({
+        onNone: () => Stream.make(blank),
+        onSome: (address) =>
+          screenAt(address).pipe(
+            // A lost connection blanks the screen. A dial that never painted adds nothing, because
+            // `Stream.retry` restarts its backoff at an attempt's first element.
+            Stream.catch((lost) => Stream.make(blank).pipe(Stream.concat(Stream.fail(lost)))),
+            Stream.dropWhile(Screen.guards.Blank),
+            Stream.tapError(({ message }) =>
+              Effect.logWarning("The screen connection dropped").pipe(
+                Effect.annotateLogs({ reason: message }),
+              ),
+            ),
+            Stream.retry(
+              Schedule.min([Schedule.exponential("500 millis"), Schedule.spaced("8 seconds")]),
+            ),
+            Stream.orDie,
+            Stream.prepend([blank]),
+          ),
+      }),
+    ),
+    Stream.share({ capacity: 1, strategy: "sliding", replay: 1, idleTimeToLive: idle }),
+  );
 }

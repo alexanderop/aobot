@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import type { ModelScript } from "../apps/server/src/features/agent/testing/model-script.ts";
-import { assert, browser, waitFor } from "./browser.ts";
+import { assert, browser, evaluate, waitFor } from "./browser.ts";
 import { composeOutput } from "./stack.ts";
 
 /** The mock model's control routes, published on loopback by verify/compose.yml. */
@@ -18,8 +18,6 @@ const AuditRows = Schema.fromJsonString(
 );
 
 const ModelRequests = Schema.Struct({ requests: Schema.Array(Schema.String) });
-
-const AnswerTexts = Schema.fromJsonString(Schema.Array(Schema.String));
 
 /** Replace what the mock model does for the next turn. */
 export async function script(steps: ModelScript): Promise<void> {
@@ -52,11 +50,9 @@ export async function modelRequests(): Promise<ReadonlyArray<string>> {
 
 /** The text of every answer on the page that has any, oldest first. */
 export function answers(): ReadonlyArray<string> {
-  return Schema.decodeUnknownSync(AnswerTexts)(
-    browser(
-      "eval",
-      "[...document.querySelectorAll('.bubble--assistant .bubble__text')].map((node) => node.textContent)",
-    ),
+  return evaluate(
+    Schema.Array(Schema.String),
+    "[...document.querySelectorAll('.bubble--assistant .bubble__text')].map((node) => node.textContent)",
   ).filter((text) => text !== "");
 }
 
@@ -65,10 +61,15 @@ export function doneCards(tool: string): number {
   return Number(browser("get", "count", `.tool-call[data-tool="${tool}"][data-status="done"]`));
 }
 
-/** Send `text` from the composer and wait until answer number `index + 1` reads `answer`. */
-export async function ask(text: string, index: number, answer: string): Promise<void> {
+/** Send `text` from the composer, without waiting for the answer. */
+export function send(text: string): void {
   browser("find", "placeholder", "Message Assistant", "fill", text);
   browser("press", "Enter");
+}
+
+/** Send `text` from the composer and wait until answer number `index + 1` reads `answer`. */
+export async function ask(text: string, index: number, answer: string): Promise<void> {
+  send(text);
 
   await waitFor(`answer ${index + 1}`, 120_000, () => answers()[index] === answer);
 }

@@ -10,6 +10,7 @@ import {
   foldChatEvent,
   initialState,
   isRunning,
+  showsScreen,
   refuseMessage,
   seedFromSnapshot,
 } from "./conversation-state.ts";
@@ -117,6 +118,14 @@ describe("given a message the person just sent", () => {
   });
 });
 
+/** A stored conversation in which the person asked the Bot to open a page. */
+const stored = ({ running }: { readonly running: boolean }) =>
+  seedFromSnapshot({
+    bot: { id: BotId.make("bot"), name: "Chief" },
+    messages: [{ id: userId, role: "user", text: "Open example.com" }],
+    isRunning: running,
+  });
+
 describe("given a stored conversation", () => {
   it("opens with its messages, its Bot, and idle when nothing is running", () => {
     const state = seedFromSnapshot({
@@ -138,6 +147,14 @@ describe("given a stored conversation", () => {
     });
 
     expect(isRunning(state)).toBe(true);
+  });
+
+  it("keeps the screen folded on a page that joined a running turn, since it cannot see the turn end", () => {
+    expect(showsScreen(stored({ running: true }))).toBe(false);
+  });
+
+  it("shows no screen when nothing is running", () => {
+    expect(showsScreen(stored({ running: false }))).toBe(false);
   });
 });
 
@@ -222,5 +239,32 @@ describe("given a Bot that calls a tool mid-answer", () => {
     const stopped = fold(running, [{ type: "RUN_ERROR", message: "Stopped.", code: "stopped" }]);
 
     expect(stopped.transcript.at(-1)).toMatchObject({ status: ToolCallStatus.Unfinished() });
+  });
+
+  describe("whether the Bot's screen is worth showing", () => {
+    const finished = fold(running, [{ type: "RUN_FINISHED", threadId: conversationId, runId }]);
+
+    it("shows it once the running turn has called a tool", () => {
+      expect(showsScreen(running)).toBe(true);
+    });
+
+    it("does not show it while the turn has only talked", () => {
+      expect(showsScreen(asked)).toBe(false);
+      expect(showsScreen(fold(asked, reply("Hello")))).toBe(false);
+    });
+
+    it("folds it as the turn ends, however it ends", () => {
+      expect(showsScreen(finished)).toBe(false);
+      expect(
+        showsScreen(fold(running, [{ type: "RUN_ERROR", message: "Stopped.", code: "stopped" }])),
+      ).toBe(false);
+      expect(showsScreen(failIfStillRunning(running))).toBe(false);
+    });
+
+    it("does not show it in a new turn that has only talked, after one that used a tool", () => {
+      const next = appendUserMessage(finished, MessageId.make("u2"), "Thanks");
+
+      expect(showsScreen(next)).toBe(false);
+    });
   });
 });

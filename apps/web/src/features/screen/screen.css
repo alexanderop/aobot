@@ -1,0 +1,33 @@
+.live-screen {
+  display: flex;
+  /* The Bot's 1280-pixel page at about 60%, where its text stays legible; 56% of a narrower window. */
+  flex: 0 0 min(56vw, 760px);
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+  border-left: 1px solid var(--divider);
+  background: var(--sidebar);
+  transition: flex-basis 200ms ease;
+}
+
+.live-screen[data-state="folded"] {
+  flex-basis: 0;
+  border-left-width: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-screen {
+    transition: none;
+  }
+}
+
+.live-screen__frame {
+  display: block;
+  width: 100%;
+}
+
+.live-screen__waiting {
+  margin: 0;
+  color: var(--muted);
+  text-align: center;
+}

@@ -1,7 +1,8 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { NodeWS } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option, Schema } from "effect";
+import { Effect, Layer, Option, Schema, Stream } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { Computers } from "./computers.ts";
 import {
@@ -196,7 +197,7 @@ const fakeDocker = Effect.gen(function* () {
   const layer = dockerComputers({
     ...hostOptions,
     docker: { ...hostOptions.docker, socketPath },
-  }).pipe(Layer.provide(FetchHttpClient.layer));
+  }).pipe(Layer.provide([FetchHttpClient.layer, NodeWS.layerWebSocketConstructor]));
 
   return { state, layer };
 });
@@ -225,6 +226,19 @@ describe("dockerComputers", () => {
         expect(docker.state.acts).toEqual([`Bearer ${tokenOf(docker.state.container)}`]);
         expect(yield* computers.list).toEqual([{ name: "aobot-computer", running: true }]);
       }).pipe(Effect.provide(docker.layer));
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("starts no computer for someone watching the screen", () =>
+    Effect.gen(function* () {
+      const docker = yield* fakeDocker;
+
+      yield* Computers.use((computers) =>
+        computers.screen.pipe(Stream.runDrain, Effect.timeoutOption("300 millis")),
+      ).pipe(Effect.provide(docker.layer));
+
+      expect(docker.state.calls).toEqual([]);
+      expect(docker.state.container).toBeUndefined();
     }).pipe(Effect.scoped),
   );
 

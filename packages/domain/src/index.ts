@@ -26,8 +26,12 @@ export {
   PageRead,
   RefTarget,
   RunCommand,
+  Screen,
+  ScreenFrame,
   snapshotLimit,
 } from "./computer.ts";
+
+export { ScreenRpcs } from "./screen-rpcs.ts";
 
 export { keepFirst, keepLast } from "./text.ts";
 

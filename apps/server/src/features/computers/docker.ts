@@ -6,10 +6,10 @@ import {
   Layer,
   Option,
   Redacted,
-  Ref,
   Schedule,
   Schema,
   Semaphore,
+  SubscriptionRef,
 } from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import {
@@ -18,6 +18,7 @@ import {
   Computers,
   type ComputerStatus,
   ComputerUnavailable,
+  liveScreen,
 } from "./computers.ts";
 import type { DockerSettings } from "./settings.ts";
 
@@ -239,8 +240,9 @@ export function dockerComputers(options: DockerOptions) {
 
       const client = yield* HttpClient.HttpClient;
 
-      // The token of the container this process started, while it is the one running.
-      const token = yield* Ref.make(Option.none<Redacted.Redacted<string>>());
+      // Where the container this process started is, while it is the one running. Only `ensure` fills it,
+      // once the computer answers.
+      const running = yield* SubscriptionRef.make(Option.none<ComputerAddress>());
       const oneAtATime = yield* Semaphore.make(1);
 
       const answering = (address: ComputerAddress) =>
@@ -270,7 +272,7 @@ export function dockerComputers(options: DockerOptions) {
         });
 
       const startFresh = Effect.gen(function* () {
-        yield* Ref.set(token, Option.none());
+        yield* SubscriptionRef.set(running, Option.none());
         yield* engine.remove;
 
         const secret = Redacted.make(randomBytes(32).toString("base64url"));
@@ -286,14 +288,13 @@ export function dockerComputers(options: DockerOptions) {
 
         const address = yield* addressOf(inspect, secret);
         yield* answering(address);
-        yield* Ref.set(token, Option.some(secret));
 
         return address;
       });
 
       const ensure = Effect.gen(function* () {
         const current = yield* engine.inspect;
-        const known = yield* Ref.get(token);
+        const known = Option.map(yield* SubscriptionRef.get(running), ({ token }) => token);
 
         if (Option.isSome(current) && !isOurs(current.value)) {
           return yield* unavailable(
@@ -306,6 +307,8 @@ export function dockerComputers(options: DockerOptions) {
             ? yield* addressOf(current.value, known.value)
             : yield* startFresh;
 
+        yield* SubscriptionRef.set(running, Option.some(address));
+
         return computerAt(address, client);
       }).pipe(untraced, oneAtATime.withPermits(1), Effect.withSpan("Computers.ensure"));
 
@@ -314,7 +317,7 @@ export function dockerComputers(options: DockerOptions) {
         engine.inspect.pipe(
           Effect.flatMap((current) =>
             Option.isSome(current) && isOurs(current.value)
-              ? Effect.andThen(Ref.set(token, Option.none()), effect)
+              ? Effect.andThen(SubscriptionRef.set(running, Option.none()), effect)
               : Effect.void,
           ),
           untraced,
@@ -331,7 +334,7 @@ export function dockerComputers(options: DockerOptions) {
       );
 
       yield* Effect.addFinalizer(() =>
-        Ref.get(token).pipe(
+        SubscriptionRef.get(running).pipe(
           Effect.flatMap((known) => (Option.isSome(known) ? whenOurs(engine.remove) : Effect.void)),
           Effect.catchTag("ComputerUnavailable", ({ message }) =>
             Effect.logWarning("The computer could not be removed on shutdown").pipe(
@@ -341,11 +344,14 @@ export function dockerComputers(options: DockerOptions) {
         ),
       );
 
+      const screen = yield* liveScreen(SubscriptionRef.changes(running));
+
       return Computers.of({
         ensure,
         stop: whenOurs(engine.stop).pipe(Effect.withSpan("Computers.stop")),
         reset: whenOurs(engine.remove).pipe(Effect.withSpan("Computers.reset")),
         list,
+        screen,
       });
     }),
   );

@@ -100,6 +100,27 @@ waiting.
 8. The agent reads it and decides the next step. Every step goes through the same door.
 9. The answer streams back to the page, with each tool call shown between the text.
 
+## Watching the screen
+
+While a turn the page started is running and has called a tool, the page opens the Bot's screen as a side
+panel and watches it. A page that joins a running turn keeps the panel folded, because it cannot see when
+that turn ends. The screen goes through the gateway feature but not its audited tools: watching asks the
+computer to do nothing, so it is not audited, and it never starts a computer.
+
+1. The computer runs one `Page.startScreencast` on the Bot's page while anyone watches, and moves it to the
+   new page when the browser replaces a closed one. It serves the frames on `GET /stream`, a WebSocket
+   behind the same bearer token and the same refusal of callers on the computer itself as `/act`. A viewer
+   that reads slowly skips frames.
+2. The server holds one connection to `/stream`, shared by every viewer, dialled only once a computer it
+   started answers. When the computer is replaced it dials the new one with its new token, and it hangs up
+   a while after the last viewer leaves.
+3. The page asks `Screen.watch` on its own socket to `/rpc` and draws the latest frame as an `<img>`.
+   `Screen.watch` sends a `Screen`: a `Frame`, the base64 JPEG the computer sent, or `Blank` while no
+   computer runs or answers, and before a new one paints. A viewer is first sent the screen as it is now.
+
+The page never learns the computer's address or token. A frame shows whatever the Bot typed, so it never
+goes into a log, a span or an audit row.
+
 ## Gateway tools
 
 Every tool a Bot has, in either runtime. The tool map test (`apps/server/src/features/gateway/tool-map.test.ts`)
@@ -189,11 +210,11 @@ class ChatClient extends AtomRpc.Service<ChatClient>()("ChatClient", { group: Ch
 const conversation = Atom.family((id: ConversationId) => /* fold ChatEvents into one ordered transcript and a status */)
 ```
 
-| Hook                    | Shaped like CopilotKit's             | What it gives a component                                                               | From |
-| ----------------------- | ------------------------------------ | --------------------------------------------------------------------------------------- | ---- |
-| `useConversation(id)`   | `useAgent`                           | `transcript` (messages and tool calls in order), `isRunning`, `send`, `stop`            | E0-1 |
-| `useToolCallRenderer()` | `useRenderTool`, `useRenderToolCall` | A registry from tool name to a component that draws one tool call in each of its states | E1-1 |
-| `useLiveScreen(bot)`    | (none)                               | The latest screen frame, and `takeControl` and `handBack`                               | E1-4 |
+| Hook                    | Shaped like CopilotKit's             | What it gives a component                                                                     | From |
+| ----------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------- | ---- |
+| `useConversation(id)`   | `useAgent`                           | `transcript` (messages and tool calls in order), `isRunning`, `showsScreen`, `send`, `stop`   | E0-1 |
+| `useToolCallRenderer()` | `useRenderTool`, `useRenderToolCall` | A registry from tool name to a component that draws one tool call in each of its states       | E1-1 |
+| `useLiveScreen()`       | (none)                               | The latest screen frame, none while the screen is blank; `takeControl` and `handBack` in E1-5 | E1-4 |
 
 Not copied: `useFrontendTool` (it runs a Bot's tool in the open tab, which breaks routines, the Mac and
 closed tabs) and CopilotKit's provider. The wire format stays AG-UI, so a CopilotKit or other AG-UI client
@@ -220,7 +241,7 @@ Rules that keep the move cheap:
 4. The images Compose runs are the images AWS runs.
 5. Every computer provider passes the same contract test suite before it is used. See [testing.md](testing.md).
 
-The `Computers` service has four operations, the same as OpenBot's supervisor. There is one shared
+The `Computers` service has OpenBot's four supervisor operations, plus `screen`. There is one shared
 computer until E3-3 adds a `person` argument:
 
 ```ts
@@ -229,6 +250,8 @@ export interface Interface {
   readonly stop: Effect.Effect<void, ComputerUnavailable>;
   readonly reset: Effect.Effect<void, ComputerUnavailable>;
   readonly list: Effect.Effect<ReadonlyArray<ComputerStatus>, ComputerUnavailable>;
+  // The running computer's screen for any number of viewers. Never starts a computer, never fails.
+  readonly screen: Stream.Stream<Screen>;
 }
 
 // A running computer: a URL and a token, whichever provider started it. Both methods are `POST /act`,
@@ -262,15 +285,15 @@ reaches when it does not, until network limits (E5-3). These hold locally as muc
   browser's destinations, and private hosts stay refused to it even where `COMPUTER_ALLOW_PRIVATE_HOSTS`
   opens them to the browser. A command can still unset them and connect directly; network limits close
   that (E5-3). `bash -c`, never a login shell, so a `.bash_profile` the Bot wrote cannot run first.
-- **`/act` refuses callers on the computer itself.** A request from a loopback address or from one of the
-  computer's own addresses gets 403 before its token is read, so a command that finds the token cannot
-  drive the browser around the gateway. What remains: commands run as the same user as the computer's own
-  process, so they can read its environment and memory (`/proc/<pid>/environ`, and likely `ptrace`), and
-  `setsid` lets a command leave its process group and outlive its time limit or a Stop. The same user also
-  reaches the browser two more ways. Xvfb's socket in `/tmp/.X11-unix` asks for no X authority, so a
-  command can watch the screen and send it keys and clicks. The Chromium profile in `/tmp/aobot-browser-*`
-  holds the cookies of every site the Bot is signed in to. Running commands as a separate user, or in a
-  sidecar, closes all of these (see `docs/backlog/later.md`).
+- **`/act` and `/stream` refuse callers on the computer itself.** A request from a loopback address or from
+  one of the computer's own addresses gets 403 before its token is read, so a command that finds the token
+  cannot drive the browser around the gateway or watch it through `/stream`. What remains: commands run as
+  the same user as the computer's own process, so they can read its environment and memory
+  (`/proc/<pid>/environ`, and likely `ptrace`), and `setsid` lets a command leave its process group and
+  outlive its time limit or a Stop. The same user also reaches the browser two more ways. Xvfb's socket in
+  `/tmp/.X11-unix` asks for no X authority, so a command can watch the screen and send it keys and clicks.
+  The Chromium profile in `/tmp/aobot-browser-*` holds the cookies of every site the Bot is signed in to.
+  Running commands as a separate user, or in a sidecar, closes all of these (see `docs/backlog/later.md`).
 - **Grafana cannot relay a command to `/act`.** `grafana/otel-lgtm` shares the computers network, because
   the computer exports its spans there, so its requests come from an address `/act` accepts. Its image
   makes every visitor Admin, and Admin can add a data source pointing at the computer and send requests

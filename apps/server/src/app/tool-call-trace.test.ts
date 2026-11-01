@@ -99,6 +99,7 @@ const computers = Layer.succeed(
     stop: Effect.void,
     reset: Effect.void,
     list: Effect.succeed([]),
+    screen: Stream.never,
   }),
 );
 
