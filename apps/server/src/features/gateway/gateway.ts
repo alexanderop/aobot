@@ -27,16 +27,18 @@ export const gatewayLayer = Layer.effect(
     const refuse = Effect.fn("Gateway.refuse")(function* (refusal: Refusal) {
       const span = yield* Effect.option(Effect.currentSpan);
 
-      yield* audit.record({
-        traceId: Option.map(span, (current) => current.traceId),
-        // A refusal comes from an `acp` turn, and `acp` only runs in single-user mode: the one
-        // person at the keyboard is who it was for.
-        initiatorKind: "person",
-        actorId: "single-user",
-        decision: "deny",
-        action: refusal.action,
-        detail: { agent: refusal.agent, request: refusal.detail },
-      });
+      yield* audit
+        .record({
+          traceId: Option.map(span, (current) => current.traceId),
+          // A refusal comes from an `acp` turn, and `acp` only runs in single-user mode: the one
+          // person at the keyboard is who it was for.
+          initiatorKind: "person",
+          actorId: "single-user",
+          decision: "deny",
+          action: refusal.action,
+          detail: { agent: refusal.agent, request: refusal.detail },
+        })
+        .pipe(Effect.orDie);
     });
 
     return Gateway.of({ refuse });
