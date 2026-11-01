@@ -1,4 +1,4 @@
-import { BotId, type BotSummary, commandTimeLimitMs } from "@aobot/domain";
+import { BotId, type BotSummary, commandTimeLimit } from "@aobot/domain";
 import { Duration, Schema } from "effect";
 import { Tool, Toolkit } from "effect/ai";
 import { ToolFailed } from "../../shared/tool-result.ts";
@@ -68,7 +68,7 @@ const type = Tool.make("type", {
 });
 
 const run = Tool.make("run", {
-  description: `Run a bash command in /workspace, your computer's own folder. It is stopped after ${Duration.format(Duration.millis(commandTimeLimitMs))}, with everything it started. Answers its exit code and the end of what it printed to stdout and stderr.`,
+  description: `Run a bash command in /workspace, your computer's own folder. It is stopped after ${Duration.format(commandTimeLimit)}. Answers its exit code, or what stopped it, and the last of what it printed to stdout and stderr.`,
   parameters: Schema.Struct({
     command: Schema.String.annotate({
       description: "The command, as you would type it into bash, such as ls -la.",

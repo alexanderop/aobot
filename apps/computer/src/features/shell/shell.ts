@@ -1,11 +1,22 @@
-import { type CommandRan, commandOutputLimit, commandTimeLimitMs } from "@aobot/domain";
-import { Context, Duration, Effect, Layer, Option, Schema, Semaphore, Stream } from "effect";
+import { CommandEnd, type CommandRan, commandOutputLimit, commandTimeLimit } from "@aobot/domain";
+import {
+  Context,
+  Duration,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  type PlatformError,
+  Schema,
+  Semaphore,
+  Stream,
+} from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { startEgressProxyWithoutCredentials } from "../egress/public.ts";
 import { commandEnvironment, type InheritedEnvironment, workspace } from "./environment.ts";
 import { outputTail } from "./tail.ts";
 
-/** The shell could not run the command at all, for example because bash would not start. Answered as `failed` (502). */
+/** The shell could not start the command, for example because bash would not start. Answered as `failed` (502). */
 export class CommandFailed extends Schema.TaggedError<CommandFailed>()("CommandFailed", {
   message: Schema.String,
 }) {}
@@ -16,16 +27,30 @@ export class Shell extends Context.Service<
   { readonly run: (command: string) => Effect.Effect<CommandRan, CommandFailed> }
 >()("aobot/computer/shell/Shell") {}
 
-/** What `timeout(1)` answers for a command it stopped, so a reader who knows shells reads it right. */
-const timedOutExitCode = 124;
+/**
+How long output may still arrive once bash has exited. A background job such as `sleep 600 &` keeps the
+pipes open, and would otherwise hold the answer until the time limit.
+*/
+const outputGrace = Duration.millis(500);
+
+/**
+The end of a command that a signal ended. The spawner fails `exitCode` for it, and names the signal only
+in that failure's message.
+*/
+function signalled(error: PlatformError.PlatformError): Option.Option<CommandEnd> {
+  if (error.reason.method !== "exitCode") return Option.none();
+
+  const signal = /signal: '(\w+)'/u.exec(String(error.reason.cause))?.[1] ?? "unknown";
+
+  return Option.some(CommandEnd.cases.Signalled.make({ signal }));
+}
 
 /**
 {@link Shell}, running each command with what it `inherited` and an egress proxy of its own, and nothing
-else of this process's environment. A command runs
-in its own process group, and leaving the scope kills that whole group, so a timeout or a Stop also ends
-`sleep 600 | cat` and anything else the command started. `-c`, not `-lc`: a login shell would first
-run a `.bash_profile` the Bot could have written in its workspace, so what ran would differ from the
-command in the audit row.
+else of this process's environment. A command runs in its own process group, and leaving the scope kills
+that whole group, so a timeout, a Stop or the end of the output grace also ends `sleep 600 | cat` and
+anything else the command started. `-c`, not `-lc`: a login shell would first run a `.bash_profile` the
+Bot could have written in its workspace, so what ran would differ from the command in the audit row.
 */
 export const shellLayer = (inherited: InheritedEnvironment) =>
   Layer.effect(
@@ -47,7 +72,7 @@ export const shellLayer = (inherited: InheritedEnvironment) =>
             Stream.runForEach((piece) => Effect.sync(() => tail.add(piece))),
           );
 
-        const exited = yield* Effect.scoped(
+        const end = yield* Effect.scoped(
           Effect.gen(function* () {
             const child = yield* spawner.spawn(
               ChildProcess.make("bash", ["-c", command], {
@@ -59,15 +84,30 @@ export const shellLayer = (inherited: InheritedEnvironment) =>
               }),
             );
 
-            const [exitCode] = yield* Effect.all(
-              [child.exitCode, drain(child.stdout, stdout), drain(child.stderr, stderr)],
-              { concurrency: "unbounded" },
+            const output = yield* Effect.forkScoped(
+              Effect.all([drain(child.stdout, stdout), drain(child.stderr, stderr)], {
+                concurrency: "unbounded",
+                discard: true,
+              }),
             );
 
-            return exitCode;
+            const end = yield* child.exitCode.pipe(
+              Effect.map((code): CommandEnd => CommandEnd.cases.Exited.make({ code })),
+              Effect.catch((error) =>
+                Option.match(signalled(error), {
+                  onNone: () => Effect.fail(error),
+                  onSome: Effect.succeed,
+                }),
+              ),
+            );
+
+            yield* Effect.timeoutOption(Fiber.join(output), outputGrace);
+
+            return end;
           }),
         ).pipe(
-          Effect.timeoutOption(Duration.millis(commandTimeLimitMs)),
+          Effect.timeoutOption(commandTimeLimit),
+          Effect.map(Option.getOrElse((): CommandEnd => CommandEnd.cases.TimedOut.make({}))),
           // Not the error's own message: it carries the command line, which a span would then record.
           Effect.mapError(
             ({ reason }) =>
@@ -77,16 +117,11 @@ export const shellLayer = (inherited: InheritedEnvironment) =>
           ),
         );
 
-        const out = stdout.read();
-        const err = stderr.read();
-
         return {
           action: "run",
-          exitCode: Option.getOrElse(exited, () => timedOutExitCode),
-          stdout: out.text,
-          stderr: err.text,
-          truncated: out.truncated || err.truncated,
-          timedOut: Option.isNone(exited),
+          end,
+          stdout: stdout.read(),
+          stderr: stderr.read(),
         } satisfies CommandRan;
       });
 

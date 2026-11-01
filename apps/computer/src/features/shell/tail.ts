@@ -1,10 +1,4 @@
-import { keepLast } from "@aobot/domain";
-
-/** The end of a stream of text, and whether anything before it was dropped. */
-export interface Tail {
-  readonly text: string;
-  readonly truncated: boolean;
-}
+import { type CommandOutput, keepLast } from "@aobot/domain";
 
 /**
 Collects the last `limit` code units of text that arrives in pieces. It is cut back while the text
@@ -23,7 +17,7 @@ export function outputTail(limit: number) {
       text = keepLast(text, limit);
       truncated = true;
     },
-    read(): Tail {
+    read(): CommandOutput {
       if (text.length <= limit) return { text, truncated };
 
       return { text: keepLast(text, limit), truncated: true };

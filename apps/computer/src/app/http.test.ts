@@ -1,4 +1,4 @@
-import type { PageAction } from "@aobot/domain";
+import { CommandEnd, type PageAction } from "@aobot/domain";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 import { Effect, Layer, Option, Redacted } from "effect";
 import { HttpRouter, HttpServer } from "effect/http";
@@ -7,6 +7,8 @@ import { CommandFailed, Shell } from "../features/shell/public.ts";
 import { routesLayer } from "./http.ts";
 
 const token = "computer-token";
+
+const { Exited } = CommandEnd.cases;
 
 const fakeBrowser = Layer.succeed(
   Browser,
@@ -48,11 +50,9 @@ const fakeShell = Layer.succeed(
         ? Effect.fail(new CommandFailed({ message: "bash would not start." }))
         : Effect.succeed({
             action: "run",
-            exitCode: 0,
-            stdout: `${command}\n`,
-            stderr: "",
-            truncated: false,
-            timedOut: false,
+            end: Exited.make({ code: 0 }),
+            stdout: { text: `${command}\n`, truncated: false },
+            stderr: { text: "", truncated: false },
           }),
   }),
 );
@@ -146,11 +146,9 @@ describe("POST /act", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       action: "run",
-      exitCode: 0,
-      stdout: "echo hi\n",
-      stderr: "",
-      truncated: false,
-      timedOut: false,
+      end: Exited.make({ code: 0 }),
+      stdout: { text: "echo hi\n", truncated: false },
+      stderr: { text: "", truncated: false },
     });
   });
 

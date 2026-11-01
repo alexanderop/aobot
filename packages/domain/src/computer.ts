@@ -1,10 +1,10 @@
-import { Schema } from "effect";
+import { Duration, Schema } from "effect";
 
 /** The longest snapshot the computer returns, in UTF-16 code units. A longer one is cut and marked `truncated`. */
 export const snapshotLimit = 12_000;
 
-/** How long a command may run before the computer stops it and everything it started. */
-export const commandTimeLimitMs = 30_000;
+/** How long a command may run before the computer stops it. */
+export const commandTimeLimit = Duration.seconds(30);
 
 /**
 How much of each of a command's output streams comes back, in UTF-16 code units, kept from the end. Both
@@ -65,18 +65,34 @@ export const PageRead = Schema.Struct({
 export type PageRead = typeof PageRead.Type;
 
 /**
-How a {@link RunCommand} ended. `stdout` and `stderr` are each the last {@link commandOutputLimit} code
-units, and `truncated` says anything before them was dropped. A command still running at
-{@link commandTimeLimitMs} is stopped with all it started, and answers `timedOut` with exit code 124, as
-`timeout(1)` does.
+What a command printed to one stream: its last {@link commandOutputLimit} code units, and whether
+anything before them was dropped.
 */
+export const CommandOutput = Schema.Struct({ text: Schema.String, truncated: Schema.Boolean });
+
+/** A decoded {@link CommandOutput}. */
+export type CommandOutput = typeof CommandOutput.Type;
+
+/**
+How a command ended. `Exited` with the code bash exited with. `Signalled` when bash was ended by a signal
+the computer did not send, such as `kill -TERM $$`, a crash or the out-of-memory killer. `TimedOut` when
+it was still running at {@link commandTimeLimit}, so the computer stopped it.
+*/
+export const CommandEnd = Schema.TaggedUnion({
+  Exited: { code: Schema.Int },
+  Signalled: { signal: Schema.String },
+  TimedOut: {},
+});
+
+/** A decoded {@link CommandEnd}. */
+export type CommandEnd = typeof CommandEnd.Type;
+
+/** How a {@link RunCommand} ended, and what it printed until then. */
 export const CommandRan = Schema.Struct({
   action: Schema.Literal("run"),
-  exitCode: Schema.Int,
-  stdout: Schema.String,
-  stderr: Schema.String,
-  truncated: Schema.Boolean,
-  timedOut: Schema.Boolean,
+  end: CommandEnd,
+  stdout: CommandOutput,
+  stderr: CommandOutput,
 });
 
 /** A decoded {@link CommandRan}. */

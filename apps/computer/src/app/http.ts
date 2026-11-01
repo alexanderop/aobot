@@ -29,12 +29,9 @@ const decodeAction = Schema.decodeUnknownEffect(ComputerAction);
 const act = Effect.fn("Computer.act")(function* (action: ComputerAction) {
   yield* Effect.annotateCurrentSpan("computer.action", action.action);
 
-  if (action.action !== "run") return yield* Browser.use((browser) => browser.act(action));
+  if (action.action === "run") return yield* Shell.use((shell) => shell.run(action.command));
 
-  const ran = yield* Shell.use((shell) => shell.run(action.command));
-  yield* Effect.annotateCurrentSpan("computer.exit_code", ran.exitCode);
-
-  return ran;
+  return yield* Browser.use((browser) => browser.act(action));
 });
 
 /**

@@ -1,9 +1,11 @@
 import {
   type BotId,
+  CommandEnd,
+  type CommandOutput,
   type CommandRan,
   ComputerAction,
   type ComputerActResult,
-  commandTimeLimitMs,
+  commandTimeLimit,
   type PageRead,
   RunCommand,
   snapshotRefs,
@@ -93,7 +95,7 @@ const forwarding = {
   // Above the computer's own limit, so a command that runs too long is stopped there and answers as
   // timed out, instead of being cut off here with its outcome unknown.
   run: {
-    timeout: Duration.sum(Duration.millis(commandTimeLimitMs), Duration.seconds(5)),
+    timeout: Duration.sum(commandTimeLimit, Duration.seconds(5)),
     source: "command output",
   },
 } satisfies { readonly [Name in ActionName]: Forwarding };
@@ -123,21 +125,40 @@ function presentPage({ url, title, snapshot, truncated }: PageRead): string {
   ].join("\n");
 }
 
-function presentCommand({ exitCode, stdout, stderr, truncated, timedOut }: CommandRan): string {
-  const stream = (text: string) => (text === "" ? "(nothing)" : text);
+function presentEnd(end: CommandEnd): string {
+  return CommandEnd.match(end, {
+    Exited: ({ code }) => `Exit code: ${code}`,
+    Signalled: ({ signal }) => `The command was ended by ${signal}.`,
+    TimedOut: () =>
+      `The command ran past ${Duration.format(commandTimeLimit)}, so the computer stopped it.`,
+  });
+}
 
+function presentOutput(name: string, { text, truncated }: CommandOutput): ReadonlyArray<string> {
   return [
-    timedOut
-      ? `The command ran past ${Duration.format(Duration.millis(commandTimeLimitMs))}, so the computer stopped it and everything it started.`
-      : `Exit code: ${exitCode}`,
+    `${name}:`,
+    text === "" ? "(nothing)" : text,
+    ...(truncated ? [`[the computer kept only the end of ${name}]`] : []),
+  ];
+}
+
+function presentCommand({ end, stdout, stderr }: CommandRan): string {
+  return [
+    presentEnd(end),
     "",
-    "stdout:",
-    stream(stdout),
+    ...presentOutput("stdout", stdout),
     "",
-    "stderr:",
-    stream(stderr),
-    ...(truncated ? ["", "[the computer kept only the end of the output]"] : []),
+    ...presentOutput("stderr", stderr),
   ].join("\n");
+}
+
+/** The `Gateway.act` span's attributes for how a command ended. Never the command or its output. */
+function endAttributes(end: CommandEnd): Record<string, string | number> {
+  return CommandEnd.match(end, {
+    Exited: ({ code }) => ({ "gateway.command_end": "exited", "gateway.exit_code": code }),
+    Signalled: ({ signal }) => ({ "gateway.command_end": "signalled", "gateway.signal": signal }),
+    TimedOut: () => ({ "gateway.command_end": "timed_out" }),
+  });
 }
 
 /** What the model is told the computer answered, before it is marked untrusted. */
@@ -260,7 +281,7 @@ export const gatewayLayer = Layer.effect(
     // A page read becomes the Bot's latest snapshot; a command only says how it exited.
     const received = (bot: BotId, result: ComputerActResult) =>
       result.action === "run"
-        ? Effect.annotateCurrentSpan({ "gateway.exit_code": result.exitCode })
+        ? Effect.annotateCurrentSpan(endAttributes(result.end))
         : snapshots.save(bot, result.snapshot).pipe(
             // Its refs then resolve against an older page, which the computer refuses as stale.
             Effect.catchTag("SqlError", (error) =>
