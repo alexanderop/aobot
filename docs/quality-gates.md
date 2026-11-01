@@ -123,8 +123,9 @@ docs. aobot has the same kind:
 - **Backlog test** (`tools/docs/backlog.test.ts`, live now): every ticket's front-matter decodes, its id
   matches its file name and epic folder, ids are unique, `depends_on` points at real tickets without
   cycles, and every `done` ticket has a `verify/scenarios/<id>.ts`.
-- **Tool map test** (arrives with E1-1): every tool the gateway accepts appears in
-  `docs/architecture.md` with its audit row shape.
+- **Tool map test** (`apps/server/src/features/gateway/tool-map.test.ts`, live since E1-1): every tool
+  the gateway accepts appears in `docs/architecture.md` § Gateway tools with its audit row shape, and every
+  row there names a real tool.
 
 ## Issue templates and agent instructions
 
