@@ -1,4 +1,12 @@
-import { type BotId, ComputerAction, type ComputerActResult, snapshotRefs } from "@aobot/domain";
+import {
+  type BotId,
+  type CommandRan,
+  ComputerAction,
+  type ComputerActResult,
+  commandTimeLimitMs,
+  type PageRead,
+  snapshotRefs,
+} from "@aobot/domain";
 import { Context, Duration, Effect, Layer, Match, Option, Result, Schema } from "effect";
 import { AuditLog, type Outcome } from "../audit/public.ts";
 import {
@@ -67,24 +75,43 @@ function unknownRefAnswer(action: ActionName, ref: string): string {
   return `${action} did not run: ${ref} is not a ref in your latest snapshot. Take a snapshot and use a ref from it.`;
 }
 
-/** How long the computer may take over each action once it is running. Starting it is not counted. */
-const timeouts = {
-  navigate: Duration.seconds(45),
-  snapshot: Duration.seconds(20),
-  click: Duration.seconds(60),
-  type: Duration.seconds(30),
-} satisfies { readonly [Name in ActionName]: Duration.Duration };
+/** How a forwarded action reaches the model: how long the computer may take, and what its answer is. */
+interface Forwarding {
+  /** How long once the computer is running. Starting it is not counted. */
+  readonly timeout: Duration.Duration;
+  /** What the answer is, as its untrusted-data envelope names it. */
+  readonly source: string;
+}
 
-/** The audit row's `detail`. Text a Bot typed goes through `redact()`; a URL is not typed text. */
+const forwarding = {
+  navigate: { timeout: Duration.seconds(45), source: "web page" },
+  snapshot: { timeout: Duration.seconds(20), source: "web page" },
+  click: { timeout: Duration.seconds(60), source: "web page" },
+  type: { timeout: Duration.seconds(30), source: "web page" },
+  // Above the computer's own limit, so a command that runs too long is stopped there and answers as
+  // timed out, instead of being cut off here with its outcome unknown.
+  run: {
+    timeout: Duration.sum(Duration.millis(commandTimeLimitMs), Duration.seconds(5)),
+    source: "command output",
+  },
+} satisfies { readonly [Name in ActionName]: Forwarding };
+
+/** The longest command kept in an audit row. */
+const auditCommandLimit = 2_000;
+
+/**
+The audit row's `detail`. Text a Bot typed into a page goes through `redact()`; a URL is not typed text,
+and the command is what the audit row exists to show.
+*/
 const auditDetail = ComputerAction.match({
   navigate: ({ url }): Schema.JsonObject => ({ url }),
   snapshot: (): Schema.JsonObject => ({}),
   click: ({ target }): Schema.JsonObject => ({ ...target }),
   type: ({ target, text }): Schema.JsonObject => ({ ...target, text: redact(text) }),
+  run: ({ command }): Schema.JsonObject => ({ command: capText(command, auditCommandLimit) }),
 });
 
-/** What the model is told the computer answered, before it is marked untrusted. */
-function present({ url, title, snapshot, truncated }: ComputerActResult): string {
+function presentPage({ url, title, snapshot, truncated }: PageRead): string {
   return [
     `URL: ${url}`,
     `Title: ${title}`,
@@ -92,6 +119,28 @@ function present({ url, title, snapshot, truncated }: ComputerActResult): string
     snapshot,
     ...(truncated ? ["[the computer cut this snapshot short]"] : []),
   ].join("\n");
+}
+
+function presentCommand({ exitCode, stdout, stderr, truncated, timedOut }: CommandRan): string {
+  const stream = (text: string) => (text === "" ? "(nothing)" : text);
+
+  return [
+    timedOut
+      ? `The command ran past ${Duration.format(Duration.millis(commandTimeLimitMs))}, so the computer stopped it and everything it started.`
+      : `Exit code: ${exitCode}`,
+    "",
+    "stdout:",
+    stream(stdout),
+    "",
+    "stderr:",
+    stream(stderr),
+    ...(truncated ? ["", "[the computer kept only the end of the output]"] : []),
+  ].join("\n");
+}
+
+/** What the model is told the computer answered, before it is marked untrusted. */
+function present(result: ComputerActResult): string {
+  return result.action === "run" ? presentCommand(result) : presentPage(result);
 }
 
 /** Why a forwarded call did not come back with a result. */
@@ -206,6 +255,19 @@ export const gatewayLayer = Layer.effect(
       return target;
     });
 
+    // A page read becomes the Bot's latest snapshot; a command only says how it exited.
+    const received = (bot: BotId, result: ComputerActResult) =>
+      result.action === "run"
+        ? Effect.annotateCurrentSpan({ "gateway.exit_code": result.exitCode })
+        : snapshots.save(bot, result.snapshot).pipe(
+            // Its refs then resolve against an older page, which the computer refuses as stale.
+            Effect.catchTag("SqlError", (error) =>
+              Effect.logWarning("The latest snapshot could not be stored").pipe(
+                Effect.annotateLogs({ action: result.action, reason: error.message }),
+              ),
+            ),
+          );
+
     const resolve = (bot: BotId, request: BotRequest): Effect.Effect<ComputerAction, UnknownRef> =>
       BotRequest.match(request, {
         navigate: (navigate) => Effect.succeed(navigate),
@@ -287,18 +349,9 @@ export const gatewayLayer = Layer.effect(
         const computer = yield* computers.ensure;
 
         return yield* computer.act(action).pipe(
-          Effect.tap((result) =>
-            snapshots.save(bot, result.snapshot).pipe(
-              // Its refs then resolve against an older page, which the computer refuses as stale.
-              Effect.catchTag("SqlError", (error) =>
-                Effect.logWarning("The latest snapshot could not be stored").pipe(
-                  Effect.annotateLogs({ action: action.action, reason: error.message }),
-                ),
-              ),
-            ),
-          ),
+          Effect.tap((result) => received(bot, result)),
           Effect.map(present),
-          toolResult({ source: "web page", timeout: timeouts[action.action] }),
+          toolResult(forwarding[action.action]),
         );
       }).pipe(
         Effect.result,

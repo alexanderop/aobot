@@ -45,14 +45,26 @@ function fakeComputers(act: Computer["act"]) {
   return { actions, layer };
 }
 
+/** A computer on example.com whose shell lists one file. */
 const exampleDomain = (action: ComputerAction): Effect.Effect<ComputerActResult> =>
-  Effect.succeed({
-    action: action.action,
-    url: "https://example.com/",
-    title: "Example Domain",
-    snapshot: '- heading "Example Domain" [level=1] [ref=e1]',
-    truncated: false,
-  });
+  Effect.succeed(
+    action.action === "run"
+      ? {
+          action: "run",
+          exitCode: 0,
+          stdout: "notes.txt\n",
+          stderr: "",
+          truncated: false,
+          timedOut: false,
+        }
+      : {
+          action: action.action,
+          url: "https://example.com/",
+          title: "Example Domain",
+          snapshot: '- heading "Example Domain" [level=1] [ref=e1]',
+          truncated: false,
+        },
+  );
 
 const database = Layer.effectDiscard(Effect.andThen(migrateAudit, migrateGateway)).pipe(
   Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })),
@@ -271,13 +283,15 @@ function pages(...snapshots: ReadonlyArray<string>) {
   let shown = 0;
 
   return fakeComputers((action) =>
-    Effect.sync(() => ({
-      action: action.action,
-      url: "https://example.com/form",
-      title: "Form",
-      snapshot: snapshots[Math.min(shown++, snapshots.length - 1)] ?? "",
-      truncated: false,
-    })),
+    action.action === "run"
+      ? Effect.die("this computer only has a browser")
+      : Effect.sync(() => ({
+          action: action.action,
+          url: "https://example.com/form",
+          title: "Form",
+          snapshot: snapshots[Math.min(shown++, snapshots.length - 1)] ?? "",
+          truncated: false,
+        })),
   );
 }
 

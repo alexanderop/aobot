@@ -47,17 +47,22 @@ function offeredPassword(header: string): Option.Option<string> {
 }
 
 /**
-Decide one proxied request: the right credentials, then a target the browser may reach. `target` is none
-when the request did not name one the proxy can read.
+Decide one proxied request: the right credentials, then a target the caller may reach. `secret` is none
+for a listener that asks for no credentials. `target` is none when the request did not name one the proxy
+can read.
 */
 export const decideEgress = Effect.fn("Egress.decide")(function* (
-  secret: string,
+  secret: Option.Option<string>,
   proxyAuthorization: Option.Option<string>,
   target: Option.Option<EgressTarget>,
 ) {
-  const authorised = Option.match(Option.flatMap(proxyAuthorization, offeredPassword), {
-    onNone: () => false,
-    onSome: (password) => tokensMatch(secret, password),
+  const authorised = Option.match(secret, {
+    onNone: () => true,
+    onSome: (expected) =>
+      Option.match(Option.flatMap(proxyAuthorization, offeredPassword), {
+        onNone: () => false,
+        onSome: (password) => tokensMatch(expected, password),
+      }),
   });
 
   if (!authorised) return EgressDecision.Challenge();
@@ -154,13 +159,12 @@ function statusLine(status: 403 | 502, reason: string): string {
 }
 
 /**
-The browser's only way out: an HTTP and CONNECT forward proxy on 127.0.0.1 that asks for a per-process
-secret, checks every address a host resolves to, and connects only to an address it checked. Chromium is
-launched pointing at it, so a page, a redirect or a script cannot reach a private or metadata address,
-however the name resolves the second time.
+An HTTP and CONNECT forward proxy on 127.0.0.1 that checks every address a host resolves to against
+{@link Destinations}, and connects only to an address it checked, so a redirect or a script cannot reach
+a private or metadata address, however the name resolves the second time. With a `secret` it asks for
+it first. Answers its address.
 */
-export const startEgressProxy = Effect.gen(function* () {
-  const secret = randomBytes(24).toString("base64url");
+const listenForEgress = Effect.fnUntraced(function* (secret: Option.Option<string>) {
   const run = Effect.runPromiseWith(yield* Effect.context<Destinations>());
 
   const decide = (request: IncomingMessage, target: Option.Option<EgressTarget>) =>
@@ -258,5 +262,20 @@ export const startEgressProxy = Effect.gen(function* () {
       }),
   );
 
-  return { server: `http://127.0.0.1:${port}`, username: proxyUser, password: secret };
+  return `http://127.0.0.1:${port}`;
 });
+
+/** The browser's only way out: Chromium is launched pointing at it, with a per-process secret. */
+export const startEgressProxy = Effect.gen(function* () {
+  const secret = randomBytes(24).toString("base64url");
+  const server = yield* listenForEgress(Option.some(secret));
+
+  return { server, username: proxyUser, password: secret };
+});
+
+/**
+The shell's way out: a listener of its own that asks for no credentials, because any command could read
+them from its environment. A command reaches only what its {@link Destinations} allow, as long as it
+honours its proxy variables; going around them is closed by network limits (E5-3), not here.
+*/
+export const startShellEgressProxy = listenForEgress(Option.none());

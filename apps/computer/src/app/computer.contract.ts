@@ -3,9 +3,11 @@ import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
+  CommandRan,
   type ComputerAction,
-  ComputerActResult,
+  commandOutputLimit,
   findRef,
+  PageRead,
   type RefTarget,
   snapshotRefs,
 } from "@aobot/domain";
@@ -101,18 +103,42 @@ async function untilHealthy(computer: Computer) {
   throw new Error(`${computer.name} never became healthy:\n${await docker("logs", computer.name)}`);
 }
 
-function act(computer: Computer, body: ComputerAction, authorization = `Bearer ${token}`) {
+function act(
+  computer: Computer,
+  body: ComputerAction,
+  authorization = `Bearer ${token}`,
+  signal = new AbortController().signal,
+) {
   return fetch(`${computer.url}/act`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization },
     body: JSON.stringify(body),
+    signal,
   });
 }
 
-async function result(response: Response): Promise<ComputerActResult> {
+async function result(response: Response): Promise<PageRead> {
   expect(response.status).toBe(200);
 
-  return Schema.decodeUnknownSync(ComputerActResult)(await response.json());
+  return Schema.decodeUnknownSync(PageRead)(await response.json());
+}
+
+/** Run `command` in the computer's shell. */
+function runCommand(computer: Computer, command: string, signal = new AbortController().signal) {
+  return act(computer, { action: "run", command }, `Bearer ${token}`, signal);
+}
+
+async function ran(response: Response): Promise<CommandRan> {
+  expect(response.status).toBe(200);
+
+  return Schema.decodeUnknownSync(CommandRan)(await response.json());
+}
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** The command lines of every process on the computer, read from outside it, since its shell may be busy. */
+function processes(computer: Computer): Promise<string> {
+  return docker("exec", computer.name, "ps", "-eo", "args");
 }
 
 function target(snapshot: string, role: string, name: string): RefTarget {
@@ -287,5 +313,124 @@ describe("the docker computer", () => {
     expect(await docker("exec", local.name, "id", "-u")).not.toBe("0");
     const owners = await docker("exec", local.name, "ps", "-o", "uid=", "-C", "chrome");
     expect(owners.split("\n").map((uid) => uid.trim())).not.toContain("0");
+  });
+
+  describe("its shell", () => {
+    it("runs a command with bash as pwuser in /workspace, which is also its HOME", async () => {
+      expect(await ran(await runCommand(local, 'id -un; pwd; echo "$HOME"; echo "$0"'))).toEqual({
+        action: "run",
+        exitCode: 0,
+        stdout: "pwuser\n/workspace\n/workspace\nbash\n",
+        stderr: "",
+        truncated: false,
+        timedOut: false,
+      });
+    });
+
+    it("keeps files between commands, and answers a failed command's exit code and errors", async () => {
+      await ran(await runCommand(local, "echo hello > notes.txt"));
+
+      const read = await ran(await runCommand(local, "cat notes.txt && ls /data/aobot.db"));
+
+      expect(read).toMatchObject({ exitCode: 2, stdout: "hello\n", timedOut: false });
+      expect(read.stderr).toContain("No such file or directory");
+    });
+
+    it("gives a command PATH, the locale and the egress filter, and never the computer's token", async () => {
+      const { stdout } = await ran(await runCommand(local, "env"));
+
+      expect(stdout).not.toContain("COMPUTER_TOKEN");
+      expect(stdout).not.toContain(token);
+
+      const names = stdout
+        .trim()
+        .split("\n")
+        .map((line) => line.split("=")[0])
+        .sort();
+
+      expect(names).toEqual(
+        [
+          "DEBIAN_FRONTEND",
+          "HOME",
+          "HTTPS_PROXY",
+          "HTTP_PROXY",
+          "LANG",
+          "LC_ALL",
+          "NO_PROXY",
+          "PATH",
+          "PWD",
+          "SHLVL",
+          "_",
+          "http_proxy",
+          "https_proxy",
+          "no_proxy",
+        ].sort(),
+      );
+    });
+
+    it("refuses a command the computer's own network through its proxy, where the browser may go", async () => {
+      const fixture = `http://${suite}-fixture:${fixturePort}/`;
+      await result(await act(local, { action: "navigate", url: fixture }));
+
+      const fetched = await ran(
+        await runCommand(
+          local,
+          `curl --silent --show-error --fail-with-body --max-time 3 ${fixture}`,
+        ),
+      );
+
+      expect(fetched.exitCode).not.toBe(0);
+      expect(fetched.stdout).toContain("inside the computer's own network");
+    });
+
+    it("keeps only the end of a long output, and says so", async () => {
+      const counted = await ran(await runCommand(local, "seq 1 200000"));
+
+      expect(counted.truncated).toBe(true);
+      expect(counted.stdout.length).toBeLessThanOrEqual(commandOutputLimit);
+      expect(counted.stdout.endsWith("199999\n200000\n")).toBe(true);
+    });
+
+    it("stops a command that runs past 30 seconds, and everything it started", async () => {
+      const started = Date.now();
+      const stopped = await ran(await runCommand(local, "echo started; sleep 600 | cat"));
+      const took = Date.now() - started;
+
+      expect(stopped).toMatchObject({ exitCode: 124, stdout: "started\n", timedOut: true });
+      expect(took).toBeGreaterThanOrEqual(30_000);
+      expect(took).toBeLessThan(40_000);
+      expect(await processes(local)).not.toContain("sleep 600");
+    });
+
+    it("stops a running command and everything it started when its request is aborted", async () => {
+      const stop = new AbortController();
+      const running = runCommand(local, "sleep 601 | cat", stop.signal).catch(() => "aborted");
+
+      await pause(1_000);
+      expect(await processes(local)).toContain("sleep 601");
+
+      stop.abort();
+      expect(await running).toBe("aborted");
+      await pause(2_000);
+      expect(await processes(local)).not.toContain("sleep 601");
+    });
+
+    it("never runs a command whose request was aborted while it waited for the one before", async () => {
+      const first = runCommand(local, "sleep 3");
+      await pause(500);
+
+      const stop = new AbortController();
+
+      const second = runCommand(local, "touch /workspace/b-ran", stop.signal).catch(
+        () => "aborted",
+      );
+
+      await pause(500);
+      stop.abort();
+
+      expect(await second).toBe("aborted");
+      expect((await ran(await first)).exitCode).toBe(0);
+      expect((await ran(await runCommand(local, "ls /workspace/b-ran"))).exitCode).not.toBe(0);
+    });
   });
 });

@@ -1,8 +1,9 @@
-import type { ComputerAction } from "@aobot/domain";
+import type { PageAction } from "@aobot/domain";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 import { Effect, Layer, Option, Redacted } from "effect";
 import { HttpRouter, HttpServer } from "effect/http";
 import { ActionFailed, ActionRefused, Browser } from "../features/browser/public.ts";
+import { CommandFailed, Shell } from "../features/shell/public.ts";
 import { routesLayer } from "./http.ts";
 
 const token = "computer-token";
@@ -10,7 +11,7 @@ const token = "computer-token";
 const fakeBrowser = Layer.succeed(
   Browser,
   Browser.of({
-    act: (action: ComputerAction) =>
+    act: (action: PageAction) =>
       Effect.gen(function* () {
         if (action.action !== "navigate")
           return yield* new ActionFailed({ message: "Chromium crashed." });
@@ -38,9 +39,27 @@ const fakeBrowser = Layer.succeed(
   }),
 );
 
+/** A shell that echoes the command it was given, and cannot start bash for `crash`. */
+const fakeShell = Layer.succeed(
+  Shell,
+  Shell.of({
+    run: (command) =>
+      command === "crash"
+        ? Effect.fail(new CommandFailed({ message: "bash would not start." }))
+        : Effect.succeed({
+            action: "run",
+            exitCode: 0,
+            stdout: `${command}\n`,
+            stderr: "",
+            truncated: false,
+            timedOut: false,
+          }),
+  }),
+);
+
 const app = HttpRouter.toWebHandler(
   routesLayer(Redacted.make(token)).pipe(
-    Layer.provideMerge(fakeBrowser),
+    Layer.provideMerge(Layer.merge(fakeBrowser, fakeShell)),
     Layer.provide(HttpServer.layerServices),
   ),
   { disableLogger: true },
@@ -122,7 +141,27 @@ describe("POST /act", () => {
     expect(await response.json()).toEqual({ reason: "failed", message: "Chromium crashed." });
   });
 
+  it("runs a command in the shell and answers how it ended", async () => {
+    const response = await act(JSON.stringify({ action: "run", command: "echo hi" }), bearer);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      action: "run",
+      exitCode: 0,
+      stdout: "echo hi\n",
+      stderr: "",
+      truncated: false,
+      timedOut: false,
+    });
+  });
+
+  it("answers 502 failed when the shell cannot run a command", async () => {
+    const response = await act(JSON.stringify({ action: "run", command: "crash" }), bearer);
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ reason: "failed", message: "bash would not start." });
+  });
+
   it.each([
+    JSON.stringify({ action: "run" }),
     "not json",
     JSON.stringify({ action: "click" }),
     JSON.stringify({ action: "navigate" }),

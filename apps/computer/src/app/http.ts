@@ -7,6 +7,7 @@ import {
 import { Effect, Layer, Option, Redacted, Schema } from "effect";
 import { HttpRouter, HttpServerResponse, HttpTraceContext } from "effect/http";
 import { Browser } from "../features/browser/public.ts";
+import { Shell } from "../features/shell/public.ts";
 
 function errorReply(error: ComputerActError, status: 403 | 502) {
   return HttpServerResponse.jsonUnsafe(error, { status });
@@ -27,14 +28,18 @@ const decodeAction = Schema.decodeUnknownEffect(ComputerAction);
 
 const act = Effect.fn("Computer.act")(function* (action: ComputerAction) {
   yield* Effect.annotateCurrentSpan("computer.action", action.action);
-  const browser = yield* Browser;
 
-  return yield* browser.act(action);
+  if (action.action !== "run") return yield* Browser.use((browser) => browser.act(action));
+
+  const ran = yield* Shell.use((shell) => shell.run(action.command));
+  yield* Effect.annotateCurrentSpan("computer.exit_code", ran.exitCode);
+
+  return ran;
 });
 
 /**
 `GET /health`, open so Docker and the server can see the computer is up, and `POST /act`, the only way to
-drive the browser, behind the bearer token.
+drive the browser and the shell, behind the bearer token.
 */
 export const routesLayer = (token: Redacted.Redacted<string>) =>
   Layer.mergeAll(
@@ -72,6 +77,8 @@ export const routesLayer = (token: Redacted.Redacted<string>) =>
             ActionRefused: ({ message }) =>
               Effect.succeed(errorReply({ reason: "refused", message }, 403)),
             ActionFailed: ({ message }) =>
+              Effect.succeed(errorReply({ reason: "failed", message }, 502)),
+            CommandFailed: ({ message }) =>
               Effect.succeed(errorReply({ reason: "failed", message }, 502)),
           }),
         );

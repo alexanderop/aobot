@@ -14,10 +14,16 @@ export {
 export { BotId, ConversationId, MessageId, RunId, ToolCallId } from "./ids.ts";
 
 export {
+  CommandRan,
+  commandOutputLimit,
+  commandTimeLimitMs,
   ComputerAction,
   ComputerActError,
   ComputerActResult,
+  PageAction,
+  PageRead,
   RefTarget,
+  RunCommand,
   snapshotLimit,
 } from "./computer.ts";
 

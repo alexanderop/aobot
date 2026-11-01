@@ -10,6 +10,7 @@ import {
   parseAuthority,
   proxyUser,
   startEgressProxy,
+  startShellEgressProxy,
 } from "./egress.ts";
 import { ActionFailed } from "./errors.ts";
 
@@ -34,7 +35,7 @@ const basic = (password: string) =>
   Option.some(`Basic ${Buffer.from(`${proxyUser}:${password}`).toString("base64")}`);
 
 function decide(target: string, authorization = basic(secret), allowPrivateHosts = false) {
-  return decideEgress(secret, authorization, parseAuthority(target)).pipe(
+  return decideEgress(Option.some(secret), authorization, parseAuthority(target)).pipe(
     Effect.provide(destinations(allowPrivateHosts)),
   );
 }
@@ -200,6 +201,33 @@ describe("startEgressProxy", () => {
       });
 
       expect(answer.status).toBe(403);
+    }).pipe(Effect.provide(destinations(false))),
+  );
+});
+
+describe("startShellEgressProxy", () => {
+  it.effect("forwards a command's request without asking it for credentials", () =>
+    Effect.gen(function* () {
+      const site = yield* fixture;
+      // SAFETY: a server listening on a host and port, not a pipe, reports an `AddressInfo`.
+      const { port } = site.address() as AddressInfo;
+      const proxyPort = Number(new URL(yield* startShellEgressProxy).port);
+
+      expect(yield* viaProxy(proxyPort, `http://fixture.test:${port}/`, {})).toEqual({
+        status: 200,
+        body: "fixture page",
+      });
+    }).pipe(Effect.provide(destinations(true))),
+  );
+
+  it.effect("refuses a command the destinations the browser is refused", () =>
+    Effect.gen(function* () {
+      const proxyPort = Number(new URL(yield* startShellEgressProxy).port);
+
+      const refused = yield* viaProxy(proxyPort, "http://fixture.test:1/", {});
+      expect(refused.status).toBe(403);
+      expect(refused.body).toContain("inside the computer's own network");
+      expect((yield* viaProxy(proxyPort, "http://169.254.169.254/", {})).status).toBe(403);
     }).pipe(Effect.provide(destinations(false))),
   );
 });
