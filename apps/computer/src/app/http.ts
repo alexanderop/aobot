@@ -5,7 +5,12 @@ import {
   tokensMatch,
 } from "@aobot/domain";
 import { Effect, Layer, Option, Redacted, Schema } from "effect";
-import { HttpRouter, HttpServerResponse, HttpTraceContext } from "effect/http";
+import {
+  HttpRouter,
+  type HttpServerRequest,
+  HttpServerResponse,
+  HttpTraceContext,
+} from "effect/http";
 import { Browser } from "../features/browser/public.ts";
 import { Shell } from "../features/shell/public.ts";
 import { fromThisComputer } from "./callers.ts";
@@ -23,6 +28,26 @@ function bearerToken(header: Option.Option<string>): Option.Option<string> {
   return Option.flatMap(header, (value) =>
     Option.fromNullishOr(/^Bearer\s+(\S+)\s*$/iu.exec(value)?.[1]),
   );
+}
+
+function guarded<E, R>(
+  token: Redacted.Redacted<string>,
+  handle: (
+    request: HttpServerRequest.HttpServerRequest,
+  ) => Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
+) {
+  return (request: HttpServerRequest.HttpServerRequest) => {
+    if (fromThisComputer(request.remoteAddress)) return Effect.succeed(forbidden);
+
+    const offered = bearerToken(Option.fromNullishOr(request.headers["authorization"]));
+
+    const authorised = Option.match(offered, {
+      onNone: () => false,
+      onSome: (candidate) => tokensMatch(Redacted.value(token), candidate),
+    });
+
+    return authorised ? handle(request) : Effect.succeed(notAuthorised);
+  };
 }
 
 const encodeResult = HttpServerResponse.schemaJson(ComputerActResult);
@@ -45,46 +70,39 @@ so a command that reads the token out of `/proc` still cannot drive the browser 
 export const routesLayer = (token: Redacted.Redacted<string>) =>
   Layer.mergeAll(
     HttpRouter.add("GET", "/health", HttpServerResponse.jsonUnsafe({ status: "ok" })),
-    HttpRouter.add("POST", "/act", (request) =>
-      Effect.gen(function* () {
-        if (fromThisComputer(request.remoteAddress)) return forbidden;
+    HttpRouter.add(
+      "POST",
+      "/act",
+      guarded(token, (request) =>
+        Effect.gen(function* () {
+          const action = yield* request.json.pipe(Effect.flatMap(decodeAction), Effect.option);
 
-        const offered = bearerToken(Option.fromNullishOr(request.headers["authorization"]));
+          if (Option.isNone(action)) {
+            return HttpServerResponse.jsonUnsafe(
+              { error: "The body is not a computer action." },
+              { status: 400 },
+            );
+          }
 
-        const authorised = Option.match(offered, {
-          onNone: () => false,
-          onSome: (candidate) => tokensMatch(Redacted.value(token), candidate),
-        });
+          // The caller's span, so the computer's work shows up inside the gateway call that asked for it.
+          const parent = HttpTraceContext.fromHeaders(request.headers);
+          const run = act(action.value);
 
-        if (!authorised) return notAuthorised;
-
-        const action = yield* request.json.pipe(Effect.flatMap(decodeAction), Effect.option);
-
-        if (Option.isNone(action)) {
-          return HttpServerResponse.jsonUnsafe(
-            { error: "The body is not a computer action." },
-            { status: 400 },
+          return yield* Option.match(parent, {
+            onNone: () => run,
+            onSome: (span) => Effect.withParentSpan(run, span),
+          }).pipe(
+            Effect.flatMap(encodeResult),
+            Effect.catchTags({
+              ActionRefused: ({ message }) =>
+                Effect.succeed(errorReply({ reason: "refused", message }, 403)),
+              ActionFailed: ({ message }) =>
+                Effect.succeed(errorReply({ reason: "failed", message }, 502)),
+              CommandFailed: ({ message }) =>
+                Effect.succeed(errorReply({ reason: "failed", message }, 502)),
+            }),
           );
-        }
-
-        // The caller's span, so the computer's work shows up inside the gateway call that asked for it.
-        const parent = HttpTraceContext.fromHeaders(request.headers);
-        const run = act(action.value);
-
-        return yield* Option.match(parent, {
-          onNone: () => run,
-          onSome: (span) => Effect.withParentSpan(run, span),
-        }).pipe(
-          Effect.flatMap(encodeResult),
-          Effect.catchTags({
-            ActionRefused: ({ message }) =>
-              Effect.succeed(errorReply({ reason: "refused", message }, 403)),
-            ActionFailed: ({ message }) =>
-              Effect.succeed(errorReply({ reason: "failed", message }, 502)),
-            CommandFailed: ({ message }) =>
-              Effect.succeed(errorReply({ reason: "failed", message }, 502)),
-          }),
-        );
-      }),
+        }),
+      ),
     ),
   );
