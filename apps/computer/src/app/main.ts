@@ -1,9 +1,11 @@
 import { createServer } from "node:http";
-import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
+import { NodeHttpServer, NodeRuntime, NodeServices } from "@effect/platform-node";
 import { Effect, Layer, Option } from "effect";
 import { FetchHttpClient, HttpMiddleware, HttpRouter } from "effect/http";
 import { Otlp } from "effect/observability";
-import { browserLayer, destinationsLayer } from "../features/browser/public.ts";
+import { browserLayer } from "../features/browser/public.ts";
+import { commandDestinationsLayer, destinationsLayer } from "../features/egress/public.ts";
+import { shellLayer } from "../features/shell/public.ts";
 import { computerConfig } from "./config.ts";
 import { routesLayer } from "./http.ts";
 
@@ -13,6 +15,10 @@ const computer = Layer.unwrap(
 
     const browser = browserLayer(config.home).pipe(
       Layer.provide(destinationsLayer(config.allowPrivateHosts)),
+    );
+
+    const shell = shellLayer(config.shell).pipe(
+      Layer.provide([commandDestinationsLayer, NodeServices.layer]),
     );
 
     // Every address, because the server reaches the computer from another container. Docker publishes
@@ -32,7 +38,7 @@ const computer = Layer.unwrap(
     const untracedHttp = Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true);
 
     return HttpRouter.serve(routesLayer(config.token)).pipe(
-      Layer.provide(browser),
+      Layer.provide([browser, shell]),
       Layer.provide(listener),
       Layer.provide([telemetry, untracedHttp]),
     );

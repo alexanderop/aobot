@@ -16,10 +16,8 @@ export interface EgressTarget {
   readonly port: number;
 }
 
-/** What the egress proxy does with one request. */
+/** What the egress proxy does with a request whose credentials it accepted. */
 export type EgressDecision = Data.TaggedEnum<{
-  /** Ask for the proxy credentials: the caller sent none, or the wrong ones. */
-  Challenge: {};
   /** Never connect, and say why. */
   Refuse: { readonly reason: string };
   /** The checks passed, but the host could not be reached. */
@@ -31,7 +29,7 @@ export type EgressDecision = Data.TaggedEnum<{
 /** Constructors and the exhaustive matcher for {@link EgressDecision}. */
 export const EgressDecision = Data.taggedEnum<EgressDecision>();
 
-/** The user name the browser offers the proxy. Only the password, a per-process secret, is checked. */
+/** The user name a client offers the proxy. Only the password, a per-process secret, is checked. */
 export const proxyUser = "computer";
 
 /** The password in a `Proxy-Authorization: Basic …` header, if it is one. */
@@ -46,22 +44,25 @@ function offeredPassword(header: string): Option.Option<string> {
   return colon < 0 ? Option.none() : Option.some(decoded.slice(colon + 1));
 }
 
-/**
-Decide one proxied request: the right credentials, then a target the browser may reach. `target` is none
-when the request did not name one the proxy can read.
-*/
-export const decideEgress = Effect.fn("Egress.decide")(function* (
-  secret: string,
+/** Whether a `Proxy-Authorization` header offers `secret`. A listener with no secret accepts every request. */
+export function offersSecret(
+  secret: Option.Option<string>,
   proxyAuthorization: Option.Option<string>,
+): boolean {
+  return Option.match(secret, {
+    onNone: () => true,
+    onSome: (expected) =>
+      Option.match(Option.flatMap(proxyAuthorization, offeredPassword), {
+        onNone: () => false,
+        onSome: (password) => tokensMatch(expected, password),
+      }),
+  });
+}
+
+/** Decide where one proxied request may go. `target` is none when the request did not name one the proxy can read. */
+export const decideEgress = Effect.fn("Egress.decide")(function* (
   target: Option.Option<EgressTarget>,
 ) {
-  const authorised = Option.match(Option.flatMap(proxyAuthorization, offeredPassword), {
-    onNone: () => false,
-    onSome: (password) => tokensMatch(secret, password),
-  });
-
-  if (!authorised) return EgressDecision.Challenge();
-
   if (Option.isNone(target)) {
     return EgressDecision.Refuse({ reason: "A proxy request names host and port." });
   }
@@ -72,8 +73,10 @@ export const decideEgress = Effect.fn("Egress.decide")(function* (
   return yield* destinations.check(host).pipe(
     Effect.map((addresses) => EgressDecision.Connect({ port, addresses })),
     Effect.catchTags({
-      ActionRefused: ({ message }) => Effect.succeed(EgressDecision.Refuse({ reason: message })),
-      ActionFailed: ({ message }) => Effect.succeed(EgressDecision.Fail({ reason: message })),
+      DestinationRefused: ({ message }) =>
+        Effect.succeed(EgressDecision.Refuse({ reason: message })),
+      DestinationUnreachable: ({ message }) =>
+        Effect.succeed(EgressDecision.Fail({ reason: message })),
     }),
   );
 });
@@ -144,7 +147,7 @@ function connectInTurn(
 const challenge =
   'HTTP/1.1 407 Proxy Authentication Required\r\nproxy-authenticate: Basic realm="aobot"\r\nconnection: close\r\ncontent-length: 0\r\n\r\n';
 
-/** Marks a page the proxy answered itself, so a navigation that ends on one is reported as refused. */
+/** Marks an answer the proxy gave itself, so a client can tell its refusal from the site's own page. */
 export const refusedHeader = "x-aobot-egress";
 
 function statusLine(status: 403 | 502, reason: string): string {
@@ -154,17 +157,18 @@ function statusLine(status: 403 | 502, reason: string): string {
 }
 
 /**
-The browser's only way out: an HTTP and CONNECT forward proxy on 127.0.0.1 that asks for a per-process
-secret, checks every address a host resolves to, and connects only to an address it checked. Chromium is
-launched pointing at it, so a page, a redirect or a script cannot reach a private or metadata address,
-however the name resolves the second time.
+An HTTP and CONNECT forward proxy on 127.0.0.1 that checks every address a host resolves to against
+{@link Destinations}, and connects only to an address it checked, so a redirect or a script cannot reach
+a private or metadata address, however the name resolves the second time. With a `secret` it asks for
+it first. Answers its address.
 */
-export const startEgressProxy = Effect.gen(function* () {
-  const secret = randomBytes(24).toString("base64url");
+const listenForEgress = Effect.fnUntraced(function* (secret: Option.Option<string>) {
   const run = Effect.runPromiseWith(yield* Effect.context<Destinations>());
 
-  const decide = (request: IncomingMessage, target: Option.Option<EgressTarget>) =>
-    run(decideEgress(secret, Option.fromNullishOr(request.headers["proxy-authorization"]), target));
+  const authorised = (request: IncomingMessage) =>
+    offersSecret(secret, Option.fromNullishOr(request.headers["proxy-authorization"]));
+
+  const decide = (target: Option.Option<EgressTarget>) => run(decideEgress(target));
 
   const forwardPlain = (
     request: IncomingMessage,
@@ -172,10 +176,6 @@ export const startEgressProxy = Effect.gen(function* () {
     decision: EgressDecision,
   ) =>
     EgressDecision.$match(decision, {
-      Challenge: () =>
-        response
-          .writeHead(407, { "proxy-authenticate": 'Basic realm="aobot"', connection: "close" })
-          .end(),
       Refuse: ({ reason }) =>
         response
           .writeHead(403, { "content-type": "text/plain", [refusedHeader]: "refused" })
@@ -210,7 +210,6 @@ export const startEgressProxy = Effect.gen(function* () {
 
   const tunnel = (client: Socket, head: Buffer, decision: EgressDecision) =>
     EgressDecision.$match(decision, {
-      Challenge: () => client.end(challenge),
       Refuse: ({ reason }) => client.end(statusLine(403, reason)),
       Fail: ({ reason }) => client.end(statusLine(502, reason)),
       Connect: ({ port, addresses }) =>
@@ -231,14 +230,29 @@ export const startEgressProxy = Effect.gen(function* () {
     });
 
   const server = createServer((request, response) => {
-    void decide(request, parseAbsoluteUrl(request.url ?? "")).then((decision) =>
+    if (!authorised(request)) {
+      response
+        .writeHead(407, { "proxy-authenticate": 'Basic realm="aobot"', connection: "close" })
+        .end();
+
+      return;
+    }
+
+    void decide(parseAbsoluteUrl(request.url ?? "")).then((decision) =>
       forwardPlain(request, response, decision),
     );
   });
 
   server.on("connect", (request: IncomingMessage, client: Socket, head: Buffer) => {
     client.on("error", () => client.destroy());
-    void decide(request, parseAuthority(request.url ?? "")).then((decision) =>
+
+    if (!authorised(request)) {
+      client.end(challenge);
+
+      return;
+    }
+
+    void decide(parseAuthority(request.url ?? "")).then((decision) =>
       tunnel(client, head, decision),
     );
   });
@@ -258,5 +272,24 @@ export const startEgressProxy = Effect.gen(function* () {
       }),
   );
 
-  return { server: `http://127.0.0.1:${port}`, username: proxyUser, password: secret };
+  return `http://127.0.0.1:${port}`;
 });
+
+/**
+An egress proxy for a client that can keep a secret from what it runs, such as Chromium from its pages: it
+asks for a per-process password first. Answers the proxy settings to give the client.
+*/
+export const startEgressProxy = Effect.gen(function* () {
+  const secret = randomBytes(24).toString("base64url");
+  const server = yield* listenForEgress(Option.some(secret));
+
+  return { server, username: proxyUser, password: secret };
+});
+
+/**
+An egress proxy that asks for no credentials, for a client that cannot keep them from what it runs, such
+as a shell, whose commands could read them from its environment. A client reaches only what its
+{@link Destinations} allow as long as it uses the proxy; going around it is closed by network limits
+(E5-3), not here. Answers the proxy's URL.
+*/
+export const startEgressProxyWithoutCredentials = listenForEgress(Option.none());

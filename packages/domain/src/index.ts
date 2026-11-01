@@ -14,12 +14,22 @@ export {
 export { BotId, ConversationId, MessageId, RunId, ToolCallId } from "./ids.ts";
 
 export {
+  CommandEnd,
+  CommandOutput,
+  CommandRan,
+  commandOutputLimit,
+  commandTimeLimit,
   ComputerAction,
   ComputerActError,
   ComputerActResult,
+  PageAction,
+  PageRead,
   RefTarget,
+  RunCommand,
   snapshotLimit,
 } from "./computer.ts";
+
+export { keepFirst, keepLast } from "./text.ts";
 
 export { tokensMatch } from "./token.ts";
 

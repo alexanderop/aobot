@@ -52,6 +52,14 @@ services:
     image: grafana/otel-lgtm
     ports:
       - "127.0.0.1:3300:3000"
+    # A command on the computers network reaches Grafana too. As Admin, which the image makes everyone
+    # by default, or as admin/admin, it could add a data source pointing at the computer and send /act
+    # through it from the collector's address. A Viewer can still read traces, Explore included.
+    environment:
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_BASIC_ENABLED: "false"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_VIEWERS_CAN_EDIT: "true"
     # On the computers network too, because the computer exports its spans here.
     networks:
       - default

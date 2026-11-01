@@ -1,8 +1,19 @@
+/** One attribute of a span, its value under the key of its type. OTLP JSON writes a 64-bit int as a string. */
+interface TempoAttribute {
+  readonly key: string;
+  readonly value: {
+    readonly stringValue?: string;
+    readonly intValue?: string | number;
+    readonly boolValue?: boolean;
+  };
+}
+
 /** One span as Tempo returns it from `/api/v2/traces/<id>` (OTLP JSON, ids in base64). */
 export interface TempoSpan {
   readonly spanId: string;
   readonly parentSpanId?: string;
   readonly name: string;
+  readonly attributes?: ReadonlyArray<TempoAttribute>;
 }
 
 interface TempoTrace {
@@ -39,4 +50,13 @@ export function ancestry(spans: ReadonlyArray<TempoSpan>, span: TempoSpan): Read
   const parent = spans.find((candidate) => candidate.spanId === span.parentSpanId);
 
   return parent === undefined ? [span.name] : [...ancestry(spans, parent), span.name];
+}
+
+/** The value of `span`'s attribute `key` as text, whatever its type, or undefined when it has none. */
+export function attribute(span: TempoSpan, key: string): string | undefined {
+  const value = span.attributes?.find((candidate) => candidate.key === key)?.value;
+
+  return [value?.stringValue, value?.intValue, value?.boolValue]
+    .find((typed) => typed !== undefined)
+    ?.toString();
 }

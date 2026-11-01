@@ -1,7 +1,14 @@
-import { type BotId, ComputerAction, type ComputerActResult, snapshotRefs } from "@aobot/domain";
-import { Context, Duration, Effect, Layer, Match, Option, Result, Schema } from "effect";
+import {
+  type BotId,
+  ComputerAction,
+  commandTimeLimit,
+  RunCommand,
+  snapshotRefs,
+} from "@aobot/domain";
+import { Context, Duration, Effect, Layer, Match, Option, Result, Schema, Semaphore } from "effect";
 import { AuditLog, type Outcome } from "../audit/public.ts";
 import {
+  type Computer,
   type ComputerActFailed,
   type ComputerLost,
   Computers,
@@ -15,6 +22,7 @@ import {
   toolResult,
 } from "../../shared/tool-result.ts";
 import { redact } from "../../shared/redact.ts";
+import { endAttributes, presentCommand, presentPage } from "./present.ts";
 import { snapshotStore } from "./snapshot-store.ts";
 
 /** Something an agent asked for that the gateway turned down. `detail` is already redacted. */
@@ -35,6 +43,7 @@ export const BotRequest = Schema.Union([
   Schema.Struct({ action: Schema.Literal("snapshot") }),
   Schema.Struct({ action: Schema.Literal("click"), ref: Schema.String }),
   Schema.Struct({ action: Schema.Literal("type"), ref: Schema.String, text: Schema.String }),
+  RunCommand,
 ]).pipe(Schema.toTaggedUnion("action"));
 
 /** A decoded {@link BotRequest}. */
@@ -67,32 +76,42 @@ function unknownRefAnswer(action: ActionName, ref: string): string {
   return `${action} did not run: ${ref} is not a ref in your latest snapshot. Take a snapshot and use a ref from it.`;
 }
 
-/** How long the computer may take over each action once it is running. Starting it is not counted. */
-const timeouts = {
-  navigate: Duration.seconds(45),
-  snapshot: Duration.seconds(20),
-  click: Duration.seconds(60),
-  type: Duration.seconds(30),
-} satisfies { readonly [Name in ActionName]: Duration.Duration };
+interface Forwarding {
+  readonly timeout: Duration.Duration;
+  readonly source: string;
+  readonly whenUnknown: string;
+}
 
-/** The audit row's `detail`. Text a Bot typed goes through `redact()`; a URL is not typed text. */
+/** Past the computer's own limit, so a command that runs too long answers as timed out, not unknown. */
+const pastTheComputersLimit = Duration.sum(commandTimeLimit, Duration.seconds(5));
+
+const onAPage = "take a snapshot before trying again";
+
+const forwarding = {
+  navigate: { timeout: Duration.seconds(45), source: "web page", whenUnknown: onAPage },
+  snapshot: { timeout: Duration.seconds(20), source: "web page", whenUnknown: onAPage },
+  click: { timeout: Duration.seconds(60), source: "web page", whenUnknown: onAPage },
+  type: { timeout: Duration.seconds(30), source: "web page", whenUnknown: onAPage },
+  run: {
+    timeout: pastTheComputersLimit,
+    source: "command output",
+    whenUnknown: "check the workspace, for example with ls, before running it again",
+  },
+} satisfies { readonly [Name in ActionName]: Forwarding };
+
+const auditCommandLimit = 2_000;
+
+/**
+The audit row's `detail`. Text a Bot typed into a page goes through `redact()`; a URL is not typed text,
+and the command is what the audit row exists to show.
+*/
 const auditDetail = ComputerAction.match({
   navigate: ({ url }): Schema.JsonObject => ({ url }),
   snapshot: (): Schema.JsonObject => ({}),
   click: ({ target }): Schema.JsonObject => ({ ...target }),
   type: ({ target, text }): Schema.JsonObject => ({ ...target, text: redact(text) }),
+  run: ({ command }): Schema.JsonObject => ({ command: capText(command, auditCommandLimit) }),
 });
-
-/** What the model is told the computer answered, before it is marked untrusted. */
-function present({ url, title, snapshot, truncated }: ComputerActResult): string {
-  return [
-    `URL: ${url}`,
-    `Title: ${title}`,
-    "",
-    snapshot,
-    ...(truncated ? ["[the computer cut this snapshot short]"] : []),
-  ].join("\n");
-}
 
 /** Why a forwarded call did not come back with a result. */
 type ForwardFailure = ComputerUnavailable | ComputerActFailed | ComputerLost | ToolTimedOut;
@@ -109,7 +128,7 @@ const auditMessageLimit = 500;
 
 function settle(name: ActionName, result: Result.Result<string, ForwardFailure>): Settled {
   const failed = (message: string) => Result.fail(new ToolFailed({ message }));
-  const unknownAfter = `Whether ${name} happened is unknown; take a snapshot before trying again.`;
+  const unknownAfter = `Whether ${name} happened is unknown; ${forwarding[name].whenUnknown}.`;
 
   return Result.match(result, {
     onSuccess: (text): Settled => ({
@@ -206,6 +225,30 @@ export const gatewayLayer = Layer.effect(
       return target;
     });
 
+    const forward = (
+      bot: BotId,
+      computer: Computer,
+      action: ComputerAction,
+    ): Effect.Effect<string, ComputerActFailed | ComputerLost> =>
+      action.action === "run"
+        ? computer.run(action).pipe(
+            Effect.tap(({ end }) => Effect.annotateCurrentSpan(endAttributes(end))),
+            Effect.map(presentCommand),
+          )
+        : computer.browse(action).pipe(
+            Effect.tap((page) =>
+              snapshots.save(bot, page.snapshot).pipe(
+                // Its refs then resolve against an older page, which the computer refuses as stale.
+                Effect.catchTag("SqlError", (error) =>
+                  Effect.logWarning("The latest snapshot could not be stored").pipe(
+                    Effect.annotateLogs({ action: page.action, reason: error.message }),
+                  ),
+                ),
+              ),
+            ),
+            Effect.map(presentPage),
+          );
+
     const resolve = (bot: BotId, request: BotRequest): Effect.Effect<ComputerAction, UnknownRef> =>
       BotRequest.match(request, {
         navigate: (navigate) => Effect.succeed(navigate),
@@ -214,6 +257,7 @@ export const gatewayLayer = Layer.effect(
           Effect.map(targetOf(bot, ref), (target) => ({ action: "click", target }) as const),
         type: ({ ref, text }) =>
           Effect.map(targetOf(bot, ref), (target) => ({ action: "type", target, text }) as const),
+        run: (run) => Effect.succeed(run),
       });
 
     const deny = Effect.fnUntraced(function* (request: BotRequest, { ref, reason }: UnknownRef) {
@@ -240,7 +284,7 @@ export const gatewayLayer = Layer.effect(
       return yield* new ToolFailed({ message: unknownRefAnswer(request.action, ref) });
     });
 
-    const act = Effect.fn("Gateway.act")(function* (bot: BotId, request: BotRequest) {
+    const carryOut = Effect.fn("Gateway.act")(function* (bot: BotId, request: BotRequest) {
       const span = yield* Effect.option(Effect.currentSpan);
       yield* Effect.annotateCurrentSpan({ "gateway.action": request.action });
 
@@ -286,20 +330,7 @@ export const gatewayLayer = Layer.effect(
       const forwarded = yield* Effect.gen(function* () {
         const computer = yield* computers.ensure;
 
-        return yield* computer.act(action).pipe(
-          Effect.tap((result) =>
-            snapshots.save(bot, result.snapshot).pipe(
-              // Its refs then resolve against an older page, which the computer refuses as stale.
-              Effect.catchTag("SqlError", (error) =>
-                Effect.logWarning("The latest snapshot could not be stored").pipe(
-                  Effect.annotateLogs({ action: action.action, reason: error.message }),
-                ),
-              ),
-            ),
-          ),
-          Effect.map(present),
-          toolResult({ source: "web page", timeout: timeouts[action.action] }),
-        );
+        return yield* forward(bot, computer, action).pipe(toolResult(forwarding[action.action]));
       }).pipe(
         Effect.result,
         Effect.onInterrupt(() => recordOutcome("unknown", { reason: "the turn was stopped" })),
@@ -311,6 +342,25 @@ export const gatewayLayer = Layer.effect(
 
       return yield* Effect.fromResult(settled.answer);
     });
+
+    const shellTurnsByBot = new Map<BotId, Semaphore.Semaphore>();
+
+    const shellTurns = (bot: BotId) =>
+      Effect.sync(() => {
+        const existing = shellTurnsByBot.get(bot);
+
+        if (existing !== undefined) return existing;
+
+        const queue = Semaphore.makeUnsafe(1);
+        shellTurnsByBot.set(bot, queue);
+
+        return queue;
+      });
+
+    const act = (bot: BotId, request: BotRequest) =>
+      request.action === "run"
+        ? Effect.flatMap(shellTurns(bot), (queue) => queue.withPermits(1)(carryOut(bot, request)))
+        : carryOut(bot, request);
 
     return Gateway.of({ refuse, act });
   }),

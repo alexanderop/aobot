@@ -3,9 +3,12 @@ import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
+  CommandEnd,
+  CommandRan,
   type ComputerAction,
-  ComputerActResult,
+  commandOutputLimit,
   findRef,
+  PageRead,
   type RefTarget,
   snapshotRefs,
 } from "@aobot/domain";
@@ -20,6 +23,8 @@ the suite needs nothing but Docker. `vp run test:contract`.
 */
 
 const run = promisify(execFile);
+
+const { Exited, Signalled, TimedOut } = CommandEnd.cases;
 
 const repositoryRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 
@@ -101,18 +106,42 @@ async function untilHealthy(computer: Computer) {
   throw new Error(`${computer.name} never became healthy:\n${await docker("logs", computer.name)}`);
 }
 
-function act(computer: Computer, body: ComputerAction, authorization = `Bearer ${token}`) {
+interface Call {
+  readonly authorization: string;
+  readonly signal: AbortSignal;
+}
+
+const asServer: Call = { authorization: `Bearer ${token}`, signal: new AbortController().signal };
+
+function act(computer: Computer, body: ComputerAction, { authorization, signal }: Call = asServer) {
   return fetch(`${computer.url}/act`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization },
     body: JSON.stringify(body),
+    signal,
   });
 }
 
-async function result(response: Response): Promise<ComputerActResult> {
+async function result(response: Response): Promise<PageRead> {
   expect(response.status).toBe(200);
 
-  return Schema.decodeUnknownSync(ComputerActResult)(await response.json());
+  return Schema.decodeUnknownSync(PageRead)(await response.json());
+}
+
+function runCommand(computer: Computer, command: string, signal = asServer.signal) {
+  return act(computer, { action: "run", command }, { ...asServer, signal });
+}
+
+async function ran(response: Response): Promise<CommandRan> {
+  expect(response.status).toBe(200);
+
+  return Schema.decodeUnknownSync(CommandRan)(await response.json());
+}
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function processes(computer: Computer): Promise<string> {
+  return docker("exec", computer.name, "ps", "-eo", "args");
 }
 
 function target(snapshot: string, role: string, name: string): RefTarget {
@@ -260,7 +289,7 @@ describe("the docker computer", () => {
     ["the wrong token", `Bearer ${token}x`],
     ["a non-ASCII token", "Bearer tökén"],
   ])("answers 401 to %s", async (_, authorization) => {
-    const response = await act(local, { action: "snapshot" }, authorization);
+    const response = await act(local, { action: "snapshot" }, { ...asServer, authorization });
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "Not authorised." });
   });
@@ -287,5 +316,161 @@ describe("the docker computer", () => {
     expect(await docker("exec", local.name, "id", "-u")).not.toBe("0");
     const owners = await docker("exec", local.name, "ps", "-o", "uid=", "-C", "chrome");
     expect(owners.split("\n").map((uid) => uid.trim())).not.toContain("0");
+  });
+
+  describe("its shell", () => {
+    it("runs a command with bash as pwuser in /workspace, which is also its HOME", async () => {
+      expect(await ran(await runCommand(local, 'id -un; pwd; echo "$HOME"; echo "$0"'))).toEqual({
+        action: "run",
+        end: Exited.make({ code: 0 }),
+        stdout: { text: "pwuser\n/workspace\n/workspace\nbash\n", truncated: false },
+        stderr: { text: "", truncated: false },
+        leftOutputOpen: false,
+      });
+    });
+
+    it("keeps files between commands, and answers a failed command's exit code and errors", async () => {
+      await ran(await runCommand(local, "echo hello > notes.txt"));
+
+      const read = await ran(await runCommand(local, "cat notes.txt && ls /data/aobot.db"));
+
+      expect(read.end).toEqual(Exited.make({ code: 2 }));
+      expect(read.stdout.text).toBe("hello\n");
+      expect(read.stderr.text).toContain("No such file or directory");
+    });
+
+    it("never gives a command the computer's token or its telemetry settings", async () => {
+      const { stdout } = await ran(await runCommand(local, "env"));
+
+      expect(stdout.text).toContain("HTTP_PROXY=");
+      expect(stdout.text).not.toContain("COMPUTER_TOKEN");
+      expect(stdout.text).not.toContain(token);
+      expect(stdout.text).not.toContain("OTEL_");
+    });
+
+    it("refuses, through its proxy settings, a host the browser may open", async () => {
+      const fixture = `http://${suite}-fixture:${fixturePort}/`;
+      await result(await act(local, { action: "navigate", url: fixture }));
+
+      const fetched = await ran(
+        await runCommand(
+          local,
+          `curl --silent --show-error --fail-with-body --max-time 3 ${fixture}`,
+        ),
+      );
+
+      expect(fetched.end).not.toEqual(Exited.make({ code: 0 }));
+      expect(fetched.stdout.text).toContain("inside the computer's own network");
+    });
+
+    it("cannot drive the browser around the gateway with the token it reads out of /proc", async () => {
+      const probe = await ran(
+        await runCommand(
+          local,
+          [
+            `token=$(for f in /proc/[0-9]*/environ; do tr '\\0' '\\n' < "$f" 2>/dev/null; done | sed -n 's/^COMPUTER_TOKEN=//p' | head -n 1)`,
+            'test -n "$token" || exit 3',
+            "own=$(hostname -i | cut -d ' ' -f 1)",
+            'for host in 127.0.0.1 "$own"; do',
+            `  curl --noproxy '*' --silent --output /dev/null --write-out '%{http_code}\\n' --max-time 3 -X POST -H "authorization: Bearer $token" -H 'content-type: application/json' --data '{"action":"snapshot"}' "http://$host:4100/act"`,
+            "done",
+          ].join("\n"),
+        ),
+      );
+
+      expect(probe.end).toEqual(Exited.make({ code: 0 }));
+      expect(probe.stdout.text).toBe("403\n403\n");
+    });
+
+    it("keeps only the end of a long output, and says so", async () => {
+      const { stdout } = await ran(await runCommand(local, "seq 1 200000"));
+
+      expect(stdout.truncated).toBe(true);
+      expect(stdout.text.length).toBeLessThanOrEqual(commandOutputLimit);
+      expect(stdout.text.endsWith("199999\n200000\n")).toBe(true);
+    });
+
+    it("answers the signal that ended bash, with what it printed before", async () => {
+      expect(await ran(await runCommand(local, "echo before; kill -TERM $$"))).toEqual({
+        action: "run",
+        end: Signalled.make({ signal: "SIGTERM" }),
+        stdout: { text: "before\n", truncated: false },
+        stderr: { text: "", truncated: false },
+        leftOutputOpen: false,
+      });
+    });
+
+    it("answers as soon as bash exits, and stops a background job still holding its output", async () => {
+      const started = Date.now();
+      const exited = await ran(await runCommand(local, "sleep 602 & echo hi"));
+
+      expect(exited.end).toEqual(Exited.make({ code: 0 }));
+      expect(exited.stdout.text).toBe("hi\n");
+      expect(exited.leftOutputOpen).toBe(true);
+      expect(Date.now() - started).toBeLessThan(5_000);
+      expect(await processes(local)).not.toContain("sleep 602");
+    });
+
+    it("answers a command that exits just inside 30 seconds as exited, though a background job holds its output", async () => {
+      const finished = await ran(await runCommand(local, "sleep 603 & sleep 29.7; echo finished"));
+
+      expect(finished.end).toEqual(Exited.make({ code: 0 }));
+      expect(finished.stdout.text).toBe("finished\n");
+      expect(finished.leftOutputOpen).toBe(true);
+      expect(await processes(local)).not.toContain("sleep 603");
+    });
+
+    it("stops a background job still holding its output after a signal ends bash, and says so", async () => {
+      const ended = await ran(await runCommand(local, "sleep 604 & echo hi; kill -TERM $$"));
+
+      expect(ended.end).toEqual(Signalled.make({ signal: "SIGTERM" }));
+      expect(ended.leftOutputOpen).toBe(true);
+      expect(await processes(local)).not.toContain("sleep 604");
+    });
+
+    it("stops a command that runs past 30 seconds, and everything in its process group", async () => {
+      const started = Date.now();
+      const stopped = await ran(await runCommand(local, "echo started; sleep 600 | cat"));
+      const took = Date.now() - started;
+
+      expect(stopped.end).toEqual(TimedOut.make({}));
+      expect(stopped.stdout.text).toBe("started\n");
+      expect(took).toBeGreaterThanOrEqual(30_000);
+      expect(took).toBeLessThan(40_000);
+      expect(await processes(local)).not.toContain("sleep 600");
+    });
+
+    it("stops a running command and everything in its process group when its request is aborted", async () => {
+      const stop = new AbortController();
+      const running = runCommand(local, "sleep 601 | cat", stop.signal).catch(() => "aborted");
+
+      await pause(1_000);
+      expect(await processes(local)).toContain("sleep 601");
+
+      stop.abort();
+      expect(await running).toBe("aborted");
+      await pause(2_000);
+      expect(await processes(local)).not.toContain("sleep 601");
+    });
+
+    it("never runs a command whose request was aborted while it waited for the one before", async () => {
+      const first = runCommand(local, "sleep 3");
+      await pause(500);
+
+      const stop = new AbortController();
+
+      const second = runCommand(local, "touch /workspace/b-ran", stop.signal).catch(
+        () => "aborted",
+      );
+
+      await pause(500);
+      stop.abort();
+
+      expect(await second).toBe("aborted");
+      expect((await ran(await first)).end).toEqual(Exited.make({ code: 0 }));
+      expect((await ran(await runCommand(local, "ls /workspace/b-ran"))).end).not.toEqual(
+        Exited.make({ code: 0 }),
+      );
+    });
   });
 });

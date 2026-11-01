@@ -8,6 +8,7 @@ export {
   ComputerLost,
   Computers,
   ComputerUnavailable,
+  computerAt,
 } from "./computers.ts";
 
 export { computerConfig, ComputerProvider, type ComputerSettings } from "./settings.ts";

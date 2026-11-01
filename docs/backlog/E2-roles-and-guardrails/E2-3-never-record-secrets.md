@@ -22,6 +22,7 @@ In:
   model never sees it, the transcript never stores it
 - A credential in a URL's query or fragment (`?token=`, `#access_token=`) is refused or redacted, whatever the field is called
 - Redaction matches key names in every spelling (`toolResult`, `tool_result`)
+- A secret inside a `run` command, which its audit row otherwise keeps as written (E1-3), is redacted before the row is written
 
 Out:
 

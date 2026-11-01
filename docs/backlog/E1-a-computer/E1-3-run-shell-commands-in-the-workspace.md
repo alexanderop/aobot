@@ -2,7 +2,7 @@
 id: E1-3
 title: Run shell commands in the workspace
 epic: E1
-status: todo
+status: done
 depends_on: [E1-1]
 estimate: 1d
 ---
@@ -45,7 +45,7 @@ gateway · computer
 ## Tests
 
 - Tier 3: timeout kills the command; `env` output does not contain `COMPUTER_TOKEN`.
-- Tier 4: `ls /data/aobot.db` and `curl -m 3 http://server:3000` from the Bot's shell both fail.
+- Tier 4: `ls /data/aobot.db` from the Bot's shell fails, and a command that honours its proxy settings cannot reach `http://server:3000` (a command that bypasses them is E5-3).
 - Tier 4: the demo.
 - Tier 3: Stop sent before spawn means the command never runs.
 

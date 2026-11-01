@@ -128,4 +128,41 @@ describe("ToolCallCard", () => {
       "Typing into e2…",
     );
   });
+
+  it("shows the command run ran, and folds what it printed", () => {
+    const html = draw(
+      call(
+        "run",
+        '{"command":"echo hello > notes.txt && ls"}',
+        ToolCallStatus.Done({ result: "Exit code: 0\n\nstdout:\nnotes.txt" }),
+      ),
+    );
+
+    expect(html).toContain('data-tool="run"');
+    expect(html).toContain("Ran a command");
+    expect(html).toContain("<code");
+    expect(html).toContain("echo hello &gt; notes.txt &amp;&amp; ls");
+    expect(html).toMatch(/<details[^>]*>.*Exit code: 0.*notes\.txt.*<\/details>/s);
+  });
+
+  it("shows the command run is running while it runs", () => {
+    const html = draw(call("run", '{"command":"sleep 5"}', ToolCallStatus.Running()));
+
+    expect(html).toContain("Running a command…");
+    expect(html).toContain("sleep 5");
+  });
+
+  it("says why a command did not run", () => {
+    const html = draw(
+      call(
+        "run",
+        '{"command":"ls"}',
+        ToolCallStatus.Failed({ result: "Your computer could not be started." }),
+      ),
+    );
+
+    expect(html).toContain('data-status="failed"');
+    expect(html).toContain("Could not run a command");
+    expect(html).toContain("Your computer could not be started.");
+  });
 });

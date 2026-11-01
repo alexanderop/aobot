@@ -2,17 +2,17 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  ComputerAction,
-  type ComputerActResult,
+  PageAction,
+  type PageRead,
   type RefTarget,
   snapshotLimit,
   snapshotRefs,
 } from "@aobot/domain";
 import { chromium, type BrowserContext, type Page } from "playwright";
 import { Context, Effect, Layer, Option, Ref, Semaphore } from "effect";
-import { checkNavigation, Destinations } from "./destinations.ts";
-import { refusedHeader, startEgressProxy } from "./egress.ts";
+import { Destinations, refusedHeader, startEgressProxy } from "../egress/public.ts";
 import { ActionFailed, ActionRefused } from "./errors.ts";
+import { checkNavigation } from "./navigation.ts";
 import { capSnapshot } from "./snapshot.ts";
 import { virtualDisplay } from "./virtual-display.ts";
 
@@ -20,9 +20,7 @@ import { virtualDisplay } from "./virtual-display.ts";
 export class Browser extends Context.Service<
   Browser,
   {
-    readonly act: (
-      action: ComputerAction,
-    ) => Effect.Effect<ComputerActResult, ActionRefused | ActionFailed>;
+    readonly act: (action: PageAction) => Effect.Effect<PageRead, ActionRefused | ActionFailed>;
   }
 >()("aobot/computer/browser/Browser") {}
 
@@ -188,16 +186,16 @@ export const browserLayer = (home: string) =>
       });
 
       // Every action answers with the page read afresh, so the Bot's next refs come from what is there.
-      const act = (action: ComputerAction) =>
+      const act = (action: PageAction) =>
         oneAtATime.withPermits(1)(
-          ComputerAction.match(action, {
+          PageAction.match(action, {
             navigate: ({ url }) => navigate(url),
             snapshot: () => currentPage(context, page),
             click: ({ target }) => click(target),
             type: ({ target, text }) => type(target, text),
           }).pipe(
             Effect.flatMap(readPage),
-            Effect.map((read): ComputerActResult => ({ action: action.action, ...read })),
+            Effect.map((read): PageRead => ({ action: action.action, ...read })),
           ),
         );
 

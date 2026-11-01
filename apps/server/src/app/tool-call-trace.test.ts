@@ -86,7 +86,8 @@ const computers = Layer.succeed(
   Computers,
   Computers.of({
     ensure: Effect.succeed({
-      act: () =>
+      run: () => Effect.die("this computer has no shell"),
+      browse: () =>
         Effect.succeed({
           action: "navigate",
           url: "https://example.com/",

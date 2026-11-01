@@ -1,4 +1,5 @@
 import { Config, Schema } from "effect";
+import { inheritedEnvironment } from "../features/shell/public.ts";
 
 /** Every setting the computer reads, from the environment through Effect `Config`. */
 export const computerConfig = Config.all({
@@ -9,4 +10,5 @@ export const computerConfig = Config.all({
   // Unset means no telemetry export, so the computer runs without a collector.
   otlpEndpoint: Config.option(Config.String("OTEL_EXPORTER_OTLP_ENDPOINT")),
   home: Config.String("HOME"),
+  shell: inheritedEnvironment,
 });

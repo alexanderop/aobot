@@ -215,7 +215,7 @@ describe("dockerComputers", () => {
         const computers = yield* Computers;
 
         const computer = yield* computers.ensure;
-        const result = yield* computer.act({ action: "navigate", url: "https://example.com" });
+        const result = yield* computer.browse({ action: "navigate", url: "https://example.com" });
         yield* computers.ensure;
 
         expect(result).toMatchObject({ title: "Example" });
@@ -236,7 +236,7 @@ describe("dockerComputers", () => {
       const result = yield* Computers.use((computers) =>
         computers.ensure.pipe(
           Effect.flatMap((computer) =>
-            computer.act({ action: "navigate", url: "https://example.com" }),
+            computer.browse({ action: "navigate", url: "https://example.com" }),
           ),
         ),
       ).pipe(Effect.provide(docker.layer));

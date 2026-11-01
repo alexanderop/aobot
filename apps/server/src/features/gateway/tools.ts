@@ -15,6 +15,7 @@ export const botToolHandlers = botToolkit.toLayer(
       snapshot: () => gateway.act(assistant.id, { action: "snapshot" }),
       click: ({ ref }) => gateway.act(assistant.id, { action: "click", ref }),
       type: ({ ref, text }) => gateway.act(assistant.id, { action: "type", ref, text }),
+      run: ({ command }) => gateway.act(assistant.id, { action: "run", command }),
     };
   }),
 );

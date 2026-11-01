@@ -14,6 +14,10 @@ const decodeRefArgs = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ ref: Schema.String })),
 );
 
+const decodeRunArgs = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ command: Schema.String })),
+);
+
 function Result(props: { readonly summary: string; readonly text: string }) {
   return (
     <details className="tool-call__details">
@@ -104,6 +108,31 @@ const TypeCall = refCall({
   unfinished: (ref) => `Did not finish typing into ${ref}`,
 });
 
+function RunCall({ call }: { readonly call: ToolCall }) {
+  return (
+    <>
+      <p className="tool-call__title">
+        {ToolCallStatus.$match(call.status, {
+          Running: () => "Running a command…",
+          Done: () => "Ran a command",
+          Failed: () => "Could not run a command",
+          Unfinished: () => "Did not finish a command",
+        })}
+      </p>
+      {Option.match(decodeRunArgs(call.args), {
+        onNone: () => null,
+        onSome: ({ command }) => <code className="tool-call__args">{command}</code>,
+      })}
+      {ToolCallStatus.$match(call.status, {
+        Done: ({ result }) => <Result summary="What it printed" text={result} />,
+        Failed: ({ result }) => <Result summary="Why" text={result} />,
+        Running: () => null,
+        Unfinished: () => null,
+      })}
+    </>
+  );
+}
+
 function DefaultCall({ call }: { readonly call: ToolCall }) {
   return (
     <>
@@ -134,6 +163,7 @@ const renderers: ReadonlyMap<string, ToolCallRenderer> = new Map([
   ["snapshot", SnapshotCall],
   ["click", ClickCall],
   ["type", TypeCall],
+  ["run", RunCall],
 ]);
 
 function rendererFor(name: string): ToolCallRenderer {

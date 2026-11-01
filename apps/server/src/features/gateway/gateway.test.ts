@@ -1,9 +1,28 @@
 import { createServer } from "node:http";
-import { BotId, type ComputerAction, type ComputerActResult } from "@aobot/domain";
+import type { AddressInfo } from "node:net";
+import {
+  BotId,
+  CommandEnd,
+  type CommandRan,
+  commandTimeLimit,
+  type ComputerAction,
+  type PageAction,
+  type PageRead,
+} from "@aobot/domain";
 import { NodeHttpServer } from "@effect/platform-node";
 import { SqliteClient } from "@effect/sql-sqlite-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Deferred, Duration, Effect, Fiber, Layer } from "effect";
+import {
+  Context,
+  Deferred,
+  Duration,
+  Effect,
+  Fiber,
+  Layer,
+  Redacted,
+  Semaphore,
+  Tracer,
+} from "effect";
 import { McpClient, McpProtocol } from "effect/ai";
 import { FetchHttpClient, HttpClient, HttpMiddleware, HttpRouter, HttpServer } from "effect/http";
 import { SqlClient } from "effect/sql";
@@ -13,6 +32,7 @@ import { auditLogLayer, migrateAudit } from "../audit/public.ts";
 import {
   type Computer,
   ComputerActFailed,
+  computerAt,
   Computers,
   ComputerUnavailable,
 } from "../computers/public.ts";
@@ -20,15 +40,25 @@ import { Gateway, gatewayLayer } from "./gateway.ts";
 import { gatewayMcpLayer } from "./mcp.ts";
 import { migrateGateway } from "./snapshot-store.ts";
 
-/** A computer that answers with `act`, and keeps every action it was sent. */
-function fakeComputers(act: Computer["act"]) {
+/** A computer whose browser and shell answer with `answers`, and that keeps every action it was sent. */
+function fakeComputers(answers: Partial<Computer>) {
   const actions: Array<ComputerAction> = [];
 
+  const {
+    browse = () => Effect.die("this computer has no browser"),
+    run = () => Effect.die("this computer has no shell"),
+  } = answers;
+
   const computer: Computer = {
-    act: (action) =>
+    browse: (action) =>
       Effect.andThen(
         Effect.sync(() => actions.push(action)),
-        act(action),
+        browse(action),
+      ),
+    run: (command) =>
+      Effect.andThen(
+        Effect.sync(() => actions.push(command)),
+        run(command),
       ),
   };
 
@@ -45,7 +75,7 @@ function fakeComputers(act: Computer["act"]) {
   return { actions, layer };
 }
 
-const exampleDomain = (action: ComputerAction): Effect.Effect<ComputerActResult> =>
+const exampleDomain = (action: PageAction): Effect.Effect<PageRead> =>
   Effect.succeed({
     action: action.action,
     url: "https://example.com/",
@@ -75,6 +105,8 @@ const auditRows = Effect.gen(function* () {
 
 const bot = BotId.make("assistant");
 
+const { Exited, Signalled, TimedOut } = CommandEnd.cases;
+
 const navigate = { action: "navigate", url: "https://example.com" } as const;
 
 describe("Gateway", () => {
@@ -90,7 +122,7 @@ describe("Gateway", () => {
         Effect.andThen(Effect.currentSpan),
         Effect.map((span) => span.traceId),
         Effect.withSpan("Chat.turn"),
-        Effect.provide(startGateway(fakeComputers(exampleDomain).layer)),
+        Effect.provide(startGateway(fakeComputers({ browse: exampleDomain }).layer)),
       );
 
       expect(yield* auditRows).toEqual([
@@ -111,7 +143,7 @@ describe("Gateway", () => {
     "records an allow, forwards the call, records it succeeded, all in the asking trace",
     () =>
       Effect.gen(function* () {
-        const computer = fakeComputers(exampleDomain);
+        const computer = fakeComputers({ browse: exampleDomain });
 
         const [answer, traceId] = yield* Effect.all([
           Gateway.use((gateway) => gateway.act(bot, navigate)),
@@ -144,11 +176,15 @@ describe("Gateway", () => {
     "records failed when the computer refuses, and tells the model instead of ending the turn",
     () =>
       Effect.gen(function* () {
-        const computer = fakeComputers(() =>
-          Effect.fail(
-            new ComputerActFailed({ reason: "refused", message: "10.0.0.1 is a private address" }),
-          ),
-        );
+        const computer = fakeComputers({
+          browse: () =>
+            Effect.fail(
+              new ComputerActFailed({
+                reason: "refused",
+                message: "10.0.0.1 is a private address",
+              }),
+            ),
+        });
 
         const error = yield* Gateway.use((gateway) =>
           Effect.flip(gateway.act(bot, { action: "navigate", url: "http://10.0.0.1" })),
@@ -185,7 +221,7 @@ describe("Gateway", () => {
   it.effect("does not forward a call whose audit row cannot be written", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const computer = fakeComputers(exampleDomain);
+      const computer = fakeComputers({ browse: exampleDomain });
 
       const error = yield* Gateway.use((gateway) =>
         sql`DROP TABLE audit_rows`.pipe(Effect.andThen(Effect.flip(gateway.act(bot, navigate)))),
@@ -198,15 +234,16 @@ describe("Gateway", () => {
 
   it.effect("hands the model a 50,000-character snapshot capped, with the note", () =>
     Effect.gen(function* () {
-      const computer = fakeComputers(() =>
-        Effect.succeed({
-          action: "snapshot",
-          url: "https://example.com/",
-          title: "Long",
-          snapshot: "x".repeat(50_000),
-          truncated: false,
-        }),
-      );
+      const computer = fakeComputers({
+        browse: () =>
+          Effect.succeed({
+            action: "snapshot",
+            url: "https://example.com/",
+            title: "Long",
+            snapshot: "x".repeat(50_000),
+            truncated: false,
+          }),
+      });
 
       const answer = yield* Gateway.use((gateway) => gateway.act(bot, { action: "snapshot" })).pipe(
         Effect.provide(startGateway(computer.layer)),
@@ -220,7 +257,7 @@ describe("Gateway", () => {
 
   it.effect("records unknown when the computer runs past its limit, and says so", () =>
     Effect.gen(function* () {
-      const computer = fakeComputers(() => Effect.never);
+      const computer = fakeComputers({ browse: () => Effect.never });
 
       const running = yield* Gateway.use((gateway) =>
         Effect.flip(gateway.act(bot, { action: "snapshot" })),
@@ -240,9 +277,9 @@ describe("Gateway", () => {
       Effect.gen(function* () {
         const forwarded = yield* Deferred.make<void>();
 
-        const hanging = fakeComputers(() =>
-          Deferred.succeed(forwarded, undefined).pipe(Effect.andThen(Effect.never)),
-        );
+        const hanging = fakeComputers({
+          browse: () => Deferred.succeed(forwarded, undefined).pipe(Effect.andThen(Effect.never)),
+        });
 
         // The first run forwards and never hears back; the next start of the server finds its row.
         yield* Gateway.use((gateway) => gateway.act(bot, navigate)).pipe(
@@ -251,7 +288,7 @@ describe("Gateway", () => {
         );
         yield* Deferred.await(forwarded);
         yield* Gateway.use(() => Effect.void).pipe(
-          Effect.provide(startGateway(fakeComputers(exampleDomain).layer)),
+          Effect.provide(startGateway(fakeComputers({ browse: exampleDomain }).layer)),
         );
 
         const [allow, outcome] = yield* auditRows;
@@ -270,15 +307,16 @@ describe("Gateway", () => {
 function pages(...snapshots: ReadonlyArray<string>) {
   let shown = 0;
 
-  return fakeComputers((action) =>
-    Effect.sync(() => ({
-      action: action.action,
-      url: "https://example.com/form",
-      title: "Form",
-      snapshot: snapshots[Math.min(shown++, snapshots.length - 1)] ?? "",
-      truncated: false,
-    })),
-  );
+  return fakeComputers({
+    browse: (action) =>
+      Effect.sync(() => ({
+        action: action.action,
+        url: "https://example.com/form",
+        title: "Form",
+        snapshot: snapshots[Math.min(shown++, snapshots.length - 1)] ?? "",
+        truncated: false,
+      })),
+  });
 }
 
 const form = `- generic [ref=e1]:
@@ -421,6 +459,392 @@ describe("Gateway refs", () => {
   );
 });
 
+const printed = (text: string) => ({ text, truncated: false });
+
+function shell(ran: Partial<Omit<CommandRan, "action">>) {
+  return fakeComputers({
+    browse: exampleDomain,
+    run: () =>
+      Effect.succeed({
+        action: "run",
+        end: Exited.make({ code: 0 }),
+        stdout: printed(""),
+        stderr: printed(""),
+        leftOutputOpen: false,
+        ...ran,
+      }),
+  });
+}
+
+function recordedSpans() {
+  const spans: Array<Tracer.Span> = [];
+
+  const tracer = Tracer.make({
+    span: (options) => {
+      const span = Tracer.nativeTracer.span(options);
+      spans.push(span);
+
+      return span;
+    },
+  });
+
+  return { spans, layer: Layer.succeed(Tracer.Tracer, tracer) };
+}
+
+const makeNotes = { action: "run", command: "echo hello > notes.txt && ls" } as const;
+
+function pagesOverHttp(...snapshots: ReadonlyArray<string>) {
+  let shown = 0;
+
+  const server = Effect.acquireRelease(
+    Effect.callback<ReturnType<typeof createServer>>((resume) => {
+      const listening = createServer((_request, response) => {
+        response.setHeader("content-type", "application/json");
+        response.end(
+          JSON.stringify({
+            action: "snapshot",
+            url: "https://example.com/",
+            title: "Example Domain",
+            snapshot: snapshots[Math.min(shown++, snapshots.length - 1)] ?? "",
+            truncated: false,
+          }),
+        );
+      }).listen(0, "127.0.0.1", () => resume(Effect.succeed(listening)));
+    }),
+    (listening) => Effect.sync(() => listening.close()),
+  );
+
+  return Layer.effect(
+    Computers,
+    Effect.gen(function* () {
+      // SAFETY: a server listening on a TCP port reports an `AddressInfo`.
+      const { port } = (yield* server).address() as AddressInfo;
+
+      const computer = computerAt(
+        { url: `http://127.0.0.1:${port}`, token: Redacted.make("computer-token") },
+        yield* HttpClient.HttpClient,
+      );
+
+      return Computers.of({
+        ensure: Effect.succeed(computer),
+        stop: Effect.void,
+        reset: Effect.void,
+        list: Effect.succeed([]),
+      });
+    }),
+  ).pipe(Layer.provide(FetchHttpClient.layer));
+}
+
+describe("Gateway run", () => {
+  it.effect(
+    "records the command, forwards it, and answers its exit code and output as untrusted command output",
+    () =>
+      Effect.gen(function* () {
+        const computer = shell({
+          stdout: printed("notes.txt\n"),
+          stderr: printed("warning: hi\n"),
+        });
+
+        const tracing = recordedSpans();
+
+        const answer = yield* Gateway.use((gateway) => gateway.act(bot, makeNotes)).pipe(
+          Effect.provide(startGateway(computer.layer)),
+          Effect.provide(tracing.layer),
+        );
+
+        expect(computer.actions).toEqual([makeNotes]);
+        expect(answer).toContain('<untrusted_data source="command output">');
+        expect(answer).toContain("Exit code: 0\n\nstdout:\nnotes.txt\n");
+        expect(answer).toContain("stderr:\nwarning: hi\n");
+        expect(answer).not.toContain("kept only the end");
+
+        expect(
+          (yield* auditRows).map((row) => [row["decision"], row["action"], row["detail"]]),
+        ).toEqual([
+          ["allow", "run", JSON.stringify({ command: makeNotes.command })],
+          ["succeeded", "run", "{}"],
+        ]);
+
+        const span = tracing.spans.find((candidate) => candidate.name === "Gateway.act");
+        expect(span?.attributes.get("gateway.command_end")).toBe("exited");
+        expect(span?.attributes.get("gateway.exit_code")).toBe(0);
+        expect(JSON.stringify([...(span?.attributes ?? [])])).not.toContain("notes.txt");
+      }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("tells the model a command failed by its exit code, and which output was cut", () =>
+    Effect.gen(function* () {
+      const computer = shell({
+        end: Exited.make({ code: 2 }),
+        stderr: { text: "ls: no such file\n", truncated: true },
+      });
+
+      const answer = yield* Gateway.use((gateway) =>
+        gateway.act(bot, { action: "run", command: "ls /data/aobot.db" }),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(answer).toContain("Exit code: 2");
+      expect(answer).toContain("stdout:\n(nothing)");
+      expect(answer).toContain(
+        "stderr:\nls: no such file\n\n[the computer kept only the end of stderr]",
+      );
+      expect(answer).not.toContain("the end of stdout");
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("says a command was stopped at the computer's limit, which the call survives", () =>
+    Effect.gen(function* () {
+      const computer = shell({ end: TimedOut.make({}), stdout: printed("started\n") });
+      const tracing = recordedSpans();
+
+      const answer = yield* Gateway.use((gateway) =>
+        gateway.act(bot, { action: "run", command: "sleep 600" }),
+      ).pipe(Effect.provide(startGateway(computer.layer)), Effect.provide(tracing.layer));
+
+      expect(answer).toContain("The command ran past 30s, so the computer stopped it.");
+      expect(answer).toContain("stdout:\nstarted\n");
+      expect((yield* auditRows).map((row) => row["decision"])).toEqual(["allow", "succeeded"]);
+
+      const span = tracing.spans.find((candidate) => candidate.name === "Gateway.act");
+      expect(span?.attributes.get("gateway.command_end")).toBe("timed_out");
+      expect(span?.attributes.has("gateway.exit_code")).toBe(false);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("says which signal ended a command, with what it printed before", () =>
+    Effect.gen(function* () {
+      const computer = shell({
+        end: Signalled.make({ signal: "SIGTERM" }),
+        stdout: printed("before\n"),
+      });
+
+      const tracing = recordedSpans();
+
+      const answer = yield* Gateway.use((gateway) =>
+        gateway.act(bot, { action: "run", command: "echo before; kill -TERM $$" }),
+      ).pipe(Effect.provide(startGateway(computer.layer)), Effect.provide(tracing.layer));
+
+      expect(answer).toContain("The command was ended by SIGTERM.");
+      expect(answer).toContain("stdout:\nbefore\n");
+      expect((yield* auditRows).map((row) => row["decision"])).toEqual(["allow", "succeeded"]);
+
+      const span = tracing.spans.find((candidate) => candidate.name === "Gateway.act");
+      expect(span?.attributes.get("gateway.command_end")).toBe("signalled");
+      expect(span?.attributes.get("gateway.signal")).toBe("SIGTERM");
+      expect(span?.attributes.has("gateway.exit_code")).toBe(false);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("says when the computer cut off what a command left running, and only then", () =>
+    Effect.gen(function* () {
+      const cutOff = shell({ stdout: printed("hi\n"), leftOutputOpen: true });
+      const drained = shell({ stdout: printed("hi\n") });
+      const command = { action: "run", command: "sleep 600 & echo hi" } as const;
+
+      const [stopped, finished] = yield* Effect.all([
+        Gateway.use((gateway) => gateway.act(bot, command)).pipe(
+          Effect.provide(startGateway(cutOff.layer)),
+        ),
+        Gateway.use((gateway) => gateway.act(bot, command)).pipe(
+          Effect.provide(startGateway(drained.layer)),
+        ),
+      ]);
+
+      const note = "[the computer stopped what the command left running";
+      expect(stopped).toContain("Exit code: 0");
+      expect(stopped).toContain(note);
+      expect(stopped).not.toContain("kept only the end");
+      expect(finished).not.toContain(note);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("waits past the computer's 30 seconds before calling a command unknown", () =>
+    Effect.gen(function* () {
+      const computer = fakeComputers({ run: () => Effect.never });
+
+      const running = yield* Gateway.use((gateway) =>
+        Effect.flip(gateway.act(bot, { action: "run", command: "sleep 600" })),
+      ).pipe(Effect.provide(startGateway(computer.layer)), Effect.forkChild);
+
+      yield* TestClock.adjust(Duration.seconds(31));
+      expect(running.pollUnsafe()).toBeUndefined();
+
+      yield* TestClock.adjust(Duration.seconds(10));
+
+      const error = yield* Fiber.join(running);
+      expect(error.message).toContain(
+        "Whether run happened is unknown; check the workspace, for example with ls, before running it again.",
+      );
+      expect((yield* auditRows).map((row) => row["decision"])).toEqual(["allow", "unknown"]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("starts a command's time limit once the Bot's command before it is done", () =>
+    Effect.gen(function* () {
+      const oneAtATime = yield* Semaphore.make(1);
+
+      const computer = fakeComputers({
+        run: () =>
+          oneAtATime.withPermits(1)(
+            Effect.as(Effect.sleep(commandTimeLimit), {
+              action: "run",
+              end: Exited.make({ code: 0 }),
+              stdout: printed(""),
+              stderr: printed(""),
+              leftOutputOpen: false,
+            } as const),
+          ),
+      });
+
+      const both = yield* Gateway.use((gateway) =>
+        Effect.all(
+          [
+            gateway.act(bot, { action: "run", command: "sleep 30" }),
+            gateway.act(bot, { action: "run", command: "sleep 30 again" }),
+          ],
+          { concurrency: "unbounded" },
+        ),
+      ).pipe(Effect.provide(startGateway(computer.layer)), Effect.forkChild);
+
+      yield* TestClock.adjust(commandTimeLimit);
+      yield* TestClock.adjust(commandTimeLimit);
+
+      expect(yield* Fiber.join(both)).toHaveLength(2);
+      expect((yield* auditRows).map((row) => row["decision"])).toEqual([
+        "allow",
+        "succeeded",
+        "allow",
+        "succeeded",
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("never forwards a command stopped while it waits for the Bot's command before it", () =>
+    Effect.gen(function* () {
+      const forwarded = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+
+      const computer = fakeComputers({
+        run: () =>
+          Deferred.succeed(forwarded, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.as({
+              action: "run",
+              end: Exited.make({ code: 0 }),
+              stdout: printed(""),
+              stderr: printed(""),
+              leftOutputOpen: false,
+            } as const),
+          ),
+      });
+
+      const first = { action: "run", command: "sleep 3" } as const;
+      const next = { action: "run", command: "ls" } as const;
+
+      yield* Gateway.use((gateway) =>
+        Effect.gen(function* () {
+          const running = yield* Effect.forkChild(gateway.act(bot, first));
+          yield* Deferred.await(forwarded);
+
+          const waiting = yield* Effect.forkChild(
+            gateway.act(bot, { action: "run", command: "touch b-ran" }),
+            { startImmediately: true },
+          );
+
+          yield* Fiber.interrupt(waiting);
+
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(running);
+          yield* gateway.act(bot, next);
+        }),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(computer.actions).toEqual([first, next]);
+      expect(
+        (yield* auditRows).map((row) => [
+          row["decision"],
+          JSON.parse(String(row["detail"])).command,
+        ]),
+      ).toEqual([
+        ["allow", first.command],
+        ["succeeded", undefined],
+        ["allow", next.command],
+        ["succeeded", undefined],
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect(
+    "never takes a page the computer answers a command with as the Bot's latest snapshot",
+    () =>
+      Effect.gen(function* () {
+        const [ran, clicked] = yield* Gateway.use((gateway) =>
+          Effect.gen(function* () {
+            yield* gateway.act(bot, { action: "snapshot" });
+
+            const ran = yield* Effect.flip(gateway.act(bot, { action: "run", command: "ls" }));
+            const clicked = yield* Effect.flip(gateway.act(bot, { action: "click", ref: "e9" }));
+
+            return [ran, clicked] as const;
+          }),
+        ).pipe(
+          Effect.provide(
+            startGateway(
+              pagesOverHttp('- heading "Example Domain" [ref=e1]', '- button "Delete" [ref=e9]'),
+            ),
+          ),
+        );
+
+        expect(ran.message).toContain("The computer stopped answering.");
+        expect(clicked.message).toContain("e9 is not a ref in your latest snapshot");
+        expect((yield* auditRows).map((row) => [row["decision"], row["action"]])).toEqual([
+          ["allow", "snapshot"],
+          ["succeeded", "snapshot"],
+          ["allow", "run"],
+          ["unknown", "run"],
+          ["deny", "click"],
+        ]);
+        expect((yield* auditRows).at(-1)?.["detail"]).toBe(
+          JSON.stringify({ ref: "e9", reason: "not in the latest snapshot" }),
+        );
+      }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("keeps the Bot's latest page when a command answers, so its refs still resolve", () =>
+    Effect.gen(function* () {
+      const computer = shell({ stdout: printed("- heading [ref=e9]\n") });
+
+      yield* Gateway.use((gateway) =>
+        Effect.all([
+          gateway.act(bot, { action: "snapshot" }),
+          gateway.act(bot, { action: "run", command: "cat page.txt" }),
+          gateway.act(bot, { action: "click", ref: "e1" }),
+        ]),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(computer.actions.at(-1)).toEqual({
+        action: "click",
+        target: { ref: "e1", role: "heading", name: "Example Domain" },
+      });
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("caps a very long command in its audit row", () =>
+    Effect.gen(function* () {
+      const command = `echo ${"x".repeat(5_000)}`;
+
+      yield* Gateway.use((gateway) => gateway.act(bot, { action: "run", command })).pipe(
+        Effect.provide(startGateway(shell({}).layer)),
+      );
+
+      const [allow] = yield* auditRows;
+      const recorded = JSON.parse(String(allow?.["detail"])).command;
+      expect(recorded.length).toBeLessThan(2_100);
+      expect(recorded).toMatch(/^echo x+\n\[truncated: \d+ characters\]$/u);
+    }).pipe(Effect.provide(database)),
+  );
+});
+
 describe("the gateway's MCP server", () => {
   it.live("runs a CLI's tool call inside the trace its traceparent names", () =>
     Effect.gen(function* () {
@@ -428,7 +852,7 @@ describe("the gateway's MCP server", () => {
 
       const server = yield* Layer.build(
         HttpRouter.serve(gatewayMcpLayer).pipe(
-          Layer.provide(startGateway(fakeComputers(exampleDomain).layer)),
+          Layer.provide(startGateway(fakeComputers({ browse: exampleDomain }).layer)),
           Layer.provideMerge(NodeHttpServer.layer(createServer, { port: 0, host: "127.0.0.1" })),
           // As in the server: HTTP requests start no spans, so only the gateway can link the trace.
           Layer.provide(Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true)),

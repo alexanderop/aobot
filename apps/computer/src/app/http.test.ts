@@ -1,16 +1,19 @@
-import type { ComputerAction } from "@aobot/domain";
+import { CommandEnd, type PageAction } from "@aobot/domain";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 import { Effect, Layer, Option, Redacted } from "effect";
-import { HttpRouter, HttpServer } from "effect/http";
+import { HttpMiddleware, HttpRouter, HttpServer, HttpServerRequest } from "effect/http";
 import { ActionFailed, ActionRefused, Browser } from "../features/browser/public.ts";
+import { CommandFailed, Shell } from "../features/shell/public.ts";
 import { routesLayer } from "./http.ts";
 
 const token = "computer-token";
 
+const { Exited } = CommandEnd.cases;
+
 const fakeBrowser = Layer.succeed(
   Browser,
   Browser.of({
-    act: (action: ComputerAction) =>
+    act: (action: PageAction) =>
       Effect.gen(function* () {
         if (action.action !== "navigate")
           return yield* new ActionFailed({ message: "Chromium crashed." });
@@ -38,12 +41,44 @@ const fakeBrowser = Layer.succeed(
   }),
 );
 
+const fakeShell = Layer.succeed(
+  Shell,
+  Shell.of({
+    run: (command) =>
+      command === "crash"
+        ? Effect.fail(new CommandFailed({ message: "bash would not start." }))
+        : Effect.succeed({
+            action: "run",
+            end: Exited.make({ code: 0 }),
+            stdout: { text: `${command}\n`, truncated: false },
+            stderr: { text: "", truncated: false },
+            leftOutputOpen: false,
+          }),
+  }),
+);
+
+const server = "172.18.0.2";
+
 const app = HttpRouter.toWebHandler(
   routesLayer(Redacted.make(token)).pipe(
-    Layer.provideMerge(fakeBrowser),
+    Layer.provideMerge(Layer.merge(fakeBrowser, fakeShell)),
     Layer.provide(HttpServer.layerServices),
+    Layer.provideMerge(Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true)),
   ),
-  { disableLogger: true },
+  {
+    disableLogger: true,
+    // A web handler has no socket, so the test says where each request came from.
+    middleware: (handle) =>
+      Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+        Effect.provideService(
+          handle,
+          HttpServerRequest.HttpServerRequest,
+          request.modify({
+            remoteAddress: Option.some(request.headers["x-remote-address"] ?? server),
+          }),
+        ),
+      ),
+  },
 );
 
 afterAll(() => app.dispose());
@@ -71,6 +106,15 @@ describe("GET /health", () => {
 });
 
 describe("POST /act", () => {
+  it.each(["127.0.0.1", "::ffff:127.0.0.1", "::1"])(
+    "answers 403 to a caller on the computer itself, at %s, even with the token",
+    async (address) => {
+      const response = await act(navigate, { ...bearer, "x-remote-address": address });
+      expect(response.status).toBe(403);
+      expect(await response.text()).toBe("");
+    },
+  );
+
   it.each([
     ["no token", {}],
     ["the wrong token", { authorization: "Bearer computer-tokeN" }],
@@ -122,7 +166,26 @@ describe("POST /act", () => {
     expect(await response.json()).toEqual({ reason: "failed", message: "Chromium crashed." });
   });
 
+  it("runs a command in the shell and answers how it ended", async () => {
+    const response = await act(JSON.stringify({ action: "run", command: "echo hi" }), bearer);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      action: "run",
+      end: Exited.make({ code: 0 }),
+      stdout: { text: "echo hi\n", truncated: false },
+      stderr: { text: "", truncated: false },
+      leftOutputOpen: false,
+    });
+  });
+
+  it("answers 502 failed when the shell cannot run a command", async () => {
+    const response = await act(JSON.stringify({ action: "run", command: "crash" }), bearer);
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ reason: "failed", message: "bash would not start." });
+  });
+
   it.each([
+    JSON.stringify({ action: "run" }),
     "not json",
     JSON.stringify({ action: "click" }),
     JSON.stringify({ action: "navigate" }),

@@ -113,9 +113,24 @@ copies the action, and its `detail` says why for `failed` and `unknown`.
 | `snapshot` | none          | `POST /act {"action":"snapshot"}`                             | `snapshot · allow` with `{}`, then `succeeded`, `failed` or `unknown`                                                                       |
 | `click`    | `ref`         | `POST /act {"action":"click","target":{ref,role,name}}`       | `click · allow` with `{ ref, role, name }`, then `succeeded`, `failed` or `unknown`; `click · deny` with `{ ref, reason }`                  |
 | `type`     | `ref`, `text` | `POST /act {"action":"type","target":{ref,role,name},"text"}` | `type · allow` with `{ ref, role, name, text: "[N chars]" }`, then `succeeded`, `failed` or `unknown`; `type · deny` with `{ ref, reason }` |
+| `run`      | `command`     | `POST /act {"action":"run","command"}`                        | `run · allow` with `{ command }` (capped at 2,000 characters), then `succeeded`, `failed` or `unknown`                                      |
 
-Every action answers with the page read afresh: its URL, title and snapshot, capped at 12,000 characters.
-`type` replaces what the field holds and never presses Enter.
+Every browser action answers with the page read afresh: its URL, title and snapshot, capped at 12,000
+characters. `type` replaces what the field holds and never presses Enter.
+
+`run` answers how the command ended and the last 8,000 characters of each of stdout and stderr, each with
+a note when its start was dropped. It ended `Exited` with bash's exit code, `Signalled` when a signal the
+computer did not send ended bash (`kill -TERM $$`, a crash, the out-of-memory killer), or `TimedOut` when
+it was still running after 30 seconds. A command that exits non-zero still `succeeded`: the computer ran
+it, and the model reads how it ended. Once bash ends, the computer kills the command's process group, so
+a background job such as `sleep 600 &` neither holds the answer until the time limit nor outlives it.
+After a non-zero exit that happens at once. After exit 0 or a signal, the output first gets half a second
+more, and when something still holds it open then, the model reads that the computer stopped what the
+command left running. The time limit counts only until bash ends. A timeout and a Stop kill the group the
+same way. A Bot's commands wait for each other in the gateway, so each one's time limit starts when the
+one before is done.
+The `Gateway.act` span records `gateway.command_end` (`exited`, `signalled` or `timed_out`) with
+`gateway.exit_code` or `gateway.signal`; the command is in the audit row, never in a span or a log.
 
 ### Refs
 
@@ -149,7 +164,7 @@ dead turn.
 | 5   | **The page as text, not screenshots**                                                                 | `ariaSnapshot({ mode: "ai" })` with refs is cheap and needs no vision model. Snapshots are capped at 12,000 characters                                                                                                                                                  |
 | 6   | **A computer is only ever "a URL and a token"**, or for a Mac, a connection the desktop app opened    | The server never uses `docker exec` or shared files, so where a computer runs can change freely. A laptop is behind NAT, so it dials out                                                                                                                                |
 | 7   | **Fail closed**                                                                                       | A missing rule permits nothing, a crashing rule denies, a missing grant is refused before any rule runs                                                                                                                                                                 |
-| 8   | **Never log what a Bot typed**                                                                        | The audit row keeps `"[14 chars]"`, not the value. It may be a password                                                                                                                                                                                                 |
+| 8   | **Never log what a Bot typed**                                                                        | The audit row keeps `"[14 chars]"`, not the value. It may be a password. A `run` command is the exception: its audit row keeps it as written, capped at 2,000 characters, because the command is what the row is for. Finding secrets inside commands is E2-3           |
 | 9   | **OpenTelemetry from day one**                                                                        | One trace per chat turn, with the `trace_id` stored on every audit row                                                                                                                                                                                                  |
 | 10  | **Outside content is untrusted data**                                                                 | Pages, command output and files reach the model inside one envelope that says they carry no authority. A page can say "ignore your instructions"; the envelope is what tells the model that is not its person speaking. A closing tag inside the content is neutralised |
 | 11  | **Every audit row names its initiator**                                                               | `initiator_kind` is `person` or `deployment` now, `routine` and `handoff` later. `actor.id` says on whose authority; only this says whether anybody was watching                                                                                                        |
@@ -216,18 +231,23 @@ export interface Interface {
   readonly list: Effect.Effect<ReadonlyArray<ComputerStatus>, ComputerUnavailable>;
 }
 
-// A running computer: a URL and a token behind one method, whichever provider started it.
+// A running computer: a URL and a token, whichever provider started it. Both methods are `POST /act`,
+// and each reads only the answer its action promises, so a page answering a command is ComputerLost.
 export interface Computer {
-  readonly act: (
-    action: ComputerAction,
-  ) => Effect.Effect<ComputerActResult, ComputerActFailed | ComputerLost>;
+  readonly browse: (
+    action: PageAction,
+  ) => Effect.Effect<PageRead, ComputerActFailed | ComputerLost>;
+  readonly run: (
+    command: RunCommand,
+  ) => Effect.Effect<CommandRan, ComputerActFailed | ComputerLost>;
 }
 ```
 
 ## Security notes
 
-A Bot has a shell and a browser, and both reach whatever the computer's network reaches. These hold
-locally as much as on AWS:
+A Bot has a shell and a browser. The browser reaches only what the egress filter allows. A command
+reaches the same as long as it uses the proxy settings it is given, and whatever the computer's network
+reaches when it does not, until network limits (E5-3). These hold locally as much as on AWS:
 
 - **The database is not on the computers.** The SQLite file lives on a volume only the server mounts, so a
   Bot's shell has no file to read or write.
@@ -236,6 +256,28 @@ locally as much as on AWS:
   exists for local fixtures and stops the server from starting in production.
 - **Single-user mode never faces the internet.** With it on, every request is one administrator. The
   server refuses to start if its public URL resolves to a public address, and warns on a private one.
+- **A command does not inherit the computer's environment.** It gets PATH, the locale, `HOME=/workspace`
+  and proxy variables naming the computer's egress filter, from an allow-list, so `env` never prints
+  `COMPUTER_TOKEN` or a secret added later. A command that honours those variables is held to the
+  browser's destinations, and private hosts stay refused to it even where `COMPUTER_ALLOW_PRIVATE_HOSTS`
+  opens them to the browser. A command can still unset them and connect directly; network limits close
+  that (E5-3). `bash -c`, never a login shell, so a `.bash_profile` the Bot wrote cannot run first.
+- **`/act` refuses callers on the computer itself.** A request from a loopback address or from one of the
+  computer's own addresses gets 403 before its token is read, so a command that finds the token cannot
+  drive the browser around the gateway. What remains: commands run as the same user as the computer's own
+  process, so they can read its environment and memory (`/proc/<pid>/environ`, and likely `ptrace`), and
+  `setsid` lets a command leave its process group and outlive its time limit or a Stop. The same user also
+  reaches the browser two more ways. Xvfb's socket in `/tmp/.X11-unix` asks for no X authority, so a
+  command can watch the screen and send it keys and clicks. The Chromium profile in `/tmp/aobot-browser-*`
+  holds the cookies of every site the Bot is signed in to. Running commands as a separate user, or in a
+  sidecar, closes all of these (see `docs/backlog/later.md`).
+- **Grafana cannot relay a command to `/act`.** `grafana/otel-lgtm` shares the computers network, because
+  the computer exports its spans there, so its requests come from an address `/act` accepts. Its image
+  makes every visitor Admin, and Admin can add a data source pointing at the computer and send requests
+  through it. Compose makes visitors Viewers, who read traces and cannot add data sources, and turns off
+  basic auth and the login form, so `admin/admin` does not sign in either. Any other service on the
+  computers network that sends requests where it is told is the same kind of relay, and network limits
+  close that (E5-3).
 - **Computers run unprivileged.** The browser and shell run as a non-root user in a container with all
   capabilities dropped, `no-new-privileges`, and pids and memory limits. A page exploit or a fork bomb stays
   inside one person's computer and cannot take it over.

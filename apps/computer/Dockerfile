@@ -1,4 +1,5 @@
-# The Bot's computer: Node, Playwright and a headed Chromium on Xvfb, run as the image's non-root `pwuser`.
+# The Bot's computer: Node, Playwright, a headed Chromium on Xvfb and bash in /workspace, run as the image's
+# non-root `pwuser`.
 # Built from the repository root, because it imports packages/domain:
 #   docker build -f apps/computer/Dockerfile -t aobot-computer:dev .
 #
@@ -25,6 +26,7 @@ COPY --from=node /usr/local/bin/node /usr/local/bin/node
 RUN apt-get update \
   && apt-get install -y --no-install-recommends xvfb tini \
   && rm -rf /var/lib/apt/lists/*
+RUN mkdir /workspace && chown pwuser:pwuser /workspace
 WORKDIR /app
 COPY --from=install /app /app
 

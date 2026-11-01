@@ -1,4 +1,11 @@
-import { type ComputerAction, ComputerActError, ComputerActResult } from "@aobot/domain";
+import {
+  type ComputerAction,
+  ComputerActError,
+  CommandRan,
+  type PageAction,
+  PageRead,
+  type RunCommand,
+} from "@aobot/domain";
 import { Context, Effect, type Redacted, Schema } from "effect";
 import { type HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
@@ -19,11 +26,14 @@ export class ComputerLost extends Schema.TaggedError<ComputerLost>()("ComputerLo
   message: Schema.String,
 }) {}
 
-/** A running computer, ready for actions. */
+/** A running computer, ready for actions. Each answers only in the shape its action promises. */
 export interface Computer {
-  readonly act: (
-    action: ComputerAction,
-  ) => Effect.Effect<ComputerActResult, ComputerActFailed | ComputerLost>;
+  readonly browse: (
+    action: PageAction,
+  ) => Effect.Effect<PageRead, ComputerActFailed | ComputerLost>;
+  readonly run: (
+    command: RunCommand,
+  ) => Effect.Effect<CommandRan, ComputerActFailed | ComputerLost>;
 }
 
 /** What `list` reports about one computer. */
@@ -54,21 +64,52 @@ export interface ComputerAddress {
   readonly token: Redacted.Redacted<string>;
 }
 
-const decodeResult = HttpClientResponse.schemaBodyJson(ComputerActResult);
-
 const decodeRefusal = HttpClientResponse.schemaBodyJson(ComputerActError);
 
 function lost(error: { readonly message: string }) {
   return new ComputerLost({ message: error.message });
 }
 
+function answered<A>(
+  response: HttpClientResponse.HttpClientResponse,
+  decode: (
+    answer: HttpClientResponse.HttpClientResponse,
+  ) => Effect.Effect<A, { readonly message: string }>,
+): Effect.Effect<A, ComputerActFailed | ComputerLost> {
+  const refused = (answer: HttpClientResponse.HttpClientResponse) =>
+    decodeRefusal(answer).pipe(
+      Effect.mapError(lost),
+      Effect.flatMap((error) => Effect.fail(new ComputerActFailed(error))),
+    );
+
+  return HttpClientResponse.matchStatus(response, {
+    200: (answer) => decode(answer).pipe(Effect.mapError(lost)),
+    403: refused,
+    502: refused,
+    // Any other 4xx turned the request away before it ran; anything else may have run partway.
+    "4xx": (answer) =>
+      Effect.fail(
+        new ComputerActFailed({
+          reason: "refused",
+          message: `The computer turned the request away with status ${answer.status}.`,
+        }),
+      ),
+    orElse: (answer) =>
+      Effect.fail(lost({ message: `The computer answered status ${answer.status}.` })),
+  });
+}
+
+const decodePage = HttpClientResponse.schemaBodyJson(PageRead);
+
+const decodeCommand = HttpClientResponse.schemaBodyJson(CommandRan);
+
 /**
 The computer at `address`, spoken to over `POST /act`. The client sends `traceparent` from the current
 span, so the computer's work lands inside the gateway's.
 */
 export function computerAt(address: ComputerAddress, client: HttpClient.HttpClient): Computer {
-  const act = Effect.fn("Computer.act")(function* (action: ComputerAction) {
-    const response = yield* client
+  const send = (action: ComputerAction) =>
+    client
       .execute(
         HttpClientRequest.post(new URL("/act", address.url)).pipe(
           HttpClientRequest.bearerToken(address.token),
@@ -77,28 +118,12 @@ export function computerAt(address: ComputerAddress, client: HttpClient.HttpClie
       )
       .pipe(Effect.mapError(lost));
 
-    const refused = (answer: HttpClientResponse.HttpClientResponse) =>
-      decodeRefusal(answer).pipe(
-        Effect.mapError(lost),
-        Effect.flatMap((error) => Effect.fail(new ComputerActFailed(error))),
-      );
-
-    return yield* HttpClientResponse.matchStatus(response, {
-      200: (answer) => decodeResult(answer).pipe(Effect.mapError(lost)),
-      403: refused,
-      502: refused,
-      // Any other 4xx turned the request away before it ran; anything else may have run partway.
-      "4xx": (answer) =>
-        Effect.fail(
-          new ComputerActFailed({
-            reason: "refused",
-            message: `The computer turned the request away with status ${answer.status}.`,
-          }),
-        ),
-      orElse: (answer) =>
-        Effect.fail(lost({ message: `The computer answered status ${answer.status}.` })),
-    });
-  });
-
-  return { act };
+  return {
+    browse: Effect.fn("Computer.act")(function* (action: PageAction) {
+      return yield* answered(yield* send(action), decodePage);
+    }),
+    run: Effect.fn("Computer.act")(function* (command: RunCommand) {
+      return yield* answered(yield* send(command), decodeCommand);
+    }),
+  };
 }
