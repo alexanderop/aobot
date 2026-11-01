@@ -9,3 +9,5 @@ export { botToolHandlers } from "./tools.ts";
 export { screenHandlers } from "./screen.ts";
 
 export { controlHandlers } from "./control-rpcs.ts";
+
+export { FileTransfers, TransferFailed } from "./transfers.ts";

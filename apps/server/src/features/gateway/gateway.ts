@@ -16,7 +16,6 @@ import {
   type ComputerActFailed,
   type ComputerLost,
   Computers,
-  type ComputerUnavailable,
 } from "../computers/public.ts";
 import {
   capText,
@@ -27,7 +26,7 @@ import {
 } from "../../shared/tool-result.ts";
 import { redact } from "../../shared/redact.ts";
 import { ComputerControl, controlDoors } from "./control.ts";
-import { personAudit } from "./person-audit.ts";
+import { type ComputerFailure, failureOutcome, personAudit } from "./person-audit.ts";
 import { fileTarget } from "./file-target.ts";
 import {
   endAttributes,
@@ -38,6 +37,7 @@ import {
 } from "./present.ts";
 import { snapshotStore } from "./snapshot-store.ts";
 import { spanEvent } from "./span-event.ts";
+import { FileTransfers, fileTransfers } from "./transfers.ts";
 
 /** Something an agent asked for that the gateway turned down. `detail` is already redacted. */
 export interface Refusal {
@@ -157,7 +157,7 @@ const auditDetail = ComputerAction.match({
 });
 
 /** Why a forwarded call did not come back with a result. */
-type ForwardFailure = ComputerUnavailable | ComputerActFailed | ComputerLost | ToolTimedOut;
+type ForwardFailure = ComputerFailure | ToolTimedOut;
 
 /** What a forwarded call became: its outcome row, and what the model is told. */
 interface Settled {
@@ -165,9 +165,6 @@ interface Settled {
   readonly detail: Schema.JsonObject;
   readonly answer: Result.Result<string, ToolFailed>;
 }
-
-/** The longest computer message kept in an audit row. */
-const auditMessageLimit = 500;
 
 function settle(name: ActionName, result: Result.Result<string, ForwardFailure>): Settled {
   const failed = (message: string) => Result.fail(new ToolFailed({ message }));
@@ -180,21 +177,20 @@ function settle(name: ActionName, result: Result.Result<string, ForwardFailure>)
       answer: Result.succeed(text),
     }),
     onFailure: Match.typeTags<ForwardFailure, Settled>()({
-      ComputerUnavailable: ({ message }) => ({
-        outcome: "failed",
-        detail: { reason: "unavailable", message: capText(message, auditMessageLimit) },
-        answer: failed(`Your computer could not be started, so ${name} did not run. ${message}`),
-      }),
-      ComputerActFailed: ({ reason, message }) => ({
-        outcome: "failed",
-        detail: { reason, message: capText(message, auditMessageLimit) },
+      ComputerUnavailable: (failure) => ({
+        ...failureOutcome(failure),
         answer: failed(
-          `${name} did not happen: the computer ${reason === "refused" ? "refused it" : "tried and failed"}.\n${outsideText(message, "computer")}`,
+          `Your computer could not be started, so ${name} did not run. ${failure.message}`,
         ),
       }),
-      ComputerLost: ({ message }) => ({
-        outcome: "unknown",
-        detail: { reason: "lost", message: capText(message, auditMessageLimit) },
+      ComputerActFailed: (failure) => ({
+        ...failureOutcome(failure),
+        answer: failed(
+          `${name} did not happen: the computer ${failure.reason === "refused" ? "refused it" : "tried and failed"}.\n${outsideText(failure.message, "computer")}`,
+        ),
+      }),
+      ComputerLost: (failure) => ({
+        ...failureOutcome(failure),
         answer: failed(`The computer stopped answering. ${unknownAfter}`),
       }),
       ToolTimedOut: ({ timeoutMs }) => ({
@@ -210,7 +206,8 @@ function settle(name: ActionName, result: Result.Result<string, ForwardFailure>)
 
 /**
 The {@link Gateway}: one audit row per decision, and one outcome row per allowed call. The same layer
-provides {@link ComputerControl}, so a person's take and the Bot's actions meet at one door per Bot.
+provides {@link ComputerControl}, so a person's take and the Bot's actions meet at one door per Bot, and
+{@link FileTransfers}, so a person's files are audited in the same trail.
 */
 export const gatewayLayer = Layer.effectContext(
   Effect.gen(function* () {
@@ -219,6 +216,7 @@ export const gatewayLayer = Layer.effectContext(
     const computers = yield* Computers;
     const snapshots = yield* snapshotStore;
     const doors = yield* controlDoors;
+    const transfers = yield* fileTransfers;
 
     // Before anything is forwarded: a call an earlier run allowed and never heard back from is
     // recorded as unknown, never run again.
@@ -330,16 +328,7 @@ export const gatewayLayer = Layer.effectContext(
       answer: string,
     ) {
       yield* Effect.annotateCurrentSpan({ "gateway.outcome": "deny" });
-
-      yield* rows
-        .decide("deny", action, detail)
-        .pipe(
-          Effect.catchTag("AuditWriteFailed", (error) =>
-            Effect.logError("A deny row could not be written").pipe(
-              Effect.annotateLogs({ action, reason: error.message }),
-            ),
-          ),
-        );
+      yield* rows.deny(action, detail);
 
       return yield* new ToolFailed({ message: answer });
     });
@@ -414,6 +403,7 @@ export const gatewayLayer = Layer.effectContext(
 
     return Context.make(Gateway, Gateway.of({ refuse, act })).pipe(
       Context.add(ComputerControl, doors.control),
+      Context.add(FileTransfers, transfers),
     );
   }),
 );

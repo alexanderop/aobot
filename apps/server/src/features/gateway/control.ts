@@ -23,7 +23,7 @@ import { Computers } from "../computers/public.ts";
 import { capText } from "../../shared/tool-result.ts";
 import { controlStore } from "./control-store.ts";
 import { close, Door, drained, enter, inFlight, leave, reopen, view } from "./door.ts";
-import { personAudit } from "./person-audit.ts";
+import { computerMessageLimit, personAudit } from "./person-audit.ts";
 import { snapshotStore } from "./snapshot-store.ts";
 import { spanEvent } from "./span-event.ts";
 
@@ -69,16 +69,13 @@ interface BotDoor {
 /** How long a person's input may take before the person is told it failed. */
 const inputTimeLimit = "15 seconds";
 
-/** The longest computer message a person is shown. */
-const messageLimit = 500;
-
 function inputFailed(error: { readonly message: string }) {
-  return new InputFailed({ message: capText(error.message, messageLimit) });
+  return new InputFailed({ message: capText(error.message, computerMessageLimit) });
 }
 
 function notStarted(error: { readonly message: string }) {
   return new ComputerNotStarted({
-    message: `You have control, but the computer could not be started: ${capText(error.message, messageLimit)}`,
+    message: `You have control, but the computer could not be started: ${capText(error.message, computerMessageLimit)}`,
   });
 }
 

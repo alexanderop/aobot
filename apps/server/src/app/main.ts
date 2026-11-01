@@ -36,6 +36,7 @@ import {
 } from "../features/gateway/public.ts";
 import { toolInputsRedacted } from "../shared/span-redaction.ts";
 import { serverConfig } from "./config.ts";
+import { fileRoutes } from "./file-routes.ts";
 import { rpcSocket } from "./rpc-socket.ts";
 
 const server = Layer.unwrap(
@@ -120,6 +121,8 @@ const server = Layer.unwrap(
       Layer.provide(database),
     );
 
+    const files = fileRoutes(config.publicHost).pipe(Layer.provide(gateway));
+
     const webApp = HttpStaticServer.layer({ root: config.webDistDir, spa: true });
 
     const listener = NodeHttpServer.layer(createServer, { port: config.port, host: config.host });
@@ -132,11 +135,12 @@ const server = Layer.unwrap(
         ),
     });
 
-    // HTTP carries only the web app's files, the health check, the RPC socket and the gateway's MCP
-    // server. None of it is worth a trace, and the health check every two seconds would bury the turns.
+    // HTTP carries only the web app's files, the health check, the RPC socket, a person's files and the
+    // gateway's MCP server. A transfer names its own span; the health check every two seconds would bury
+    // the turns.
     const untracedHttp = Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true);
 
-    return HttpRouter.serve(Layer.mergeAll(rpc, webApp, runtime.routes)).pipe(
+    return HttpRouter.serve(Layer.mergeAll(rpc, files, webApp, runtime.routes)).pipe(
       Layer.merge(runtime.beside),
       Layer.provide(listener),
       Layer.provide([toolInputsRedacted.pipe(Layer.provide(telemetry)), untracedHttp]),

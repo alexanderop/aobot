@@ -50,6 +50,7 @@ import {
 import { fakeComputer } from "../computers/testing/fake-computer.ts";
 import { ComputerControl } from "./control.ts";
 import { Gateway, gatewayLayer } from "./gateway.ts";
+import { FileTransfers } from "./transfers.ts";
 import { gatewayMcpLayer } from "./mcp.ts";
 import { migrateGateway } from "./migrations.ts";
 import { botToolHandlers } from "./tools.ts";
@@ -1533,6 +1534,258 @@ describe("Gateway files", () => {
 
       expect(error.message).toContain("read_file did not happen: the computer refused it.");
       expect(yield* auditTrail).toEqual(["read_file · allow", "read_file · failed"]);
+    }).pipe(Effect.provide(database)),
+  );
+});
+
+const encoded = (text: string) => new TextEncoder().encode(text);
+
+const expenses = "date,amount\n2026-10-01,12.50\n2026-10-02,7.50\n";
+
+/**
+`use` of the person's file transfers, from the gateway's own layer over `computers`, in a scope of its own
+as a request to `/files` is.
+*/
+function transfer<A, E, R>(
+  computers: Layer.Layer<Computers>,
+  use: (transfers: FileTransfers["Service"]) => Effect.Effect<A, E, R>,
+) {
+  return FileTransfers.use(use).pipe(Effect.scoped, Effect.provide(startGateway(computers)));
+}
+
+describe("a person's file transfers", () => {
+  it.effect("records an upload with its path and size, and what the computer saved", () =>
+    Effect.gen(function* () {
+      const received: Array<string> = [];
+
+      const computer = fakeComputers({
+        upload: (path, body) =>
+          Stream.runCollect(Stream.decodeText(Stream.orDie(body))).pipe(
+            Effect.map((pieces) => {
+              received.push(`${path}: ${pieces.join("")}`);
+
+              return { path, bytes: Buffer.byteLength(expenses) };
+            }),
+          ),
+      });
+
+      const written = yield* transfer(computer.layer, (transfers) =>
+        transfers.upload(
+          "expenses.csv",
+          Buffer.byteLength(expenses),
+          Stream.make(encoded(expenses)),
+        ),
+      );
+
+      expect(received).toEqual([`expenses.csv: ${expenses}`]);
+      expect(written.bytes).toBe(Buffer.byteLength(expenses));
+
+      const rows = yield* auditRows;
+      expect(
+        rows.map((row) => [row["initiator_kind"], row["decision"], row["action"], row["detail"]]),
+      ).toEqual([
+        [
+          "person",
+          "allow",
+          "file.uploaded",
+          JSON.stringify({
+            path: "expenses.csv",
+            name: "expenses.csv",
+            extension: "csv",
+            bytes: Buffer.byteLength(expenses),
+          }),
+        ],
+        [
+          "person",
+          "succeeded",
+          "file.uploaded",
+          JSON.stringify({ bytes: Buffer.byteLength(expenses) }),
+        ],
+      ]);
+      expect(JSON.stringify(rows)).not.toContain("2026-10-01");
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("records an upload whose body broke off as failed, since nothing was saved", () =>
+    Effect.gen(function* () {
+      const computer = fakeComputers({
+        upload: (_path, body) =>
+          Stream.runDrain(body).pipe(Effect.as({ path: "expenses.csv", bytes: 0 })),
+      });
+
+      const error = yield* transfer(computer.layer, (transfers) =>
+        Effect.flip(
+          transfers.upload(
+            "expenses.csv",
+            Buffer.byteLength(expenses),
+            Stream.make(encoded("date,amount\n")).pipe(Stream.concat(Stream.fail("aborted"))),
+          ),
+        ),
+      );
+
+      expect(error).toMatchObject({ reason: "failed", message: "The upload stopped partway." });
+      expect((yield* auditRows).map((row) => [row["decision"], row["detail"]]).at(-1)).toEqual([
+        "failed",
+        JSON.stringify({ reason: "the upload stopped partway" }),
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("refuses an upload past 100 MiB before reading it or asking the computer", () =>
+    Effect.gen(function* () {
+      const computer = fakeComputers({});
+
+      const error = yield* transfer(computer.layer, (transfers) =>
+        Effect.flip(
+          transfers.upload("big.bin", 101 * 1024 * 1024, Stream.die("the upload was read")),
+        ),
+      );
+
+      expect(error.reason).toBe("too_large");
+      expect(yield* auditTrail).toEqual(["file.uploaded · deny"]);
+      expect(JSON.parse(String((yield* auditRows)[0]?.["detail"]))).toMatchObject({
+        path: "big.bin",
+        reason: "too large",
+      });
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("denies a transfer outside the workspace without asking the computer", () =>
+    Effect.gen(function* () {
+      const computer = fakeComputers({});
+
+      const [upload, download] = yield* transfer(computer.layer, (transfers) =>
+        Effect.all([
+          Effect.flip(transfers.upload("../etc/passwd", 1, Stream.die("the upload was read"))),
+          Effect.flip(transfers.download("/etc/passwd")),
+        ]),
+      );
+
+      expect([upload.reason, download.reason]).toEqual(["refused", "refused"]);
+      expect(yield* auditTrail).toEqual(["file.uploaded · deny", "file.downloaded · deny"]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("records a download as succeeded with its size once every byte went out", () =>
+    Effect.gen(function* () {
+      const bytes = Uint8Array.from([0, 255, 0, 10]);
+
+      const computer = fakeComputers({
+        download: () => Effect.succeed({ bytes: bytes.length, body: Stream.make(bytes) }),
+      });
+
+      const sent = yield* transfer(computer.layer, (transfers) =>
+        Effect.gen(function* () {
+          const download = yield* transfers.download("reports/blob.bin");
+
+          expect(download).toMatchObject({ name: "blob.bin", bytes: 4 });
+          expect(yield* auditTrail).toEqual(["file.downloaded · allow"]);
+
+          return Buffer.concat(yield* Stream.runCollect(download.body));
+        }),
+      );
+
+      expect(sent).toEqual(Buffer.from(bytes));
+      expect((yield* auditRows).map((row) => [row["decision"], row["detail"]])).toEqual([
+        ["allow", JSON.stringify({ path: "reports/blob.bin", name: "blob.bin", extension: "bin" })],
+        ["succeeded", JSON.stringify({ bytes: 4 })],
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect.each([
+    ["not read at all", (_body: Stream.Stream<Uint8Array, unknown>) => Effect.void],
+    [
+      "read partway",
+      (body: Stream.Stream<Uint8Array, unknown>) => Effect.asVoid(Stream.runHead(body)),
+    ],
+  ] as const)("records a download whose body was %s as unknown, and ends its span", ([, read]) =>
+    Effect.gen(function* () {
+      const tracing = recordedSpans();
+
+      const computer = fakeComputers({
+        download: () =>
+          Effect.succeed({
+            bytes: 4,
+            body: Stream.make(Uint8Array.from([1, 2]), Uint8Array.from([3, 4])),
+          }),
+      });
+
+      yield* transfer(computer.layer, (transfers) =>
+        Effect.flatMap(transfers.download("blob.bin"), ({ body }) => read(body)),
+      ).pipe(Effect.provide(tracing.layer));
+
+      expect((yield* auditRows).map((row) => [row["decision"], row["detail"]])).toEqual([
+        ["allow", JSON.stringify({ path: "blob.bin", name: "blob.bin", extension: "bin" })],
+        ["unknown", JSON.stringify({ reason: "the download stopped partway" })],
+      ]);
+      expect(tracing.spans.find(({ name }) => name === "FileTransfers.download")?.status._tag).toBe(
+        "Ended",
+      );
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("keeps the download's span open until the download is over", () =>
+    Effect.gen(function* () {
+      const tracing = recordedSpans();
+
+      const computer = fakeComputers({
+        download: () =>
+          Effect.succeed({ bytes: 4, body: Stream.make(Uint8Array.from([1, 2, 3, 4])) }),
+      });
+
+      const span = () => tracing.spans.find(({ name }) => name === "FileTransfers.download");
+
+      yield* transfer(computer.layer, (transfers) =>
+        Effect.gen(function* () {
+          const download = yield* transfers.download("blob.bin");
+
+          expect(span()?.status._tag).toBe("Started");
+
+          yield* Stream.runDrain(download.body);
+        }),
+      ).pipe(Effect.provide(tracing.layer));
+
+      expect(span()?.status._tag).toBe("Ended");
+      expect(span()?.attributes.get("gateway.file_bytes")).toBe(4);
+      expect((yield* auditRows)[0]?.["trace_id"]).toBe(span()?.traceId);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("records a download the computer could not find as failed, and says why", () =>
+    Effect.gen(function* () {
+      const computer = fakeComputers({
+        download: () =>
+          Effect.fail(
+            new ComputerActFailed({ reason: "failed", message: "There is nothing at gone.csv." }),
+          ),
+      });
+
+      const error = yield* transfer(computer.layer, (transfers) =>
+        Effect.flip(transfers.download("gone.csv")),
+      );
+
+      expect(error).toMatchObject({ reason: "failed", message: "There is nothing at gone.csv." });
+      expect(yield* auditTrail).toEqual(["file.downloaded · allow", "file.downloaded · failed"]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("never starts a computer for a download", () =>
+    Effect.gen(function* () {
+      const computer = fakeComputers(
+        {},
+        {
+          ensure: Effect.die("a download started a computer"),
+          running: Effect.fail(new ComputerUnavailable({ message: "No computer is running." })),
+        },
+      );
+
+      const error = yield* transfer(computer.layer, (transfers) =>
+        Effect.flip(transfers.download("expenses.csv")),
+      );
+
+      expect(error.message).toBe("No computer is running.");
+      expect(yield* auditTrail).toEqual(["file.downloaded · allow", "file.downloaded · failed"]);
     }).pipe(Effect.provide(database)),
   );
 });
