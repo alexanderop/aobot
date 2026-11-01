@@ -261,6 +261,13 @@ reaches when it does not, until network limits (E5-3). These hold locally as muc
   process, so they can read its environment and memory (`/proc/<pid>/environ`, and likely `ptrace`), and
   `setsid` lets a command leave its process group and outlive its time limit or a Stop. Running commands
   as a separate user, or in a sidecar, closes both (see `docs/backlog/later.md`).
+- **Grafana cannot relay a command to `/act`.** `grafana/otel-lgtm` shares the computers network, because
+  the computer exports its spans there, so its requests come from an address `/act` accepts. Its image
+  makes every visitor Admin, and Admin can add a data source pointing at the computer and send requests
+  through it. Compose makes visitors Viewers, who read traces and cannot add data sources, and turns off
+  basic auth and the login form, so `admin/admin` does not sign in either. Any other service on the
+  computers network that sends requests where it is told is the same kind of relay, and network limits
+  close that (E5-3).
 - **Computers run unprivileged.** The browser and shell run as a non-root user in a container with all
   capabilities dropped, `no-new-privileges`, and pids and memory limits. A page exploit or a fork bomb stays
   inside one person's computer and cannot take it over.
