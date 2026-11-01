@@ -131,6 +131,25 @@ describe("the mock model server", () => {
       }),
     );
 
+    it.live("answers GET /mock/requests with what the model was sent since the script", () =>
+      Effect.gen(function* () {
+        const origin = yield* running;
+        yield* askWith(origin);
+
+        yield* putScript(origin, JSON.stringify(greeting));
+        yield* askWith(origin);
+
+        const answer = yield* Effect.promise(() => fetch(`${origin}/mock/requests`));
+        const { requests } = Schema.decodeUnknownSync(
+          Schema.Struct({ requests: Schema.Array(Schema.String) }),
+        )(yield* Effect.promise(() => answer.json()));
+
+        expect(answer.status).toBe(200);
+        expect(requests).toHaveLength(1);
+        expect(requests[0]).toContain("Weather in Vienna?");
+      }),
+    );
+
     it.live("refuses a body that is not a script and keeps the one it has", () =>
       Effect.gen(function* () {
         const origin = yield* running;

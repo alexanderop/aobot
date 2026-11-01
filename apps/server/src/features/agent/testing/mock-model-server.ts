@@ -287,7 +287,7 @@ interface MockModelOptions {
 /** A running mock model server. */
 export interface MockModelServer {
   readonly port: number;
-  /** The body of every request so far, in order: what the runtime sent the model. */
+  /** The body of every request since the last `PUT /mock/script`, in order: what the runtime sent the model. */
   readonly requests: () => ReadonlyArray<string>;
   readonly close: () => Promise<void>;
 }
@@ -316,8 +316,9 @@ async function stream(
 A model server that replays `script` over HTTP in every API shape we call: Anthropic Messages, OpenAI
 Responses and OpenAI Chat Completions. Call N answers with step N, whichever route it arrives on. It
 also answers the model lookups the server makes at startup. `PUT /mock/script` with a JSON
-{@link ModelScript} replaces the script and starts counting calls from one again, so a verify scenario
-scripts its own turn on a running stack. Plain Node, so `verify/mock-model.ts` runs it without a build.
+{@link ModelScript} replaces the script and starts counting calls and recording requests afresh, so a
+verify scenario scripts its own turn on a running stack. `GET /mock/requests` answers
+`{ "requests": [...] }`, every body since then, so the scenario can check what the model was shown. Plain Node, so `verify/mock-model.ts` runs it without a build.
 */
 export function startMockModel(options: MockModelOptions): Promise<MockModelServer> {
   let script = options.script;
@@ -335,10 +336,15 @@ export function startMockModel(options: MockModelOptions): Promise<MockModelServ
         onSuccess: (next) => {
           script = next;
           calls = 0;
+          bodies.length = 0;
 
           return sendJson(response, 200, { steps: next.length });
         },
       });
+    }
+
+    if (request.method === "GET" && pathname === "/mock/requests") {
+      return sendJson(response, 200, { requests: [...bodies] });
     }
 
     bodies.push(body);
