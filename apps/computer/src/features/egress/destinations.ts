@@ -1,9 +1,9 @@
 import { lookup } from "node:dns/promises";
 import { BlockList, isIP } from "node:net";
 import { Context, Effect, Layer, Option, Result } from "effect";
-import { ActionFailed, ActionRefused } from "./errors.ts";
+import { DestinationRefused, DestinationUnreachable } from "./errors.ts";
 
-/** How far the browser may go to a host: anywhere, only with private hosts allowed, or never. */
+/** How far the computer may go to a host: anywhere, only with private hosts allowed, or never. */
 export type Reach = "open" | "private" | "never";
 
 /** A range of addresses, parsed from `address/prefix`. */
@@ -99,8 +99,8 @@ function embeddedIpv4(address: string): Option.Option<string> {
 
 /**
 The one spelling of a host the lists above are written in: lower case, no brackets, zone or root dot,
-and an IPv6 address that carries an IPv4 one reduced to it. Every spelling the browser would follow to
-the same place has to land on the same string, or the lists have a door in them.
+and an IPv6 address that carries an IPv4 one reduced to it. Every spelling a client would follow to the
+same place has to land on the same string, or the lists have a door in them.
 */
 export function canonicalHost(host: string): string {
   const name = host
@@ -116,7 +116,7 @@ export function canonicalHost(host: string): string {
   );
 }
 
-/** How far the browser may go to `host`, a name or an address in any spelling. */
+/** How far the computer may go to `host`, a name or an address in any spelling. */
 export function reachOf(host: string): Reach {
   const canonical = canonicalHost(host);
   const version = isIP(canonical);
@@ -137,7 +137,7 @@ const refusals = {
   private: "That address is inside the computer's own network, so the computer does not open it.",
 };
 
-/** Why the browser may not go to `host`, or none when it may. */
+/** Why the computer may not go to `host`, or none when it may. */
 function refusalOf(host: string, allowPrivateHosts: boolean): Option.Option<string> {
   const reach = reachOf(host);
 
@@ -147,9 +147,11 @@ function refusalOf(host: string, allowPrivateHosts: boolean): Option.Option<stri
 }
 
 /** Every address a host name resolves to. */
-export type Resolve = (host: string) => Effect.Effect<ReadonlyArray<string>, ActionFailed>;
+export type Resolve = (
+  host: string,
+) => Effect.Effect<ReadonlyArray<string>, DestinationUnreachable>;
 
-/** Where the browser may connect. Used for the address a Bot asks for and for every connection after it. */
+/** Where the computer may connect. Used for the address a Bot asks for and for every connection after it. */
 export class Destinations extends Context.Service<
   Destinations,
   {
@@ -159,9 +161,9 @@ export class Destinations extends Context.Service<
     */
     readonly check: (
       host: string,
-    ) => Effect.Effect<ReadonlyArray<string>, ActionRefused | ActionFailed>;
+    ) => Effect.Effect<ReadonlyArray<string>, DestinationRefused | DestinationUnreachable>;
   }
->()("aobot/computer/browser/Destinations") {}
+>()("aobot/computer/egress/Destinations") {}
 
 /** {@link Destinations} with its resolver passed in, so tests can say what a name resolves to. */
 export function makeDestinations(
@@ -171,7 +173,7 @@ export function makeDestinations(
   const refuseUnless = (host: string) =>
     Option.match(refusalOf(host, allowPrivateHosts), {
       onNone: () => Effect.void,
-      onSome: (message) => Effect.fail(new ActionRefused({ message })),
+      onSome: (message) => Effect.fail(new DestinationRefused({ message })),
     });
 
   const check = Effect.fn("Destinations.check")(function* (host: string) {
@@ -183,7 +185,7 @@ export function makeDestinations(
     const addresses = yield* resolve(canonical);
 
     if (addresses.length === 0) {
-      return yield* new ActionFailed({ message: `${canonical} has no address.` });
+      return yield* new DestinationUnreachable({ message: `${canonical} has no address.` });
     }
 
     yield* Effect.forEach(addresses, refuseUnless, { discard: true });
@@ -198,31 +200,9 @@ export function makeDestinations(
 const systemResolve: Resolve = (host) =>
   Effect.tryPromise({
     try: () => lookup(host, { all: true, order: "verbatim" }),
-    catch: () => new ActionFailed({ message: `Could not find ${host}.` }),
+    catch: () => new DestinationUnreachable({ message: `Could not find ${host}.` }),
   }).pipe(Effect.map((answers) => answers.map((answer) => answer.address)));
 
 /** {@link Destinations} on the system resolver. */
 export const destinationsLayer = (allowPrivateHosts: boolean) =>
   Layer.succeed(Destinations, makeDestinations(allowPrivateHosts, systemResolve));
-
-const webSchemes = new Set(["http:", "https:"]);
-
-/** The address a Bot asked to open, if the browser may open it: a web address on a host it may reach. */
-export const checkNavigation = Effect.fn("Destinations.checkNavigation")(function* (raw: string) {
-  const destinations = yield* Destinations;
-
-  const url = yield* Effect.try({
-    try: () => new URL(raw),
-    catch: () => new ActionRefused({ message: "That is not a web address." }),
-  });
-
-  if (!webSchemes.has(url.protocol)) {
-    return yield* new ActionRefused({
-      message: `Only http and https addresses open, and that one is ${url.protocol.slice(0, -1)}.`,
-    });
-  }
-
-  yield* destinations.check(url.hostname);
-
-  return url;
-});

@@ -1,7 +1,8 @@
 import { type CommandRan, commandOutputLimit, commandTimeLimitMs } from "@aobot/domain";
 import { Context, Duration, Effect, Layer, Option, Schema, Semaphore, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { workspace } from "./environment.ts";
+import { startEgressProxyWithoutCredentials } from "../egress/public.ts";
+import { commandEnvironment, type InheritedEnvironment, workspace } from "./environment.ts";
 import { outputTail } from "./tail.ts";
 
 /** The shell could not run the command at all, for example because bash would not start. Answered as `failed` (502). */
@@ -19,17 +20,19 @@ export class Shell extends Context.Service<
 const timedOutExitCode = 124;
 
 /**
-{@link Shell}, running each command with `environment` and nothing of this process's own. A command runs
+{@link Shell}, running each command with what it `inherited` and an egress proxy of its own, and nothing
+else of this process's environment. A command runs
 in its own process group, and leaving the scope kills that whole group, so a timeout or a Stop also ends
 `sleep 600 | cat` and anything else the command started. `-c`, not `-lc`: a login shell would first
 run a `.bash_profile` the Bot could have written in its workspace, so what ran would differ from the
 command in the audit row.
 */
-export const shellLayer = (environment: Record<string, string>) =>
+export const shellLayer = (inherited: InheritedEnvironment) =>
   Layer.effect(
     Shell,
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const environment = commandEnvironment(inherited, yield* startEgressProxyWithoutCredentials);
       // A command queued behind another is interrupted while it waits when its request is aborted, so a
       // Stop that lands before the spawn means it never runs.
       const oneAtATime = yield* Semaphore.make(1);

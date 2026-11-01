@@ -3,12 +3,9 @@ import { NodeHttpServer, NodeRuntime, NodeServices } from "@effect/platform-node
 import { Effect, Layer, Option } from "effect";
 import { FetchHttpClient, HttpMiddleware, HttpRouter } from "effect/http";
 import { Otlp } from "effect/observability";
-import {
-  browserLayer,
-  destinationsLayer,
-  startShellEgressProxy,
-} from "../features/browser/public.ts";
-import { commandEnvironment, shellLayer } from "../features/shell/public.ts";
+import { browserLayer } from "../features/browser/public.ts";
+import { destinationsLayer } from "../features/egress/public.ts";
+import { shellLayer } from "../features/shell/public.ts";
 import { computerConfig } from "./config.ts";
 import { routesLayer } from "./http.ts";
 
@@ -22,11 +19,9 @@ const computer = Layer.unwrap(
 
     // Private hosts stay closed to commands even where the browser may open them for a fixture: a
     // command speaks any protocol to whatever it reaches, the server's own port included.
-    const shell = Layer.unwrap(
-      Effect.map(startShellEgressProxy, (proxy) =>
-        shellLayer(commandEnvironment(config.shell, proxy)),
-      ),
-    ).pipe(Layer.provide([destinationsLayer(false), NodeServices.layer]));
+    const shell = shellLayer(config.shell).pipe(
+      Layer.provide([destinationsLayer(false), NodeServices.layer]),
+    );
 
     // Every address, because the server reaches the computer from another container. Docker publishes
     // no port, so only the computer's own network can connect.

@@ -10,9 +10,9 @@ import {
 } from "@aobot/domain";
 import { chromium, type BrowserContext, type Page } from "playwright";
 import { Context, Effect, Layer, Option, Ref, Semaphore } from "effect";
-import { checkNavigation, Destinations } from "./destinations.ts";
-import { refusedHeader, startEgressProxy } from "./egress.ts";
+import { Destinations, refusedHeader, startEgressProxy } from "../egress/public.ts";
 import { ActionFailed, ActionRefused } from "./errors.ts";
+import { checkNavigation } from "./navigation.ts";
 import { capSnapshot } from "./snapshot.ts";
 import { virtualDisplay } from "./virtual-display.ts";
 

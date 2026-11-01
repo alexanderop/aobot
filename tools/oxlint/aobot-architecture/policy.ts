@@ -48,8 +48,9 @@ export const featureDependencies: ReadonlyMap<
   [
     "computer",
     new Map([
-      ["browser", []],
-      ["shell", []],
+      ["egress", []],
+      ["browser", ["egress"]],
+      ["shell", ["egress"]],
       ["screen", ["browser"]],
       ["control", ["browser"]],
     ]),

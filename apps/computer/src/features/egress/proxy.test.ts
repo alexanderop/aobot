@@ -3,16 +3,17 @@ import { type AddressInfo, connect } from "node:net";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 import { Destinations, makeDestinations } from "./destinations.ts";
+import { DestinationUnreachable } from "./errors.ts";
 import {
   decideEgress,
   EgressDecision,
+  offersSecret,
   parseAbsoluteUrl,
   parseAuthority,
   proxyUser,
   startEgressProxy,
-  startShellEgressProxy,
-} from "./egress.ts";
-import { ActionFailed } from "./errors.ts";
+  startEgressProxyWithoutCredentials,
+} from "./proxy.ts";
 
 const secret = "per-process-secret";
 
@@ -24,7 +25,7 @@ const dns = new Map([
 
 const fakeResolve = (host: string) =>
   Option.match(Option.fromNullishOr(dns.get(host)), {
-    onNone: () => Effect.fail(new ActionFailed({ message: `Could not find ${host}.` })),
+    onNone: () => Effect.fail(new DestinationUnreachable({ message: `Could not find ${host}.` })),
     onSome: (addresses) => Effect.succeed(addresses),
   });
 
@@ -34,10 +35,8 @@ const destinations = (allowPrivateHosts: boolean) =>
 const basic = (password: string) =>
   Option.some(`Basic ${Buffer.from(`${proxyUser}:${password}`).toString("base64")}`);
 
-function decide(target: string, authorization = basic(secret), allowPrivateHosts = false) {
-  return decideEgress(Option.some(secret), authorization, parseAuthority(target)).pipe(
-    Effect.provide(destinations(allowPrivateHosts)),
-  );
+function decide(target: string, allowPrivateHosts = false) {
+  return decideEgress(parseAuthority(target)).pipe(Effect.provide(destinations(allowPrivateHosts)));
 }
 
 describe("decideEgress", () => {
@@ -46,19 +45,6 @@ describe("decideEgress", () => {
       expect(yield* decide("example.com:443")).toEqual(
         EgressDecision.Connect({ port: 443, addresses: ["93.184.215.14"] }),
       );
-    }),
-  );
-
-  const unauthorised: ReadonlyArray<readonly [string, Option.Option<string>]> = [
-    ["no credentials", Option.none()],
-    ["the wrong secret", basic("guess")],
-    ["a non-ASCII secret", basic("pér-process-sécret")],
-    ["a bearer token", Option.some(`Bearer ${secret}`)],
-  ];
-
-  it.effect.each(unauthorised)("challenges a request with %s", ([, authorization]) =>
-    Effect.gen(function* () {
-      expect((yield* decide("example.com:443", authorization))._tag).toBe("Challenge");
     }),
   );
 
@@ -84,8 +70,8 @@ describe("decideEgress", () => {
 
   it.effect("still refuses metadata with private hosts allowed", () =>
     Effect.gen(function* () {
-      expect((yield* decide("169.254.169.254:80", basic(secret), true))._tag).toBe("Refuse");
-      expect((yield* decide("10.0.0.1:80", basic(secret), true))._tag).toBe("Connect");
+      expect((yield* decide("169.254.169.254:80", true))._tag).toBe("Refuse");
+      expect((yield* decide("10.0.0.1:80", true))._tag).toBe("Connect");
     }),
   );
 
@@ -94,6 +80,27 @@ describe("decideEgress", () => {
       expect((yield* decide("nowhere.invalid:443"))._tag).toBe("Fail");
     }),
   );
+});
+
+describe("offersSecret", () => {
+  it("accepts the secret", () => {
+    expect(offersSecret(Option.some(secret), basic(secret))).toBe(true);
+  });
+
+  const unauthorised: ReadonlyArray<readonly [string, Option.Option<string>]> = [
+    ["no credentials", Option.none()],
+    ["the wrong secret", basic("guess")],
+    ["a non-ASCII secret", basic("pér-process-sécret")],
+    ["a bearer token", Option.some(`Bearer ${secret}`)],
+  ];
+
+  it.each(unauthorised)("refuses %s", (_, authorization) => {
+    expect(offersSecret(Option.some(secret), authorization)).toBe(false);
+  });
+
+  it("accepts any request on a listener with no secret", () => {
+    expect(offersSecret(Option.none(), Option.none())).toBe(true);
+  });
 });
 
 describe("parseAbsoluteUrl", () => {
@@ -205,13 +212,13 @@ describe("startEgressProxy", () => {
   );
 });
 
-describe("startShellEgressProxy", () => {
-  it.effect("forwards a command's request without asking it for credentials", () =>
+describe("startEgressProxyWithoutCredentials", () => {
+  it.effect("forwards a request that offers no credentials", () =>
     Effect.gen(function* () {
       const site = yield* fixture;
       // SAFETY: a server listening on a host and port, not a pipe, reports an `AddressInfo`.
       const { port } = site.address() as AddressInfo;
-      const proxyPort = Number(new URL(yield* startShellEgressProxy).port);
+      const proxyPort = Number(new URL(yield* startEgressProxyWithoutCredentials).port);
 
       expect(yield* viaProxy(proxyPort, `http://fixture.test:${port}/`, {})).toEqual({
         status: 200,
@@ -220,9 +227,9 @@ describe("startShellEgressProxy", () => {
     }).pipe(Effect.provide(destinations(true))),
   );
 
-  it.effect("refuses a command the destinations the browser is refused", () =>
+  it.effect("refuses the same private and metadata hosts as the proxy with credentials", () =>
     Effect.gen(function* () {
-      const proxyPort = Number(new URL(yield* startShellEgressProxy).port);
+      const proxyPort = Number(new URL(yield* startEgressProxyWithoutCredentials).port);
 
       const refused = yield* viaProxy(proxyPort, "http://fixture.test:1/", {});
       expect(refused.status).toBe(403);
