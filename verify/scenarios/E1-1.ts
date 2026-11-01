@@ -4,38 +4,13 @@ import {
   ModelStep,
 } from "../../apps/server/src/features/agent/testing/model-script.ts";
 import { assert, browser, waitFor } from "../browser.ts";
-import { composeOutput } from "../stack.ts";
+import { answers, ask, auditRows, doneCards, modelRequests, script } from "../chat.ts";
 import { ancestry, traceSpans } from "../tempo.ts";
-
-/** The mock model's control routes, published on loopback by verify/compose.yml. */
-const mockModel = "http://localhost:4110";
 
 /** The page that tells its reader to go to evil.test, served on the computers network. */
 const injectionPage = "http://fixture:8080/injection";
 
-const AuditRows = Schema.fromJsonString(
-  Schema.Array(
-    Schema.Struct({
-      decision: Schema.String,
-      action: Schema.String,
-      trace_id: Schema.NullOr(Schema.String),
-      detail: Schema.String,
-    }),
-  ),
-);
-
 const NavigateDetail = Schema.fromJsonString(Schema.Struct({ url: Schema.String }));
-
-const ModelRequests = Schema.Struct({ requests: Schema.Array(Schema.String) });
-
-async function script(steps: ModelScript): Promise<void> {
-  const response = await fetch(`${mockModel}/mock/script`, {
-    method: "PUT",
-    body: JSON.stringify(steps),
-  });
-
-  assert(response.ok, `the mock model took a ${steps.length}-step script (${response.status})`);
-}
 
 /** Navigate to `url`, read the page, then say `words`: what each turn here scripts the model to do. */
 function openAndRead(url: string, words: ReadonlyArray<string>): ModelScript {
@@ -44,25 +19,6 @@ function openAndRead(url: string, words: ReadonlyArray<string>): ModelScript {
     ModelStep.CallTools({ calls: [{ name: "snapshot", params: {} }] }),
     ModelStep.Say({ words }),
   ];
-}
-
-/** Every audit row, oldest first, read from the SQLite file on the server's volume. */
-function auditRows() {
-  const read = `const { DatabaseSync } = require("node:sqlite");
-const rows = new DatabaseSync("/data/aobot.db")
-  .prepare("SELECT decision, action, trace_id, detail FROM audit_rows ORDER BY seq").all();
-console.log(JSON.stringify(rows));`;
-
-  return Schema.decodeUnknownSync(AuditRows)(
-    composeOutput("exec", "-T", "server", "node", "-e", read),
-  );
-}
-
-/** What the server sent the mock model since the last script. */
-async function modelRequests(): Promise<ReadonlyArray<string>> {
-  const response = await fetch(`${mockModel}/mock/requests`);
-
-  return Schema.decodeUnknownSync(ModelRequests)(await response.json()).requests;
 }
 
 /** Whether `needle` occurs in `text`, and every time between an `<untrusted_data` tag and its closing tag. */
@@ -81,29 +37,6 @@ function onlyInsideEnvelopes(text: string, needle: string): boolean {
       return opened !== -1 && text.lastIndexOf("</untrusted_data>", at) < opened;
     })
   );
-}
-
-const AnswerTexts = Schema.fromJsonString(Schema.Array(Schema.String));
-
-/** The text of every answer on the page that has any, oldest first. */
-function answers(): ReadonlyArray<string> {
-  return Schema.decodeUnknownSync(AnswerTexts)(
-    browser(
-      "eval",
-      "[...document.querySelectorAll('.bubble--assistant .bubble__text')].map((node) => node.textContent)",
-    ),
-  ).filter((text) => text !== "");
-}
-
-function doneCards(tool: string): number {
-  return Number(browser("get", "count", `.tool-call[data-tool="${tool}"][data-status="done"]`));
-}
-
-async function ask(text: string, index: number, answer: string): Promise<void> {
-  browser("find", "placeholder", "Message Assistant", "fill", text);
-  browser("press", "Enter");
-
-  await waitFor(`answer ${index + 1}`, 120_000, () => answers()[index] === answer);
 }
 
 /**

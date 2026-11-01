@@ -15,7 +15,9 @@ Tests never depend on what a real model happens to say. A test writes what the m
 `ModelScript`. Tier 2 replays it through a scripted `LanguageModel` layer. Tiers 3 and 4 point `api`
 and every `acp` CLI at our own mock model server, which replays the same script in the Anthropic
 Messages, OpenAI Responses and OpenAI Chat Completions shapes. Both live in
-`apps/server/src/features/agent/testing/`; `verify/mock-model.ts` runs the server for tier 4. See
+`apps/server/src/features/agent/testing/`; `verify/mock-model.ts` runs the server for tier 4. A live
+page's refs are not known when a script is written, so a script names an element as `refTo(role, name)`
+and the mock model fills in its ref from the latest page in the request it answers. See
 [E0-3](backlog/E0-walking-skeleton/E0-3-a-scripted-model-for-tests.md).
 
 One nightly smoke test (`vp run test:smoke`, `*.smoke.ts`) runs against the real model, so a model or

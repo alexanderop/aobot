@@ -7,7 +7,7 @@ import { AgentEvent, AgentRuntime, type Turn } from "./agent-runtime.ts";
 import { layerApi } from "./api-runtime.ts";
 import { languageModelLayer, ModelProvider } from "./model-providers.ts";
 import { mockModel, startMockModel } from "./testing/mock-model-server.ts";
-import { ModelStep } from "./testing/model-script.ts";
+import { ModelStep, refTo } from "./testing/model-script.ts";
 
 const Forecast = Tool.make("forecast", {
   description: "Says the weather in a city",
@@ -21,6 +21,19 @@ const script = [
   ModelStep.CallTools({ calls: [{ name: "forecast", params: { city: "Vienna", days: 3 } }] }),
   ModelStep.Say({ words: ["Sunny", " in", " Vienna"] }),
 ];
+
+const Look = Tool.make("look", { success: Schema.String });
+
+const Press = Tool.make("press", {
+  parameters: Schema.Struct({ ref: Schema.String }),
+  success: Schema.String,
+});
+
+const PageToolkit = Toolkit.make(Look, Press);
+
+const page = `- generic [ref=e1]:
+  - textbox "Name" [ref=e2]
+  - button "Send" [ref=e3]`;
 
 const turn: Turn = {
   instructions: "Answer briefly.",
@@ -64,6 +77,48 @@ describe("the mock model server", () => {
 
         expect(yield* Ref.get(asked)).toEqual([{ city: "Vienna", days: 3 }]);
         expect(text.join("")).toBe("Sunny in Vienna");
+        expect(events.at(-1)).toEqual(AgentEvent.Done());
+      }),
+  );
+
+  it.live.each(ModelProvider.literals)(
+    "fills a ref the script names by role and name from the page the %s provider sent back",
+    (provider) =>
+      Effect.gen(function* () {
+        const baseUrls = yield* mockModel([
+          ModelStep.CallTools({ calls: [{ name: "look", params: {} }] }),
+          ModelStep.CallTools({
+            calls: [{ name: "press", params: { ref: refTo("button", "Send") } }],
+          }),
+          ModelStep.Say({ words: ["Sent"] }),
+        ]);
+
+        const pressed = yield* Ref.make<ReadonlyArray<string>>([]);
+
+        const handlers = PageToolkit.toLayer({
+          look: () => Effect.succeed(page),
+          press: ({ ref }) => Ref.update(pressed, (refs) => [...refs, ref]).pipe(Effect.as(page)),
+        });
+
+        const model = languageModelLayer({
+          provider,
+          name: "mock",
+          apiKey: Redacted.make("mock"),
+          baseUrl: Option.some(baseUrls[provider]),
+        });
+
+        const runtime = layerApi(PageToolkit, {
+          maxSteps: 4,
+          stallTimeout: Duration.seconds(10),
+        }).pipe(Layer.provide([model, handlers]), Layer.provide(FetchHttpClient.layer));
+
+        const events = yield* Effect.gen(function* () {
+          const agent = yield* AgentRuntime;
+
+          return yield* Stream.runCollect(agent.run(turn));
+        }).pipe(Effect.provide(runtime));
+
+        expect(yield* Ref.get(pressed)).toEqual(["e3"]);
         expect(events.at(-1)).toEqual(AgentEvent.Done());
       }),
   );

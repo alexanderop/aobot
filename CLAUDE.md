@@ -4,7 +4,7 @@ AI coworkers with their own computer and guardrails. Read `docs/README.md` first
 
 ## Status
 
-E0-1 to E0-5 are done: chat with one Bot over `docker compose up`, or on the host on your own Claude Code or Codex subscription over ACP with their own tools switched off (OpenCode passes the contract suite, not yet the demo); each chat turn is one `Chat.turn` trace in Grafana, every test runs on a scripted model, and `vp run check` fails CI when a change breaks one of our rules, proven by `vp run verify E0-1` to `E0-5`. E1-1 is done: a Bot opens a page on its own computer (Playwright and a headed Chromium in Docker) and reads it, every call goes through the gateway with an audit row and a `Gateway.act` span, and pages reach the model only as untrusted data, proven by `vp run verify E1-1`. The next ticket is `docs/backlog/E1-a-computer/E1-2-click-and-type-by-ref.md`.
+E0-1 to E0-5, E1-1 and E1-2 are done: chat with one Bot over `docker compose up`, or on the host on your own Claude Code or Codex subscription over ACP with their own tools switched off (OpenCode passes the contract suite, not yet the demo); the Bot browses on its own computer, reads pages as text with a ref per element, and clicks and types by those refs, each action through the gateway with an audit row; each chat turn is one `Chat.turn` trace in Grafana, every test runs on a scripted model, and `vp run check` fails CI when a change breaks one of our rules, proven by `vp run verify E0-1` to `E1-2`. The next ticket is `docs/backlog/E1-a-computer/E1-3-run-shell-commands-in-the-workspace.md`.
 
 ## Commands
 
