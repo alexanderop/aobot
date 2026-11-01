@@ -74,7 +74,6 @@ function fakeComputers(answers: Partial<Computer>) {
   return { actions, layer };
 }
 
-/** A computer whose browser is on example.com. */
 const exampleDomain = (action: PageAction): Effect.Effect<PageRead> =>
   Effect.succeed({
     action: action.action,
@@ -459,10 +458,8 @@ describe("Gateway refs", () => {
   );
 });
 
-/** What a command printed to one stream, all of it. */
 const printed = (text: string) => ({ text, truncated: false });
 
-/** A computer whose shell answers `ran` to every command, and whose browser is on example.com. */
 function shell(ran: Partial<Omit<CommandRan, "action">>) {
   return fakeComputers({
     browse: exampleDomain,
@@ -478,7 +475,6 @@ function shell(ran: Partial<Omit<CommandRan, "action">>) {
   });
 }
 
-/** Every span started under it, so a test can read the attributes the gateway set. */
 function recordedSpans() {
   const spans: Array<Tracer.Span> = [];
 
@@ -496,10 +492,6 @@ function recordedSpans() {
 
 const makeNotes = { action: "run", command: "echo hello > notes.txt && ls" } as const;
 
-/**
-A computer at a real address whose every answer to `POST /act`, a command's too, is the page `snapshots`
-shows next, the last one from then on.
-*/
 function pagesOverHttp(...snapshots: ReadonlyArray<string>) {
   let shown = 0;
 
@@ -688,7 +680,6 @@ describe("Gateway run", () => {
 
   it.effect("starts a command's time limit once the Bot's command before it is done", () =>
     Effect.gen(function* () {
-      // As the real computer does: one command at a time, each taking most of the gateway's limit.
       const oneAtATime = yield* Semaphore.make(1);
 
       const computer = fakeComputers({
@@ -763,7 +754,6 @@ describe("Gateway run", () => {
 
           yield* Deferred.succeed(release, undefined);
           yield* Fiber.join(running);
-          // Queued after the stopped one, so it would have run by the time this one answers.
           yield* gateway.act(bot, next);
         }),
       ).pipe(Effect.provide(startGateway(computer.layer)));

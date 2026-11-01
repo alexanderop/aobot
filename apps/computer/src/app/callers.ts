@@ -8,7 +8,6 @@ loopback.addSubnet("127.0.0.0", 8, "ipv4");
 
 loopback.addAddress("::1", "ipv6");
 
-/** `address` as the computer's own interfaces list it: no zone, and an IPv4-mapped address as IPv4. */
 function plain(address: string): string {
   return address.replace(/%.*$/u, "").replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/iu, "");
 }

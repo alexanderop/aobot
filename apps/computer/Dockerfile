@@ -26,7 +26,6 @@ COPY --from=node /usr/local/bin/node /usr/local/bin/node
 RUN apt-get update \
   && apt-get install -y --no-install-recommends xvfb tini \
   && rm -rf /var/lib/apt/lists/*
-# The Bot's own folder: every command runs here, as pwuser.
 RUN mkdir /workspace && chown pwuser:pwuser /workspace
 WORKDIR /app
 COPY --from=install /app /app

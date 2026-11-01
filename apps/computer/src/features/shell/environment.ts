@@ -37,7 +37,6 @@ export function commandEnvironment(
     PATH,
     ...Record.getSomes(locale),
     HOME: workspace,
-    // `apt-get` would otherwise wait for an answer nobody is there to give, until the time limit.
     DEBIAN_FRONTEND: "noninteractive",
     HTTP_PROXY: proxy,
     HTTPS_PROXY: proxy,

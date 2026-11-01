@@ -59,8 +59,6 @@ export const shellLayer = (inherited: InheritedEnvironment) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const environment = commandEnvironment(inherited, yield* startEgressProxyWithoutCredentials);
-      // A command queued behind another is interrupted while it waits when its request is aborted, so a
-      // Stop that lands before the spawn means it never runs.
       const oneAtATime = yield* Semaphore.make(1);
 
       const run = Effect.fn("Shell.run")(function* (command: string) {
@@ -80,7 +78,6 @@ export const shellLayer = (inherited: InheritedEnvironment) =>
                 cwd: workspace,
                 env: environment,
                 stdin: "ignore",
-                // A command can ignore SIGTERM; it cannot ignore this.
                 killSignal: "SIGKILL",
               }),
             );

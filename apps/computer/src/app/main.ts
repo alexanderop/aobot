@@ -17,8 +17,6 @@ const computer = Layer.unwrap(
       Layer.provide(destinationsLayer(config.allowPrivateHosts)),
     );
 
-    // Private hosts stay closed to commands even where the browser may open them for a fixture: a
-    // command speaks any protocol to whatever it reaches, the server's own port included.
     const shell = shellLayer(config.shell).pipe(
       Layer.provide([destinationsLayer(false), NodeServices.layer]),
     );

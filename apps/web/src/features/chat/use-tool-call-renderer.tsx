@@ -108,7 +108,6 @@ const TypeCall = refCall({
   unfinished: (ref) => `Did not finish typing into ${ref}`,
 });
 
-/** A shell command: what ran, then how it ended and what it printed, or why it did not run. */
 function RunCall({ call }: { readonly call: ToolCall }) {
   return (
     <>

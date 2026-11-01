@@ -76,13 +76,9 @@ function unknownRefAnswer(action: ActionName, ref: string): string {
   return `${action} did not run: ${ref} is not a ref in your latest snapshot. Take a snapshot and use a ref from it.`;
 }
 
-/** How a forwarded action reaches the model: how long the computer may take, and what its answer is. */
 interface Forwarding {
-  /** How long once the computer is running. Starting it is not counted. */
   readonly timeout: Duration.Duration;
-  /** What the answer is, as its untrusted-data envelope names it. */
   readonly source: string;
-  /** What the model should do first when it cannot know whether the action happened. */
   readonly whenUnknown: string;
 }
 
@@ -93,8 +89,6 @@ const forwarding = {
   snapshot: { timeout: Duration.seconds(20), source: "web page", whenUnknown: onAPage },
   click: { timeout: Duration.seconds(60), source: "web page", whenUnknown: onAPage },
   type: { timeout: Duration.seconds(30), source: "web page", whenUnknown: onAPage },
-  // Above the computer's own limit, so a command that runs too long is stopped there and answers as
-  // timed out, instead of being cut off here with its outcome unknown.
   run: {
     timeout: Duration.sum(commandTimeLimit, Duration.seconds(5)),
     source: "command output",
@@ -102,7 +96,6 @@ const forwarding = {
   },
 } satisfies { readonly [Name in ActionName]: Forwarding };
 
-/** The longest command kept in an audit row. */
 const auditCommandLimit = 2_000;
 
 /**
@@ -229,11 +222,6 @@ export const gatewayLayer = Layer.effect(
       return target;
     });
 
-    /**
-    Sends `action` to the computer, records what it answered and says it in words for the model, before
-    it is marked untrusted. A page read becomes the Bot's latest snapshot; a command only says how it
-    ended.
-    */
     const forward = (
       bot: BotId,
       computer: Computer,
@@ -352,8 +340,6 @@ export const gatewayLayer = Layer.effect(
       return yield* Effect.fromResult(settled.answer);
     });
 
-    // The computer runs one command at a time. Waiting here rather than there starts a command's
-    // time limit once the one before it is done, so parallel tool calls are not cut off as unknown.
     const commandQueues = new Map<BotId, Semaphore.Semaphore>();
 
     const commandQueue = (bot: BotId) =>

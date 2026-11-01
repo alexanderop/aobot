@@ -70,11 +70,6 @@ function lost(error: { readonly message: string }) {
   return new ComputerLost({ message: error.message });
 }
 
-/**
-What the computer's answer to `POST /act` says: a 200 read by `decode`, or why it did not carry the action
-out. A 200 that `decode` cannot read, such as a page answering a command, is lost: something ran, and what
-became of it is not known.
-*/
 function answered<A>(
   response: HttpClientResponse.HttpClientResponse,
   decode: (

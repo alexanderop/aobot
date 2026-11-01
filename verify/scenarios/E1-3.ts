@@ -8,14 +8,12 @@ const makeNotes = "echo hello > notes.txt && ls";
 
 const readDatabase = "ls /data/aobot.db";
 
-// `--fail-with-body`, so the proxy's refusal is a failed command that still prints why.
 const reachServer = "curl --silent --show-error --fail-with-body --max-time 3 http://server:3000";
 
 const CommandDetail = Schema.fromJsonString(Schema.Struct({ command: Schema.String }));
 
 const CardTexts = Schema.fromJsonString(Schema.Array(Schema.String));
 
-/** What each run card shows the command printed, oldest first. */
 function runOutputs(): ReadonlyArray<string> {
   return Schema.decodeUnknownSync(CardTexts)(
     browser(
@@ -78,7 +76,6 @@ export default async function scenario(baseUrl: string, grafanaUrl: string): Pro
 
   let spans: Awaited<ReturnType<typeof traceSpans>> = [];
 
-  // The turn's span ends, and is exported, after the Gateway.act span inside it.
   await waitFor("the turn's Chat.turn and Gateway.act spans in Tempo", 60_000, async () => {
     spans = await traceSpans(grafanaUrl, traceId).catch(() => []);
 

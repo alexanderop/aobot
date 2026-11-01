@@ -106,13 +106,11 @@ async function untilHealthy(computer: Computer) {
   throw new Error(`${computer.name} never became healthy:\n${await docker("logs", computer.name)}`);
 }
 
-/** How a test calls `/act`. */
 interface Call {
   readonly authorization: string;
   readonly signal: AbortSignal;
 }
 
-/** A call as the server makes it: with the token, never aborted. */
 const asServer: Call = { authorization: `Bearer ${token}`, signal: new AbortController().signal };
 
 function act(computer: Computer, body: ComputerAction, { authorization, signal }: Call = asServer) {
@@ -130,7 +128,6 @@ async function result(response: Response): Promise<PageRead> {
   return Schema.decodeUnknownSync(PageRead)(await response.json());
 }
 
-/** Run `command` in the computer's shell. */
 function runCommand(computer: Computer, command: string, signal = asServer.signal) {
   return act(computer, { action: "run", command }, { ...asServer, signal });
 }
@@ -143,7 +140,6 @@ async function ran(response: Response): Promise<CommandRan> {
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** The command lines of every process on the computer, read from outside it, since its shell may be busy. */
 function processes(computer: Computer): Promise<string> {
   return docker("exec", computer.name, "ps", "-eo", "args");
 }

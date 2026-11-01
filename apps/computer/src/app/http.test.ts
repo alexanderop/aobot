@@ -41,7 +41,6 @@ const fakeBrowser = Layer.succeed(
   }),
 );
 
-/** A shell that echoes the command it was given, and cannot start bash for `crash`. */
 const fakeShell = Layer.succeed(
   Shell,
   Shell.of({
@@ -58,14 +57,12 @@ const fakeShell = Layer.succeed(
   }),
 );
 
-/** The server's address on the computers' network, unless a test sends `x-remote-address`. */
 const server = "172.18.0.2";
 
 const app = HttpRouter.toWebHandler(
   routesLayer(Redacted.make(token)).pipe(
     Layer.provideMerge(Layer.merge(fakeBrowser, fakeShell)),
     Layer.provide(HttpServer.layerServices),
-    // As in the computer, so a middleware starts no HTTP span of its own.
     Layer.provideMerge(Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true)),
   ),
   {
