@@ -2,9 +2,10 @@ import { createServer, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { setTimeout } from "node:timers/promises";
 import { text } from "node:stream/consumers";
-import { Array, Effect, Option, Schema } from "effect";
+import { Array, Effect, Option, Result, Schema } from "effect";
 import type { ModelProvider } from "../model-providers.ts";
 import {
+  decodeModelScript,
   type ModelScript,
   ModelStep,
   type ScriptedToolCall,
@@ -272,6 +273,7 @@ const stepIndex = {
 
 /** How a {@link startMockModel} server answers and where it listens. */
 interface MockModelOptions {
+  /** The script it starts with. `PUT /mock/script` replaces it. */
   readonly script: ModelScript;
   /** `fail` answers a call past the end with a 500; `loop` starts the script again. */
   readonly afterLastStep: keyof typeof stepIndex;
@@ -313,18 +315,33 @@ async function stream(
 /**
 A model server that replays `script` over HTTP in every API shape we call: Anthropic Messages, OpenAI
 Responses and OpenAI Chat Completions. Call N answers with step N, whichever route it arrives on. It
-also answers the model lookups the server makes at startup. Plain Node, so `verify/mock-model.ts` runs
-it without a build.
+also answers the model lookups the server makes at startup. `PUT /mock/script` with a JSON
+{@link ModelScript} replaces the script and starts counting calls from one again, so a verify scenario
+scripts its own turn on a running stack. Plain Node, so `verify/mock-model.ts` runs it without a build.
 */
 export function startMockModel(options: MockModelOptions): Promise<MockModelServer> {
+  let script = options.script;
   let calls = 0;
   const bodies: Array<string> = [];
 
   const server = createServer(async (request, response) => {
     const body = await text(request);
-    bodies.push(body);
     const { pathname } = new URL(request.url ?? "/", "http://mock");
     const format = routes.get(pathname);
+
+    if (request.method === "PUT" && pathname === "/mock/script") {
+      return Result.match(decodeModelScript(body), {
+        onFailure: (error) => sendJson(response, 400, { error: { message: error.message } }),
+        onSuccess: (next) => {
+          script = next;
+          calls = 0;
+
+          return sendJson(response, 200, { steps: next.length });
+        },
+      });
+    }
+
+    bodies.push(body);
 
     if (request.method === "GET" && pathname.startsWith("/v1/models/")) {
       return sendJson(response, 200, { id: model, type: "model", object: "model" });
@@ -348,15 +365,12 @@ export function startMockModel(options: MockModelOptions): Promise<MockModelServ
     calls += 1;
     const call = calls;
 
-    const step = Array.get(
-      options.script,
-      stepIndex[options.afterLastStep](call, options.script.length),
-    );
+    const step = Array.get(script, stepIndex[options.afterLastStep](call, script.length));
 
     await Option.match(step, {
       onNone: async () =>
         sendJson(response, 500, {
-          error: { type: "script_overrun", message: scriptOverrun(options.script, call) },
+          error: { type: "script_overrun", message: scriptOverrun(script, call) },
         }),
       onSome: (answer) =>
         stream(
