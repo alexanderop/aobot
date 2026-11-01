@@ -3,16 +3,28 @@ name: aobot
 services:
   server:
     build: .
+    depends_on:
+      computer-image:
+        condition: service_completed_successfully
     env_file:
       - path: .env
         required: false
     environment:
       DATABASE_PATH: /data/aobot.db
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+      COMPUTER_IMAGE: aobot-computer:dev
+      # Per project, so the dev stack and `vp run verify` start their own computer side by side.
+      COMPUTER_NAME: ${COMPOSE_PROJECT_NAME}-computer
+      COMPUTER_NETWORK: ${COMPOSE_PROJECT_NAME}_computers
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
       - data:/data
+      # The server starts the computer itself. It runs as root, so it can use the socket on Linux too.
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - default
+      - computers
     healthcheck:
       test:
         [
@@ -25,10 +37,29 @@ services:
       timeout: 3s
       retries: 30
 
+  # Builds the image the server starts the computer from, then exits. Nothing runs from it here.
+  computer-image:
+    build:
+      context: .
+      dockerfile: apps/computer/Dockerfile
+    image: aobot-computer:dev
+    command: ["true"]
+    network_mode: none
+    healthcheck:
+      disable: true
+
   otel-lgtm:
     image: grafana/otel-lgtm
     ports:
       - "127.0.0.1:3300:3000"
+    # On the computers network too, because the computer exports its spans here.
+    networks:
+      - default
+      - computers
 
 volumes:
   data:
+
+# The computer joins only this network, which it shares with the server and the collector.
+networks:
+  computers: {}
