@@ -9,7 +9,7 @@ import {
 import { NodeHttpServer } from "@effect/platform-node";
 import { SqliteClient } from "@effect/sql-sqlite-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Deferred, Duration, Effect, Fiber, Layer, Tracer } from "effect";
+import { Context, Deferred, Duration, Effect, Fiber, Layer, Semaphore, Tracer } from "effect";
 import { McpClient, McpProtocol } from "effect/ai";
 import { FetchHttpClient, HttpClient, HttpMiddleware, HttpRouter, HttpServer } from "effect/http";
 import { SqlClient } from "effect/sql";
@@ -582,8 +582,51 @@ describe("Gateway run", () => {
       expect(running.pollUnsafe()).toBeUndefined();
 
       yield* TestClock.adjust(Duration.seconds(10));
-      expect((yield* Fiber.join(running)).message).toContain("unknown");
+
+      const error = yield* Fiber.join(running);
+      expect(error.message).toContain(
+        "Whether run happened is unknown; check the workspace, for example with ls, before running it again.",
+      );
       expect((yield* auditRows).map((row) => row["decision"])).toEqual(["allow", "unknown"]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("starts a command's time limit once the Bot's command before it is done", () =>
+    Effect.gen(function* () {
+      // As the real computer does: one command at a time, each taking most of the gateway's limit.
+      const oneAtATime = yield* Semaphore.make(1);
+
+      const computer = fakeComputers(() =>
+        oneAtATime.withPermits(1)(
+          Effect.as(Effect.sleep(Duration.seconds(30)), {
+            action: "run",
+            end: Exited.make({ code: 0 }),
+            stdout: printed(""),
+            stderr: printed(""),
+          } as const),
+        ),
+      );
+
+      const both = yield* Gateway.use((gateway) =>
+        Effect.all(
+          [
+            gateway.act(bot, { action: "run", command: "sleep 30" }),
+            gateway.act(bot, { action: "run", command: "sleep 30 again" }),
+          ],
+          { concurrency: "unbounded" },
+        ),
+      ).pipe(Effect.provide(startGateway(computer.layer)), Effect.forkChild);
+
+      yield* TestClock.adjust(Duration.seconds(30));
+      yield* TestClock.adjust(Duration.seconds(30));
+
+      expect(yield* Fiber.join(both)).toHaveLength(2);
+      expect((yield* auditRows).map((row) => row["decision"])).toEqual([
+        "allow",
+        "succeeded",
+        "allow",
+        "succeeded",
+      ]);
     }).pipe(Effect.provide(database)),
   );
 

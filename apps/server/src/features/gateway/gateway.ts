@@ -10,7 +10,7 @@ import {
   RunCommand,
   snapshotRefs,
 } from "@aobot/domain";
-import { Context, Duration, Effect, Layer, Match, Option, Result, Schema } from "effect";
+import { Context, Duration, Effect, Layer, Match, Option, Result, Schema, Semaphore } from "effect";
 import { AuditLog, type Outcome } from "../audit/public.ts";
 import {
   type ComputerActFailed,
@@ -85,18 +85,23 @@ interface Forwarding {
   readonly timeout: Duration.Duration;
   /** What the answer is, as its untrusted-data envelope names it. */
   readonly source: string;
+  /** What the model should do first when it cannot know whether the action happened. */
+  readonly whenUnknown: string;
 }
 
+const onAPage = "take a snapshot before trying again";
+
 const forwarding = {
-  navigate: { timeout: Duration.seconds(45), source: "web page" },
-  snapshot: { timeout: Duration.seconds(20), source: "web page" },
-  click: { timeout: Duration.seconds(60), source: "web page" },
-  type: { timeout: Duration.seconds(30), source: "web page" },
+  navigate: { timeout: Duration.seconds(45), source: "web page", whenUnknown: onAPage },
+  snapshot: { timeout: Duration.seconds(20), source: "web page", whenUnknown: onAPage },
+  click: { timeout: Duration.seconds(60), source: "web page", whenUnknown: onAPage },
+  type: { timeout: Duration.seconds(30), source: "web page", whenUnknown: onAPage },
   // Above the computer's own limit, so a command that runs too long is stopped there and answers as
   // timed out, instead of being cut off here with its outcome unknown.
   run: {
     timeout: Duration.sum(commandTimeLimit, Duration.seconds(5)),
     source: "command output",
+    whenUnknown: "check the workspace, for example with ls, before running it again",
   },
 } satisfies { readonly [Name in ActionName]: Forwarding };
 
@@ -161,11 +166,6 @@ function endAttributes(end: CommandEnd): Record<string, string | number> {
   });
 }
 
-/** What the model is told the computer answered, before it is marked untrusted. */
-function present(result: ComputerActResult): string {
-  return result.action === "run" ? presentCommand(result) : presentPage(result);
-}
-
 /** Why a forwarded call did not come back with a result. */
 type ForwardFailure = ComputerUnavailable | ComputerActFailed | ComputerLost | ToolTimedOut;
 
@@ -181,7 +181,7 @@ const auditMessageLimit = 500;
 
 function settle(name: ActionName, result: Result.Result<string, ForwardFailure>): Settled {
   const failed = (message: string) => Result.fail(new ToolFailed({ message }));
-  const unknownAfter = `Whether ${name} happened is unknown; take a snapshot before trying again.`;
+  const unknownAfter = `Whether ${name} happened is unknown; ${forwarding[name].whenUnknown}.`;
 
   return Result.match(result, {
     onSuccess: (text): Settled => ({
@@ -278,10 +278,13 @@ export const gatewayLayer = Layer.effect(
       return target;
     });
 
-    // A page read becomes the Bot's latest snapshot; a command only says how it exited.
-    const received = (bot: BotId, result: ComputerActResult) =>
+    /**
+    Records what the computer answered and says it in words for the model, before it is marked
+    untrusted. A page read becomes the Bot's latest snapshot; a command only says how it ended.
+    */
+    const received = (bot: BotId, result: ComputerActResult): Effect.Effect<string> =>
       result.action === "run"
-        ? Effect.annotateCurrentSpan(endAttributes(result.end))
+        ? Effect.as(Effect.annotateCurrentSpan(endAttributes(result.end)), presentCommand(result))
         : snapshots.save(bot, result.snapshot).pipe(
             // Its refs then resolve against an older page, which the computer refuses as stale.
             Effect.catchTag("SqlError", (error) =>
@@ -289,6 +292,7 @@ export const gatewayLayer = Layer.effect(
                 Effect.annotateLogs({ action: result.action, reason: error.message }),
               ),
             ),
+            Effect.as(presentPage(result)),
           );
 
     const resolve = (bot: BotId, request: BotRequest): Effect.Effect<ComputerAction, UnknownRef> =>
@@ -326,7 +330,7 @@ export const gatewayLayer = Layer.effect(
       return yield* new ToolFailed({ message: unknownRefAnswer(request.action, ref) });
     });
 
-    const act = Effect.fn("Gateway.act")(function* (bot: BotId, request: BotRequest) {
+    const carryOut = Effect.fn("Gateway.act")(function* (bot: BotId, request: BotRequest) {
       const span = yield* Effect.option(Effect.currentSpan);
       yield* Effect.annotateCurrentSpan({ "gateway.action": request.action });
 
@@ -373,8 +377,7 @@ export const gatewayLayer = Layer.effect(
         const computer = yield* computers.ensure;
 
         return yield* computer.act(action).pipe(
-          Effect.tap((result) => received(bot, result)),
-          Effect.map(present),
+          Effect.flatMap((result) => received(bot, result)),
           toolResult(forwarding[action.action]),
         );
       }).pipe(
@@ -388,6 +391,27 @@ export const gatewayLayer = Layer.effect(
 
       return yield* Effect.fromResult(settled.answer);
     });
+
+    // The computer runs one command at a time. Waiting here rather than there starts a command's
+    // time limit once the one before it is done, so parallel tool calls are not cut off as unknown.
+    const commandQueues = new Map<BotId, Semaphore.Semaphore>();
+
+    const commandQueue = (bot: BotId) =>
+      Effect.sync(() => {
+        const existing = commandQueues.get(bot);
+
+        if (existing !== undefined) return existing;
+
+        const queue = Semaphore.makeUnsafe(1);
+        commandQueues.set(bot, queue);
+
+        return queue;
+      });
+
+    const act = (bot: BotId, request: BotRequest) =>
+      request.action === "run"
+        ? Effect.flatMap(commandQueue(bot), (queue) => queue.withPermits(1)(carryOut(bot, request)))
+        : carryOut(bot, request);
 
     return Gateway.of({ refuse, act });
   }),
