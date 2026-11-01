@@ -10,6 +10,10 @@ const decodeNavigateArgs = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ url: Schema.String })),
 );
 
+const decodeRefArgs = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ ref: Schema.String })),
+);
+
 function Result(props: { readonly summary: string; readonly text: string }) {
   return (
     <details className="tool-call__details">
@@ -51,6 +55,55 @@ function SnapshotCall({ call }: { readonly call: ToolCall }) {
   });
 }
 
+/** What a click or type card says in each state, given the element's ref. */
+interface ActionWords {
+  readonly running: (ref: string) => string;
+  readonly done: (ref: string) => string;
+  readonly failed: (ref: string) => string;
+  readonly unfinished: (ref: string) => string;
+}
+
+/** A call that acts on one element by its ref: what it did, then the page it answered with, or why not. */
+function refCall(words: ActionWords): ToolCallRenderer {
+  return function RefCall({ call }) {
+    const ref = Option.match(decodeRefArgs(call.args), {
+      onNone: () => "an element",
+      onSome: (args) => args.ref,
+    });
+
+    return ToolCallStatus.$match(call.status, {
+      Running: () => <p className="tool-call__title">{words.running(ref)}</p>,
+      Done: ({ result }) => (
+        <>
+          <p className="tool-call__title">{words.done(ref)}</p>
+          <Result summary="The page after" text={result} />
+        </>
+      ),
+      Failed: ({ result }) => (
+        <>
+          <p className="tool-call__title">{words.failed(ref)}</p>
+          <Result summary="Why" text={result} />
+        </>
+      ),
+      Unfinished: () => <p className="tool-call__title">{words.unfinished(ref)}</p>,
+    });
+  };
+}
+
+const ClickCall = refCall({
+  running: (ref) => `Clicking ${ref}…`,
+  done: (ref) => `Clicked ${ref}`,
+  failed: (ref) => `Could not click ${ref}`,
+  unfinished: (ref) => `Did not finish clicking ${ref}`,
+});
+
+const TypeCall = refCall({
+  running: (ref) => `Typing into ${ref}…`,
+  done: (ref) => `Typed into ${ref}`,
+  failed: (ref) => `Could not type into ${ref}`,
+  unfinished: (ref) => `Did not finish typing into ${ref}`,
+});
+
 function DefaultCall({ call }: { readonly call: ToolCall }) {
   return (
     <>
@@ -79,6 +132,8 @@ function DefaultCall({ call }: { readonly call: ToolCall }) {
 const renderers: ReadonlyMap<string, ToolCallRenderer> = new Map([
   ["navigate", NavigateCall],
   ["snapshot", SnapshotCall],
+  ["click", ClickCall],
+  ["type", TypeCall],
 ]);
 
 function rendererFor(name: string): ToolCallRenderer {
