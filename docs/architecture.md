@@ -149,12 +149,12 @@ export class ChatRpcs extends RpcGroup.make(
 
 // apps/web: the RPC client as an atom service, one conversation atom per id
 class ChatClient extends AtomRpc.Service<ChatClient>()("ChatClient", { group: ChatRpcs, protocol }) {}
-const conversation = Atom.family((id: ConversationId) => /* fold ChatEvents into messages, tool calls, status */)
+const conversation = Atom.family((id: ConversationId) => /* fold ChatEvents into one ordered transcript and a status */)
 ```
 
 | Hook                    | Shaped like CopilotKit's             | What it gives a component                                                               | From |
 | ----------------------- | ------------------------------------ | --------------------------------------------------------------------------------------- | ---- |
-| `useConversation(id)`   | `useAgent`                           | `messages`, `toolCalls`, `isRunning`, `send`, `stop` as values and functions            | E0-1 |
+| `useConversation(id)`   | `useAgent`                           | `transcript` (messages and tool calls in order), `isRunning`, `send`, `stop`            | E0-1 |
 | `useToolCallRenderer()` | `useRenderTool`, `useRenderToolCall` | A registry from tool name to a component that draws one tool call in each of its states | E1-1 |
 | `useLiveScreen(bot)`    | (none)                               | The latest screen frame, and `takeControl` and `handBack`                               | E1-4 |
 
