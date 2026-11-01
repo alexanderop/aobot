@@ -118,11 +118,16 @@ copies the action, and its `detail` says why for `failed` and `unknown`.
 Every browser action answers with the page read afresh: its URL, title and snapshot, capped at 12,000
 characters. `type` replaces what the field holds and never presses Enter.
 
-`run` answers how the command ended: its exit code, and the last 8,000 characters of each of stdout and
-stderr, with a note when anything before them was dropped. A command that exits non-zero still
-`succeeded`: the computer ran it, and the model reads the exit code. One still running after 30 seconds is
-killed with everything it started and answers that it was stopped. Its exit code is on the `Gateway.act`
-span as `gateway.exit_code`; the command is in the audit row, never in a span or a log.
+`run` answers how the command ended and the last 8,000 characters of each of stdout and stderr, each with
+a note when its start was dropped. It ended `Exited` with bash's exit code, `Signalled` when a signal the
+computer did not send ended bash (`kill -TERM $$`, a crash, the out-of-memory killer), or `TimedOut` when
+it was still running after 30 seconds. A command that exits non-zero still `succeeded`: the computer ran
+it, and the model reads how it ended. Once bash exits, its output gets half a second more, then the
+computer kills the command's process group, so a background job such as `sleep 600 &` neither holds the
+answer until the time limit nor outlives it. A timeout and a Stop kill the group the same way. A Bot's
+commands wait for each other in the gateway, so each one's time limit starts when the one before is done.
+The `Gateway.act` span records `gateway.command_end` (`exited`, `signalled` or `timed_out`) with
+`gateway.exit_code` or `gateway.signal`; the command is in the audit row, never in a span or a log.
 
 ### Refs
 
@@ -156,7 +161,7 @@ dead turn.
 | 5   | **The page as text, not screenshots**                                                                 | `ariaSnapshot({ mode: "ai" })` with refs is cheap and needs no vision model. Snapshots are capped at 12,000 characters                                                                                                                                                  |
 | 6   | **A computer is only ever "a URL and a token"**, or for a Mac, a connection the desktop app opened    | The server never uses `docker exec` or shared files, so where a computer runs can change freely. A laptop is behind NAT, so it dials out                                                                                                                                |
 | 7   | **Fail closed**                                                                                       | A missing rule permits nothing, a crashing rule denies, a missing grant is refused before any rule runs                                                                                                                                                                 |
-| 8   | **Never log what a Bot typed**                                                                        | The audit row keeps `"[14 chars]"`, not the value. It may be a password                                                                                                                                                                                                 |
+| 8   | **Never log what a Bot typed**                                                                        | The audit row keeps `"[14 chars]"`, not the value. It may be a password. A `run` command is the exception: its audit row keeps it as written, capped at 2,000 characters, because the command is what the row is for. Finding secrets inside commands is E2-3           |
 | 9   | **OpenTelemetry from day one**                                                                        | One trace per chat turn, with the `trace_id` stored on every audit row                                                                                                                                                                                                  |
 | 10  | **Outside content is untrusted data**                                                                 | Pages, command output and files reach the model inside one envelope that says they carry no authority. A page can say "ignore your instructions"; the envelope is what tells the model that is not its person speaking. A closing tag inside the content is neutralised |
 | 11  | **Every audit row names its initiator**                                                               | `initiator_kind` is `person` or `deployment` now, `routine` and `handoff` later. `actor.id` says on whose authority; only this says whether anybody was watching                                                                                                        |
@@ -233,8 +238,9 @@ export interface Computer {
 
 ## Security notes
 
-A Bot has a shell and a browser, and both reach whatever the computer's network reaches. These hold
-locally as much as on AWS:
+A Bot has a shell and a browser. The browser reaches only what the egress filter allows. A command
+reaches the same as long as it uses the proxy settings it is given, and whatever the computer's network
+reaches when it does not, until network limits (E5-3). These hold locally as much as on AWS:
 
 - **The database is not on the computers.** The SQLite file lives on a volume only the server mounts, so a
   Bot's shell has no file to read or write.
@@ -249,6 +255,12 @@ locally as much as on AWS:
   browser's destinations, and private hosts stay refused to it even where `COMPUTER_ALLOW_PRIVATE_HOSTS`
   opens them to the browser. A command can still unset them and connect directly; network limits close
   that (E5-3). `bash -c`, never a login shell, so a `.bash_profile` the Bot wrote cannot run first.
+- **`/act` refuses callers on the computer itself.** A request from a loopback address or from one of the
+  computer's own addresses gets 403 before its token is read, so a command that finds the token cannot
+  drive the browser around the gateway. What remains: commands run as the same user as the computer's own
+  process, so they can read its environment and memory (`/proc/<pid>/environ`, and likely `ptrace`), and
+  `setsid` lets a command leave its process group and outlive its time limit or a Stop. Running commands
+  as a separate user, or in a sidecar, closes both (see `docs/backlog/later.md`).
 - **Computers run unprivileged.** The browser and shell run as a non-root user in a container with all
   capabilities dropped, `no-new-privileges`, and pids and memory limits. A page exploit or a fork bomb stays
   inside one person's computer and cannot take it over.

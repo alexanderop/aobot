@@ -27,9 +27,9 @@ function runOutputs(): ReadonlyArray<string> {
 
 /**
 E1-3: asked to create notes.txt and list the folder, the Bot runs one command in its workspace and the
-transcript shows notes.txt in what it printed. The command is audited and traced with its exit code. From
-the same shell, the server's database is not there to read, and the server itself is refused through the
-proxy settings the computer gives every command.
+transcript shows notes.txt in what it printed. The command is audited and traced with how it ended. From
+the same shell, the server's database is not there to read, and a command that honours the proxy settings
+the computer gives it cannot reach the server. A command that bypasses them is E5-3.
 */
 export default async function scenario(baseUrl: string, grafanaUrl: string): Promise<void> {
   await script([
@@ -90,7 +90,8 @@ export default async function scenario(baseUrl: string, grafanaUrl: string): Pro
     "the Gateway.act span is inside Chat.turn",
   );
   assert(
-    attribute(gatewayCall, "gateway.exit_code") === "0",
+    attribute(gatewayCall, "gateway.command_end") === "exited" &&
+      attribute(gatewayCall, "gateway.exit_code") === "0",
     `the Gateway.act span records exit code 0 (${JSON.stringify(gatewayCall.attributes)})`,
   );
 
@@ -110,7 +111,7 @@ export default async function scenario(baseUrl: string, grafanaUrl: string): Pro
   );
   assert(
     /Exit code: [1-9]/u.test(server) && server.includes("inside the computer's own network"),
-    `the server is refused through the computer's proxy settings (${server})`,
+    `a command that honours its proxy settings cannot reach the server (${server})`,
   );
 
   assert(answers()[1] === "Neither worked.", "the Bot said what happened");

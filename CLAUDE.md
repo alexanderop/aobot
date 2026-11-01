@@ -4,7 +4,7 @@ AI coworkers with their own computer and guardrails. Read `docs/README.md` first
 
 ## Status
 
-E0-1 to E0-5 and E1-1 to E1-3 are done: chat with one Bot over `docker compose up`, or on the host on your own Claude Code or Codex subscription over ACP with their own tools switched off (OpenCode passes the contract suite, not yet the demo); the Bot browses on its own computer, reads pages as text with a ref per element, clicks and types by those refs, and runs bash commands in its own `/workspace` with only PATH, locale and the egress filter in their environment, each action through the gateway with an audit row; each chat turn is one `Chat.turn` trace in Grafana, every test runs on a scripted model, and `vp run check` fails CI when a change breaks one of our rules, proven by `vp run verify E0-1` to `E1-3`. The next ticket is `docs/backlog/E1-a-computer/E1-4-watch-the-live-screen.md`.
+E0-1 to E0-5 and E1-1 to E1-3 are done: chat with one Bot over `docker compose up`, or on the host on your own Claude Code or Codex subscription over ACP with their own tools switched off (OpenCode passes the contract suite, not yet the demo); the Bot browses on its own computer, reads pages as text with a ref per element, clicks and types by those refs, and runs bash commands in its own `/workspace` with only PATH, the locale, HOME, DEBIAN_FRONTEND and the egress filter's proxy settings in their environment, each action through the gateway with an audit row; each chat turn is one `Chat.turn` trace in Grafana, every test runs on a scripted model, and `vp run check` fails CI when a change breaks one of our rules, proven by `vp run verify E0-1` to `E1-3`. The next ticket is `docs/backlog/E1-a-computer/E1-4-watch-the-live-screen.md`.
 
 ## Commands
 
@@ -25,7 +25,7 @@ E0-1 to E0-5 and E1-1 to E1-3 are done: chat with one Bot over `docker compose u
 - Feature-based: `src/app`, `src/features/<feature>/public.ts`, `src/shared`. Register a feature in `tools/oxlint/aobot-architecture/policy.ts` before creating it.
 - Every action a Bot takes goes through the gateway: only the `gateway` feature may depend on `computers`.
 - Settings only through Effect `Config`. No `process.env` elsewhere.
-- Never write what a Bot typed into audit rows, logs or spans. Use `redact()`.
+- Never write what a Bot typed into a page into audit rows, logs or spans. Use `redact()`. A `run` command is the one exception: its audit row keeps it as written, capped, and never a span or a log. Secrets inside commands are E2-3's job.
 - Effect v4 conventions: `Context.Service`, `Layer.effect`, `Effect.fn("Domain.operation")`, `Schema.TaggedError`. See the `effect` skill.
 - When a ticket is done, set `status: done` in its front-matter and add its `verify` scenario in the same change.
 - The UI follows `docs/design.md`.
