@@ -1,10 +1,9 @@
 import { ChatRpcs, ConversationId, MessageId } from "@aobot/domain";
 import { describe, expect, it } from "@effect/vitest";
 import { Duration, Effect, Layer, Option, Predicate, Stream, Tracer } from "effect";
-import { LanguageModel, type Response } from "effect/ai";
+import { LanguageModel, type Response, Toolkit } from "effect/ai";
 import { RpcTest } from "effect/rpc";
 import { layerApi } from "../agent/public.ts";
-import { botToolkit } from "../bots/public.ts";
 import { chatLayer } from "./public.ts";
 import { testDatabase } from "./testing/test-database.ts";
 
@@ -56,7 +55,7 @@ const model = Layer.effect(
   }),
 );
 
-const agent = layerApi(botToolkit, { maxSteps: 8, stallTimeout: Duration.seconds(60) }).pipe(
+const agent = layerApi(Toolkit.empty, { maxSteps: 8, stallTimeout: Duration.seconds(60) }).pipe(
   Layer.provide(model),
 );
 

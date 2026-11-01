@@ -25,7 +25,7 @@ import {
 } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
 import { botToolkit } from "../bots/public.ts";
-import { Gateway, gatewayMcpLayer, type Refusal } from "../gateway/public.ts";
+import { botToolHandlers, Gateway, gatewayMcpLayer, type Refusal } from "../gateway/public.ts";
 import { layerAcp } from "./acp/acp-runtime.ts";
 import { acpAgents, type AcpAgentName, type AcpLauncher } from "./acp/launchers.ts";
 import { AgentEvent, AgentRuntime, type Turn } from "./agent-runtime.ts";
@@ -58,7 +58,11 @@ function recordingGateway() {
 
   const layer = Layer.succeed(
     Gateway,
-    Gateway.of({ refuse: (refusal) => Effect.sync(() => void refusals.push(refusal)) }),
+    Gateway.of({
+      refuse: (refusal) => Effect.sync(() => void refusals.push(refusal)),
+      act: (action) =>
+        Effect.die(`the contract suite offers no computer, but ${action.action} ran`),
+    }),
   );
 
   return { refusals, layer };
@@ -139,8 +143,10 @@ const contender = (entry: Contender): Contender => entry;
 
 const contenders = {
   api: contender({
-    runtime: (mock) =>
+    runtime: (mock, gateway) =>
       layerApi(botToolkit, limits).pipe(
+        Layer.provide(botToolHandlers),
+        Layer.provide(gateway),
         Layer.provide(
           languageModelLayer({
             provider: "openai-compat",
@@ -210,6 +216,7 @@ const contenders = {
 const gatewayMcpUrl = Effect.gen(function* () {
   const context = yield* Layer.build(
     HttpRouter.serve(gatewayMcpLayer).pipe(
+      Layer.provide(recordingGateway().layer),
       Layer.provideMerge(NodeHttpServer.layer(createServer, { port: 0, host: "127.0.0.1" })),
     ),
   );

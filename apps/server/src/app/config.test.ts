@@ -1,10 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Option } from "effect";
 import { AgentRuntimeSettings } from "../features/agent/public.ts";
+import { ComputerProvider } from "../features/computers/public.ts";
 import { serverConfig } from "./config.ts";
-import { isLoopback, sharedSubscriptionProblem } from "./local-only.ts";
+import { isLoopback, privateHostsProblem, sharedSubscriptionProblem } from "./local-only.ts";
 
 const acp = AgentRuntimeSettings.Acp({ agent: "claude-code", home: "/Users/someone" });
+
+const apiKey = { MODEL_PROVIDER: "anthropic", MODEL_NAME: "claude", MODEL_API_KEY: "key" };
 
 function configFrom(env: Record<string, string>) {
   return serverConfig.parse(ConfigProvider.fromEnv({ env }));
@@ -42,6 +45,22 @@ describe("sharedSubscriptionProblem", () => {
     expect(Option.getOrThrow(sharedSubscriptionProblem(acp, true, "0.0.0.0"))).toContain(
       "HOST is 0.0.0.0",
     );
+  });
+});
+
+describe("privateHostsProblem", () => {
+  it("lets private hosts be opened in development", () => {
+    expect(privateHostsProblem("development", true)).toEqual(Option.none());
+  });
+
+  it("refuses private hosts in production", () => {
+    expect(Option.getOrThrow(privateHostsProblem("production", true))).toContain(
+      "COMPUTER_ALLOW_PRIVATE_HOSTS",
+    );
+  });
+
+  it("runs production with private hosts refused", () => {
+    expect(privateHostsProblem("production", false)).toEqual(Option.none());
   });
 });
 
@@ -88,6 +107,32 @@ describe("serverConfig", () => {
       );
 
       expect(error.message).toContain("HOST is 0.0.0.0");
+    }),
+  );
+
+  it.effect("runs computers on Docker in development, with private hosts refused", () =>
+    Effect.gen(function* () {
+      const config = yield* configFrom({ ...apiKey });
+
+      expect(config.deployment).toBe("development");
+      expect(config.computers.allowPrivateHosts).toBe(false);
+      expect(config.computers.provider).toEqual(
+        ComputerProvider.Docker({
+          socketPath: "/var/run/docker.sock",
+          image: "aobot-computer:dev",
+          network: Option.none(),
+        }),
+      );
+    }),
+  );
+
+  it.effect("refuses to start production with private hosts allowed", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        configFrom({ ...apiKey, AOBOT_ENV: "production", COMPUTER_ALLOW_PRIVATE_HOSTS: "true" }),
+      );
+
+      expect(error.message).toContain("AOBOT_ENV=production");
     }),
   );
 });
