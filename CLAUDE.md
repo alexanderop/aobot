@@ -14,7 +14,7 @@ E0-1 to E0-5 are done: chat with one Bot over `docker compose up`, or on the hos
 - `vp run test:smoke` (from E0-3): one turn against the real model in `MODEL_*`. Not part of `check`; runs nightly.
 - `vp run test:contract:agents` (from E0-5): agent runtime contract suite (`*.contract.ts`): `api` and each `acp` CLI against the mock model server, streaming, cancel, and no shell or file access outside the gateway. Starts the real pinned adapters through `npx`. Not part of `check`.
 - `vp run test:contract` (from E1-1): computer provider contract suite. Needs Docker.
-- `acp` on your own subscription (from E0-5): `AGENT_RUNTIME=acp ACP_AGENT=claude-code SINGLE_USER=true HOST=127.0.0.1 node apps/server/src/app/main.ts`, with the CLI signed in as usual. `acp` refuses to start without single-user mode on loopback, so it never runs in compose.
+- `vp run dev:acp` (from E0-5): builds the web app and serves it on http://localhost:3100 on your own Claude Code subscription over `acp`, with the CLI signed in as usual. `ACP_AGENT=codex vp run dev:acp` for Codex, `PORT=…` to move it. `acp` refuses to start without single-user mode on loopback, so it never runs in compose.
 - `vp run verify <ticket-id>` (from E0-1): the ticket's demo in a real browser with `agent-browser`. A slice is done only when this passes. Its stack publishes the server on 3100 and Grafana on 3400, so it runs beside `docker compose up`. A scenario that exports `stack = false` runs without the stack.
 - `docker compose up` (from E0-1): the server (SQLite file on a volume), `grafana/otel-lgtm` (Grafana on http://localhost:3300, traces under Explore → Tempo from E0-2).
 
