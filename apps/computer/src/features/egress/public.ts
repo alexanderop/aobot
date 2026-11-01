@@ -1,4 +1,9 @@
-export { Destinations, destinationsLayer, makeDestinations } from "./destinations.ts";
+export {
+  commandDestinationsLayer,
+  Destinations,
+  destinationsLayer,
+  makeDestinations,
+} from "./destinations.ts";
 
 export { DestinationUnreachable } from "./errors.ts";
 

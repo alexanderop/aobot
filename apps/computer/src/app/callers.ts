@@ -8,7 +8,7 @@ loopback.addSubnet("127.0.0.0", 8, "ipv4");
 
 loopback.addAddress("::1", "ipv6");
 
-function plain(address: string): string {
+function withoutZoneOrIpv4Mapping(address: string): string {
   return address.replace(/%.*$/u, "").replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/iu, "");
 }
 
@@ -18,7 +18,7 @@ of its own interfaces, read when asked. Everything on the computer shares one ne
 is what a command connecting to `/act` looks like. A request whose address is unknown counts as one.
 */
 export function fromThisComputer(remoteAddress: Option.Option<string>): boolean {
-  return Option.match(Option.map(remoteAddress, plain), {
+  return Option.match(Option.map(remoteAddress, withoutZoneOrIpv4Mapping), {
     onNone: () => true,
     onSome: (address) => {
       const version = isIP(address);
@@ -29,7 +29,10 @@ export function fromThisComputer(remoteAddress: Option.Option<string>): boolean 
 
       return Object.values(networkInterfaces())
         .flat()
-        .some((network) => network !== undefined && plain(network.address) === address);
+        .some(
+          (network) =>
+            network !== undefined && withoutZoneOrIpv4Mapping(network.address) === address,
+        );
     },
   });
 }

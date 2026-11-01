@@ -206,3 +206,9 @@ const systemResolve: Resolve = (host) =>
 /** {@link Destinations} on the system resolver. */
 export const destinationsLayer = (allowPrivateHosts: boolean) =>
   Layer.succeed(Destinations, makeDestinations(allowPrivateHosts, systemResolve));
+
+/**
+{@link Destinations} for commands: private hosts stay refused even where the browser may open them for a
+fixture, because a command speaks any protocol to whatever it reaches, the server's own port included.
+*/
+export const commandDestinationsLayer = destinationsLayer(false);

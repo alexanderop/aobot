@@ -82,6 +82,9 @@ interface Forwarding {
   readonly whenUnknown: string;
 }
 
+/** Past the computer's own limit, so a command that runs too long answers as timed out, not unknown. */
+const pastTheComputersLimit = Duration.sum(commandTimeLimit, Duration.seconds(5));
+
 const onAPage = "take a snapshot before trying again";
 
 const forwarding = {
@@ -90,7 +93,7 @@ const forwarding = {
   click: { timeout: Duration.seconds(60), source: "web page", whenUnknown: onAPage },
   type: { timeout: Duration.seconds(30), source: "web page", whenUnknown: onAPage },
   run: {
-    timeout: Duration.sum(commandTimeLimit, Duration.seconds(5)),
+    timeout: pastTheComputersLimit,
     source: "command output",
     whenUnknown: "check the workspace, for example with ls, before running it again",
   },
@@ -340,23 +343,23 @@ export const gatewayLayer = Layer.effect(
       return yield* Effect.fromResult(settled.answer);
     });
 
-    const commandQueues = new Map<BotId, Semaphore.Semaphore>();
+    const shellTurnsByBot = new Map<BotId, Semaphore.Semaphore>();
 
-    const commandQueue = (bot: BotId) =>
+    const shellTurns = (bot: BotId) =>
       Effect.sync(() => {
-        const existing = commandQueues.get(bot);
+        const existing = shellTurnsByBot.get(bot);
 
         if (existing !== undefined) return existing;
 
         const queue = Semaphore.makeUnsafe(1);
-        commandQueues.set(bot, queue);
+        shellTurnsByBot.set(bot, queue);
 
         return queue;
       });
 
     const act = (bot: BotId, request: BotRequest) =>
       request.action === "run"
-        ? Effect.flatMap(commandQueue(bot), (queue) => queue.withPermits(1)(carryOut(bot, request)))
+        ? Effect.flatMap(shellTurns(bot), (queue) => queue.withPermits(1)(carryOut(bot, request)))
         : carryOut(bot, request);
 
     return Gateway.of({ refuse, act });

@@ -4,6 +4,7 @@ import {
   BotId,
   CommandEnd,
   type CommandRan,
+  commandTimeLimit,
   type ComputerAction,
   type PageAction,
   type PageRead,
@@ -685,7 +686,7 @@ describe("Gateway run", () => {
       const computer = fakeComputers({
         run: () =>
           oneAtATime.withPermits(1)(
-            Effect.as(Effect.sleep(Duration.seconds(30)), {
+            Effect.as(Effect.sleep(commandTimeLimit), {
               action: "run",
               end: Exited.make({ code: 0 }),
               stdout: printed(""),
@@ -705,8 +706,8 @@ describe("Gateway run", () => {
         ),
       ).pipe(Effect.provide(startGateway(computer.layer)), Effect.forkChild);
 
-      yield* TestClock.adjust(Duration.seconds(30));
-      yield* TestClock.adjust(Duration.seconds(30));
+      yield* TestClock.adjust(commandTimeLimit);
+      yield* TestClock.adjust(commandTimeLimit);
 
       expect(yield* Fiber.join(both)).toHaveLength(2);
       expect((yield* auditRows).map((row) => row["decision"])).toEqual([

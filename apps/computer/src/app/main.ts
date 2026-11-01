@@ -4,7 +4,7 @@ import { Effect, Layer, Option } from "effect";
 import { FetchHttpClient, HttpMiddleware, HttpRouter } from "effect/http";
 import { Otlp } from "effect/observability";
 import { browserLayer } from "../features/browser/public.ts";
-import { destinationsLayer } from "../features/egress/public.ts";
+import { commandDestinationsLayer, destinationsLayer } from "../features/egress/public.ts";
 import { shellLayer } from "../features/shell/public.ts";
 import { computerConfig } from "./config.ts";
 import { routesLayer } from "./http.ts";
@@ -18,7 +18,7 @@ const computer = Layer.unwrap(
     );
 
     const shell = shellLayer(config.shell).pipe(
-      Layer.provide([destinationsLayer(false), NodeServices.layer]),
+      Layer.provide([commandDestinationsLayer, NodeServices.layer]),
     );
 
     // Every address, because the server reaches the computer from another container. Docker publishes
