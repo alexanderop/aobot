@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import { ModelStep } from "../../apps/server/src/features/agent/testing/model-script.ts";
-import { assert, browser, waitFor } from "../browser.ts";
+import { assert, browser, evaluate, waitFor } from "../browser.ts";
 import { answers, ask, auditRows, doneCards, modelRequests, script } from "../chat.ts";
 import { ancestry, attribute, traceSpans } from "../tempo.ts";
 
@@ -12,14 +12,10 @@ const reachServer = "curl --silent --show-error --fail-with-body --max-time 3 ht
 
 const CommandDetail = Schema.fromJsonString(Schema.Struct({ command: Schema.String }));
 
-const CardTexts = Schema.fromJsonString(Schema.Array(Schema.String));
-
 function runOutputs(): ReadonlyArray<string> {
-  return Schema.decodeUnknownSync(CardTexts)(
-    browser(
-      "eval",
-      `[...document.querySelectorAll('.tool-call[data-tool="run"] .tool-call__result')].map((node) => node.textContent)`,
-    ),
+  return evaluate(
+    Schema.Array(Schema.String),
+    `[...document.querySelectorAll('.tool-call[data-tool="run"] .tool-call__result')].map((node) => node.textContent)`,
   );
 }
 

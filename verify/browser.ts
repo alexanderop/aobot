@@ -1,10 +1,16 @@
 import { execFileSync } from "node:child_process";
+import { Schema } from "effect";
 
 /** Run one `agent-browser` command in the verify session and return what it printed. */
 export function browser(...args: string[]): string {
   return execFileSync("agent-browser", ["--session", "aobot-verify", ...args], {
     encoding: "utf8",
   }).trim();
+}
+
+/** What `js` evaluates to on the page, which agent-browser prints as JSON, decoded as `schema`. */
+export function evaluate<A, I>(schema: Schema.Codec<A, I>, js: string): A {
+  return Schema.decodeUnknownSync(Schema.fromJsonString(schema))(browser("eval", js));
 }
 
 /** Fail the scenario with a message that says which step broke. */
