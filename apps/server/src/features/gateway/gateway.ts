@@ -216,10 +216,7 @@ export const gatewayLayer = Layer.effect(
           Effect.map(targetOf(bot, ref), (target) => ({ action: "type", target, text }) as const),
       });
 
-    const deny = Effect.fn("Gateway.deny")(function* (
-      request: BotRequest,
-      { ref, reason }: UnknownRef,
-    ) {
+    const deny = Effect.fnUntraced(function* (request: BotRequest, { ref, reason }: UnknownRef) {
       const span = yield* Effect.option(Effect.currentSpan);
       yield* Effect.annotateCurrentSpan({ "gateway.outcome": "deny" });
 
