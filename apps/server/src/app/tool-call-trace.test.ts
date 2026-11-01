@@ -97,6 +97,7 @@ const computers = Layer.succeed(
           truncated: false,
         } as const),
     }),
+    running: Effect.die("nobody takes control here"),
     stop: Effect.void,
     reset: Effect.void,
     list: Effect.succeed([]),

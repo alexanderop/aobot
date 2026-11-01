@@ -1,25 +1,6 @@
 import type { BotId } from "@aobot/domain";
-import { SqliteMigrator } from "@effect/sql-sqlite-node";
 import { Array, Effect, Option, Schema } from "effect";
 import { SqlClient } from "effect/sql";
-
-const createBotSnapshots = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
-
-  yield* sql`
-    CREATE TABLE bot_snapshots (
-      bot_id text PRIMARY KEY,
-      snapshot text NOT NULL,
-      updated_at text NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-    )
-  `;
-});
-
-/** Brings the gateway's tables up to date. Safe to run at every boot. */
-export const migrateGateway = SqliteMigrator.run({
-  table: "gateway_migrations",
-  loader: SqliteMigrator.fromRecord({ "0001_create_bot_snapshots": createBotSnapshots }),
-});
 
 const decodeSnapshots = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ snapshot: Schema.String })),
@@ -48,5 +29,10 @@ export const snapshotStore = Effect.gen(function* () {
     `;
   });
 
-  return { latest, save };
+  /** Forgets the Bot's latest snapshot, so none of its refs resolve until it reads a page again. */
+  const forget = Effect.fn("SnapshotStore.forget")(function* (bot: BotId) {
+    yield* sql`DELETE FROM bot_snapshots WHERE bot_id = ${bot}`;
+  });
+
+  return { latest, save, forget };
 });

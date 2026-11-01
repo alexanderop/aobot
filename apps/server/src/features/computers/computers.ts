@@ -68,6 +68,8 @@ export class Computers extends Context.Service<
   {
     /** The computer, started if it is not running, once it answers its health check. */
     readonly ensure: Effect.Effect<Computer, ComputerUnavailable>;
+    /** The computer if one this server started is running. Never starts one. */
+    readonly running: Effect.Effect<Computer, ComputerUnavailable>;
     readonly stop: Effect.Effect<void, ComputerUnavailable>;
     /** Throws the computer away, so the next `ensure` starts a fresh one. */
     readonly reset: Effect.Effect<void, ComputerUnavailable>;

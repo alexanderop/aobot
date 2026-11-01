@@ -31,7 +31,15 @@ export {
   snapshotLimit,
 } from "./computer.ts";
 
-export { PersonInput, ScreenPoint } from "./control.ts";
+export {
+  ComputerNotStarted,
+  Control,
+  ControlNotChanged,
+  InputFailed,
+  NotInControl,
+  PersonInput,
+  ScreenPoint,
+} from "./control.ts";
 
 export { ScreenRpcs } from "./screen-rpcs.ts";
 

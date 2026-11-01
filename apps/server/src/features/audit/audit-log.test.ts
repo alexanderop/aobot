@@ -148,7 +148,7 @@ describe("AuditLog", () => {
           actor_id: "single-user",
           decision: "unknown",
           action: "snapshot",
-          detail: expect.any(String),
+          detail: JSON.stringify({ reason: "the server stopped before the outcome was recorded" }),
           outcome_of: unfinished,
         },
       ]);
