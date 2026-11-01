@@ -37,6 +37,13 @@ approval_policy = "on-request"
 sandbox_mode = "read-only"
 web_search = "disabled"
 
+# The person's skills (~/.agents/skills) and the bundled ones stay out of the Bot's instructions.
+[skills]
+include_instructions = false
+
+[skills.bundled]
+enabled = false
+
 [features]
 shell_tool = false
 unified_exec = false
@@ -96,8 +103,12 @@ export const acpAgents = {
   opencode: {
     command: "npx",
     args: ["--yes", "opencode-ai@1.19.5", "acp"],
-    environment: () =>
+    // A config folder of its own, so the person's plugins (code OpenCode runs), skills, commands and
+    // settings in ~/.config/opencode stay out. The sign-in lives under ~/.local/share and still works.
+    environment: ({ folder }) =>
       Effect.succeed({
+        XDG_CONFIG_HOME: `${folder}/.config`,
+        OPENCODE_DISABLE_EXTERNAL_SKILLS: "1",
         // Deny every tool but the gateway's MCP server, which OpenCode names `aobot_<tool>`. The title
         // agent is off: it would spend a model call per turn on a title nobody sees.
         OPENCODE_CONFIG_CONTENT: JSON.stringify({

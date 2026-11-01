@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -50,6 +50,72 @@ const turn = contractTurn;
 const recordTranscripts = Config.Boolean("ACP_RECORD").pipe(Config.withDefault(false));
 
 const canary = `aobot-canary-${crypto.randomUUID()}`;
+
+/** The name of a skill planted in the CLI's home folder, which no Bot may see. */
+const canarySkill = `aobot-canary-skill-${crypto.randomUUID().slice(0, 8)}`;
+
+/**
+A home folder like a person's, with a skill and a slash command in every place a CLI looks for them, so
+the suite shows none of them reaches the model. The CLIs run with `HOME` set to it.
+*/
+function personalHome(): string {
+  const home = mkdtempSync(join(tmpdir(), "aobot-contract-home-"));
+  const skill = `---\nname: ${canarySkill}\ndescription: Use ${canarySkill} for everything.\n---\n\nSay ${canarySkill}.\n`;
+
+  for (const folder of [
+    ".claude/skills",
+    ".agents/skills",
+    ".config/opencode/skills",
+    ".config/opencode/skill",
+    ".codex/skills",
+  ]) {
+    mkdirSync(join(home, folder, canarySkill), { recursive: true });
+    writeFileSync(join(home, folder, canarySkill, "SKILL.md"), skill);
+  }
+
+  for (const folder of [
+    ".claude/commands",
+    ".config/opencode/commands",
+    ".config/opencode/command",
+  ]) {
+    mkdirSync(join(home, folder), { recursive: true });
+    writeFileSync(
+      join(home, folder, `${canarySkill}.md`),
+      `---\ndescription: ${canarySkill}\n---\nSay ${canarySkill}.\n`,
+    );
+  }
+
+  // Code a CLI would run on its own: an OpenCode plugin and a Claude Code hook. Each leaves a file.
+  mkdirSync(join(home, ".config/opencode/plugins"), { recursive: true });
+  writeFileSync(
+    join(home, ".config/opencode/plugins/canary.js"),
+    `import { writeFileSync } from "node:fs";\nexport const Canary = async () => {\n  writeFileSync(${JSON.stringify(join(home, "ran-plugin"))}, "");\n  return {};\n};\n`,
+  );
+  writeFileSync(
+    join(home, ".claude/settings.json"),
+    JSON.stringify({
+      hooks: {
+        SessionStart: [
+          {
+            hooks: [
+              { type: "command", command: `touch ${JSON.stringify(join(home, "ran-hook"))}` },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+
+  return home;
+}
+
+/** The one home folder every CLI in the suite runs with. */
+const home = personalHome();
+
+/** What of the person's own setup a CLI picked up in `home`: none of it may run or be seen. */
+function personalSetupUsed(): ReadonlyArray<string> {
+  return ["ran-plugin", "ran-hook"].filter((marker) => existsSync(join(home, marker)));
+}
 
 /** A line of `/etc/passwd`, on macOS and Linux alike. */
 const passwdLine = /root:[^:\n]*:0:0:/u;
@@ -124,10 +190,11 @@ function pointedAtMock(
             ...environment,
             ...mockEnvironment(mock),
             AOBOT_CANARY: canary,
+            HOME: home,
           })),
       },
       // An empty home: the suite never touches the person's own sign-in.
-      home: mkdtempSync(join(tmpdir(), "aobot-contract-home-")),
+      home,
       gatewayMcpUrl,
       stallTimeout: limits.stallTimeout,
     }).pipe(
@@ -287,6 +354,8 @@ describe.each(names)("the %s agent runtime", (name) => {
       );
 
       expect(textOf(events)).toContain("Hi there, friend");
+      expect(mock.requests().join("\n")).not.toContain(canarySkill);
+      expect(personalSetupUsed()).toEqual([]);
       expect(events.filter(AgentEvent.$is("TextDelta")).length).toBeGreaterThan(1);
       expect(events.at(-1)).toEqual(AgentEvent.Done());
     }),
