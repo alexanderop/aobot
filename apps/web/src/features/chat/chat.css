@@ -121,12 +121,134 @@
 
 .composer {
   display: flex;
-  align-items: flex-end;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
   margin-top: 12px;
-  padding: 8px 8px 8px 18px;
+  padding: 8px;
   border-radius: 28px;
   background: var(--bubble);
+}
+
+.composer__bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.composer__attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 4px 4px 0;
+  list-style: none;
+}
+
+.attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 4px 4px 4px 12px;
+  border-radius: var(--radius-row);
+  background: var(--row-active);
+  font-size: 14px;
+}
+
+.attachment__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment__note {
+  color: var(--muted);
+}
+
+.attachment[data-status="failed"] .attachment__note {
+  color: var(--danger);
+}
+
+.attachment__dismiss {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.attachment__dismiss:hover {
+  color: var(--fg);
+}
+
+.composer__attach {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.composer__attach:hover {
+  background: var(--row-active);
+}
+
+.composer__attach:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.composer__attach-icon {
+  position: relative;
+  width: 16px;
+  height: 16px;
+}
+
+.composer__attach-icon::before,
+.composer__attach-icon::after {
+  content: "";
+  position: absolute;
+  inset: 7px 0;
+  border-radius: 1px;
+  background: var(--muted);
+}
+
+.composer__attach-icon::after {
+  inset: 0 7px;
+}
+
+.file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 6px 12px 6px 10px;
+  border-radius: var(--radius-row);
+  background: var(--row-active);
+  color: var(--fg);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.file-chip:hover,
+.file-chip:focus-visible {
+  outline: 1px solid var(--accent);
+}
+
+.file-chip__icon {
+  width: 12px;
+  height: 15px;
+  border-radius: 2px 5px 2px 2px;
+  background: var(--accent);
 }
 
 .composer:focus-within {

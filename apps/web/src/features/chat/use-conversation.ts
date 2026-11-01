@@ -22,7 +22,8 @@ export interface UseConversation {
   /** Whether the Bot uses its computer this turn, as {@link usesComputer} decides. */
   readonly usesComputer: boolean;
   readonly error: Option.Option<ConversationError>;
-  readonly send: (text: string) => void;
+  /** Sends `text` as the person's next message. False when it could not go: empty, mid-run or not ready. */
+  readonly send: (text: string) => boolean;
   readonly stop: () => void;
 }
 
@@ -40,8 +41,10 @@ export function useConversation(id: ConversationId): UseConversation {
     (text: string) => {
       const trimmed = text.trim();
 
-      if (trimmed === "" || running || !ready) return;
+      if (trimmed === "" || running || !ready) return false;
       sendMessage({ messageId: MessageId.make(crypto.randomUUID()), text: trimmed });
+
+      return true;
     },
     [running, ready, sendMessage],
   );
