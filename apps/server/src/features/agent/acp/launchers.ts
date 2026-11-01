@@ -1,4 +1,6 @@
 import { Effect, FileSystem, Path, type PlatformError, Schema } from "effect";
+import { botToolkit } from "../../bots/public.ts";
+import { gatewayMcpName } from "../../gateway/public.ts";
 
 /** The CLIs `acp` can run a Bot on, each on the person's own subscription. */
 export const AcpAgentName = Schema.Literals(["claude-code", "codex", "opencode"]);
@@ -56,6 +58,14 @@ hooks = false
 `;
 
 /**
+Claude Code asks permission for every MCP tool not allowed up front, and the client refuses every such
+request. The gateway's own tools are allowed here, by exact name, and nothing else is.
+*/
+const gatewayToolsForClaudeCode = Object.keys(botToolkit.tools).map(
+  (tool) => `mcp__${gatewayMcpName}__${tool}`,
+);
+
+/**
 One entry per CLI, so adding one is a row here. Adapter versions are pinned exactly: an adapter decides
 which tools exist, so an upgrade is a change the contract suite must pass again.
 */
@@ -65,9 +75,17 @@ export const acpAgents = {
     args: ["--yes", "@agentclientprotocol/claude-agent-acp@0.99.1"],
     environment: () => Effect.succeed({}),
     // `tools: []` removes every built-in tool. `settingSources: []` and `strictMcpConfig` keep the
-    // person's own settings, hooks and MCP servers out of the Bot's session.
+    // person's own settings, hooks and MCP servers out of the Bot's session. `allowedTools` lets the
+    // gateway's tools run without a permission request.
     sessionMeta: {
-      claudeCode: { options: { tools: [], settingSources: [], strictMcpConfig: true } },
+      claudeCode: {
+        options: {
+          tools: [],
+          settingSources: [],
+          strictMcpConfig: true,
+          allowedTools: gatewayToolsForClaudeCode,
+        },
+      },
     },
   },
   codex: {
