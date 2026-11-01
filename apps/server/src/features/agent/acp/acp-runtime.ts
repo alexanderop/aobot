@@ -208,14 +208,20 @@ export function layerAcp(options: AcpRuntimeOptions) {
 
         let answered = false;
 
-        // Runs before the process group is stopped: tell the agent first, then close its stdin.
+        // Runs before the process group is stopped: tell the agent first, close its stdin, and give
+        // it a moment to read the cancel and exit on its own before the group is signalled.
         yield* Effect.addFinalizer(() =>
           Effect.suspend(() =>
             answered
               ? connection.close
               : connection
                   .notify("session/cancel", { sessionId })
-                  .pipe(Effect.andThen(connection.close)),
+                  .pipe(
+                    Effect.andThen(connection.close),
+                    Effect.andThen(
+                      connection.closedStdout.pipe(Effect.timeout("1 second"), Effect.ignore),
+                    ),
+                  ),
           ),
         );
 

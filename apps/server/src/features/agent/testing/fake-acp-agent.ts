@@ -74,7 +74,13 @@ async function prompt(message: Message) {
   if (!script.silent) send({ id: message.id, result: { stopReason: "end_turn" } });
 }
 
-createInterface({ input: process.stdin }).on("line", (line) => {
+const input = createInterface({ input: process.stdin });
+
+// Like a real CLI: once the client closes stdin there is nothing left to do. The `sleep` child
+// stays behind in the process group, so the client must still end the group itself.
+input.on("close", () => process.exit(0));
+
+input.on("line", (line) => {
   const message: Message = JSON.parse(line);
 
   if (script.logFile !== "") appendFileSync(script.logFile, `${message.method ?? "reply"}\n`);

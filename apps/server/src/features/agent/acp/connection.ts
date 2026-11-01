@@ -39,6 +39,8 @@ export interface AcpConnection {
   readonly notify: (method: string, params: Schema.Json) => Effect.Effect<void>;
   /** Write whatever is still queued, then close the agent's stdin. */
   readonly close: Effect.Effect<void>;
+  /** Wait until the agent closes its stdout, which it does when it exits. */
+  readonly closedStdout: Effect.Effect<void>;
 }
 
 /** The last non-empty line of what the agent wrote to stderr, which is usually why it stopped. */
@@ -121,11 +123,14 @@ export const connect = Effect.fnUntraced(function* (
     );
   });
 
+  const stdoutClosed = yield* Deferred.make<void>();
+
   yield* handle.stdout.pipe(
     Stream.decodeText(),
     Stream.splitLines,
     Stream.runForEach((line) => dispatch(readLine(line))),
     Effect.ignore,
+    Effect.andThen(Deferred.succeed(stdoutClosed, undefined)),
     Effect.andThen(exited),
     Effect.forkScoped,
   );
@@ -158,5 +163,10 @@ export const connect = Effect.fnUntraced(function* (
     Effect.andThen(Fiber.join(writer).pipe(Effect.timeout("1 second"), Effect.ignore)),
   );
 
-  return { request, notify, close } satisfies AcpConnection;
+  return {
+    request,
+    notify,
+    close,
+    closedStdout: Deferred.await(stdoutClosed),
+  } satisfies AcpConnection;
 });
