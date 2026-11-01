@@ -10,6 +10,7 @@ import {
   commandOutputLimit,
   findRef,
   PageRead,
+  PersonInput,
   type RefTarget,
   ScreenFrame,
   snapshotRefs,
@@ -21,8 +22,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 /**
 Tier 3: the computer image behaves as the wire contract says. Builds `aobot-computer:dev`, runs it twice
-on a network of its own (private hosts allowed, for the fixture, and not), and drives `POST /act` and `GET /stream`
-over a port published on 127.0.0.1 only. The fixture page is served by a third container from the same image, so
+on a network of its own (private hosts allowed, for the fixture, and not), and drives `POST /act`, `POST /input`
+and `GET /stream` over a port published on 127.0.0.1 only. The fixture page is served by a third container from the same image, so
 the suite needs nothing but Docker. `vp run test:contract`.
 */
 
@@ -49,9 +50,25 @@ const formPage = `<!doctype html><title>Form Fixture</title><form action="/submi
 <label>Name <input name="name"></label>
 <button type="button" onclick="this.textContent = 'Pressed'">Press me</button></form>`;
 
+// One link over the whole viewport, so a click anywhere on the screen follows it.
+const linkPage = `<!doctype html><title>Link Fixture</title><style>body { margin: 0 }</style>
+<a href="/followed" style="display: block; width: 100vw; height: 100vh">Follow me</a>`;
+
+const slowPage = `<!doctype html><title>Slow Fixture</title><p>This page took two seconds.</p>`;
+
+// A click anywhere holds the page's only thread for eight seconds, past the computer's limit on a click.
+const busyPage = `<!doctype html><title>Busy Fixture</title><style>body { margin: 0 }</style>
+<button style="width: 100vw; height: 100vh"
+  onclick="const end = Date.now() + 8000; while (Date.now() < end) {}">Hold the page</button>`;
+
 const fixtureServer = `require("node:http").createServer((req, res) => {
   res.setHeader("content-type", "text/html");
-  res.end(req.url.startsWith("/form") ? ${JSON.stringify(formPage)} : ${JSON.stringify(fixturePage)});
+  const page = req.url.startsWith("/form") ? ${JSON.stringify(formPage)}
+    : req.url.startsWith("/link") ? ${JSON.stringify(linkPage)}
+    : req.url.startsWith("/slow") ? ${JSON.stringify(slowPage)}
+    : req.url.startsWith("/busy") ? ${JSON.stringify(busyPage)}
+    : ${JSON.stringify(fixturePage)};
+  setTimeout(() => res.end(page), req.url.startsWith("/slow") ? 2000 : 0);
 }).listen(${fixturePort}, "0.0.0.0");`;
 
 function docker(...args: ReadonlyArray<string>) {
@@ -337,6 +354,87 @@ describe("the docker computer", () => {
     const response = await act(local, { action: "snapshot" }, { ...asServer, authorization });
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "Not authorised." });
+  });
+
+  describe("a person's input", () => {
+    const linkUrl = `http://${suite}-fixture:${fixturePort}/link`;
+
+    const centre = JSON.stringify(PersonInput.cases.Click.make({ at: { x: 0.5, y: 0.5 } }));
+
+    function input(body: string, authorization = asServer.authorization) {
+      return fetch(`${local.url}/input`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization },
+        body,
+      });
+    }
+
+    it("clicks where the person clicked on the screen, as fractions of it", async () => {
+      await result(await act(local, { action: "navigate", url: linkUrl }));
+
+      const clicked = await input(centre);
+      expect(clicked.status).toBe(204);
+
+      const deadline = Date.now() + 10_000;
+      let read = await result(await act(local, { action: "snapshot" }));
+
+      while (!read.url.endsWith("/followed") && Date.now() < deadline) {
+        await pause(200);
+        read = await result(await act(local, { action: "snapshot" }));
+      }
+
+      expect(read.url).toBe(`http://${suite}-fixture:${fixturePort}/followed`);
+    });
+
+    it("clicks only once a Bot action whose caller hung up has settled", async () => {
+      const slowUrl = `http://${suite}-fixture:${fixturePort}/slow`;
+      await result(await act(local, { action: "navigate", url: linkUrl }));
+
+      const hangUp = new AbortController();
+
+      const navigating = act(
+        local,
+        { action: "navigate", url: slowUrl },
+        { ...asServer, signal: hangUp.signal },
+      ).catch(() => "hung up");
+
+      await pause(300);
+      hangUp.abort();
+      expect(await navigating).toBe("hung up");
+
+      expect((await input(centre)).status).toBe(204);
+
+      const read = await result(await act(local, { action: "snapshot" }));
+      expect(read.url, "the click landed on the slow page, not the link it replaced").toBe(slowUrl);
+    });
+
+    it("fails a click the page holds up past its limit, and the next Bot action still runs", async () => {
+      const busyUrl = `http://${suite}-fixture:${fixturePort}/busy`;
+      await result(await act(local, { action: "navigate", url: busyUrl }));
+
+      const clickedAt = Date.now();
+      const clicked = await input(centre);
+
+      expect(clicked.status).toBe(502);
+      expect(await clicked.json()).toEqual({
+        reason: "failed",
+        message: "Clicking failed: Timeout 5000ms exceeded.",
+      });
+      expect(Date.now() - clickedAt, "answered before the page let go").toBeLessThan(7_000);
+
+      const read = await result(await act(local, { action: "snapshot" }));
+      expect(read.title).toBe("Busy Fixture");
+    });
+
+    it("answers 401 without the token", async () => {
+      const response = await input(centre, "");
+      expect(response.status).toBe(401);
+    });
+
+    it("answers 400 to a point off the screen", async () => {
+      const response = await input('{"_tag":"Click","at":{"x":2,"y":0.5}}');
+      expect(response.status).toBe(400);
+    });
   });
 
   describe("its screen", () => {

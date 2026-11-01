@@ -4,7 +4,9 @@ import { join } from "node:path";
 import {
   PageAction,
   type PageRead,
+  PersonInput,
   type RefTarget,
+  type ScreenPoint,
   snapshotLimit,
   snapshotRefs,
 } from "@aobot/domain";
@@ -30,6 +32,8 @@ export class Browser extends Context.Service<
   Browser,
   {
     readonly act: (action: PageAction) => Effect.Effect<PageRead, ActionRefused | ActionFailed>;
+    /** Does what a person in control did, in the Bot's page. It answers nothing: the person watches the screen. */
+    readonly input: (input: PersonInput) => Effect.Effect<void, ActionFailed>;
     /**
     The page the Bot acts on, now and each time an action replaces a closed one. It never takes the action
     semaphore, so watching the page does not wait behind a 30-second navigation.
@@ -45,9 +49,17 @@ const snapshotTimeoutMs = 10_000;
 /** How long a click or a fill may wait for its element to be ready. A ref that names nothing is refused first. */
 const elementTimeoutMs = 5_000;
 
+/** How long a Playwright call that takes no time limit of its own may run, such as a click on the screen. */
+const callTimeoutMs = 5_000;
+
 /** What the Bot reads when a ref no longer names the element it saw. */
 function staleRef(target: RefTarget): string {
   return `The page changed since your latest snapshot, so ${target.ref} is not the ${target.role} it was. Take a snapshot again and use a ref from it.`;
+}
+
+/** Where `at` lands in a viewport of `width` by `height` pixels, kept inside it at the far edges. */
+function pixelAt(at: ScreenPoint, width: number, height: number) {
+  return { x: Math.min(at.x * width, width - 1), y: Math.min(at.y * height, height - 1) };
 }
 
 /** `what` failed, with the first line of why: Playwright's later lines are its call log. */
@@ -62,13 +74,29 @@ function playwright<A>(what: string, run: () => Promise<A>): Effect.Effect<A, Ac
   });
 }
 
+/**
+{@link playwright} for a call that takes no time limit of its own: on a page whose script never yields,
+it would never settle. Past {@link callTimeoutMs} it fails, and the call is left to Playwright.
+*/
+function bounded<A>(what: string, run: () => Promise<A>): Effect.Effect<A, ActionFailed> {
+  return playwright(what, run).pipe(
+    Effect.timeoutOrElse({
+      duration: callTimeoutMs,
+      orElse: () =>
+        Effect.fail(
+          new ActionFailed({ message: `${what} failed: Timeout ${callTimeoutMs}ms exceeded.` }),
+        ),
+    }),
+  );
+}
+
 /** The page as the Bot reads it after any action: its address, title and capped snapshot. */
 const readPage = Effect.fn("Browser.readPage")(function* (current: Page) {
   const tree = yield* playwright("Reading the page", () =>
     current.ariaSnapshot({ mode: "ai", timeout: snapshotTimeoutMs }),
   );
 
-  const title = yield* playwright("Reading the title", () => current.title());
+  const title = yield* bounded("Reading the title", () => current.title());
 
   return { url: current.url(), title, ...capSnapshot(tree, snapshotLimit) };
 });
@@ -143,7 +171,7 @@ function currentPage(context: BrowserContext, page: SubscriptionRef.Subscription
 
     if (!current.isClosed()) return current;
 
-    const fresh = yield* playwright("Opening a page", () => context.newPage());
+    const fresh = yield* bounded("Opening a page", () => context.newPage());
     yield* SubscriptionRef.set(page, fresh);
 
     return fresh;
@@ -213,7 +241,7 @@ export const browserLayer = (home: string) =>
         );
 
         if (Option.isSome(refusal)) {
-          const message = yield* playwright("Reading the refusal", () => refusal.value.text());
+          const message = yield* bounded("Reading the refusal", () => refusal.value.text());
 
           return yield* new ActionRefused({ message });
         }
@@ -244,9 +272,19 @@ export const browserLayer = (home: string) =>
         return current;
       });
 
+      /**
+      Runs `effect` once nothing else runs on the page, and keeps the page until it settles. A caller that
+      hangs up interrupts the request, never the Playwright call already under way, so the next one would
+      otherwise start beside it: a person's click while the Bot's navigate still lands. Every Playwright
+      call in `effect` has a time limit, its own `timeout` or {@link bounded}'s, so the page is free again
+      once it passes, even when the call itself never settles.
+      */
+      const exclusive = <A, E>(effect: Effect.Effect<A, E>) =>
+        oneAtATime.withPermits(1)(Effect.uninterruptible(effect));
+
       // Every action answers with the page read afresh, so the Bot's next refs come from what is there.
       const act = (action: PageAction) =>
-        oneAtATime.withPermits(1)(
+        exclusive(
           PageAction.match(action, {
             navigate: ({ url }) => navigate(url),
             snapshot: () => currentPage(context, page),
@@ -258,6 +296,26 @@ export const browserLayer = (home: string) =>
           ),
         );
 
-      return Browser.of({ act, pages: SubscriptionRef.changes(page).pipe(Stream.map(watched)) });
+      const clickAt = Effect.fn("Browser.clickAt")(function* (at: ScreenPoint) {
+        const current = yield* currentPage(context, page);
+        const viewport = current.viewportSize();
+
+        if (viewport === null) {
+          return yield* new ActionFailed({ message: "The page has no viewport to click on." });
+        }
+
+        const { x, y } = pixelAt(at, viewport.width, viewport.height);
+
+        yield* bounded("Clicking", () => current.mouse.click(x, y));
+      });
+
+      const input = (input: PersonInput) =>
+        exclusive(PersonInput.match(input, { Click: ({ at }) => clickAt(at) }));
+
+      return Browser.of({
+        act,
+        input,
+        pages: SubscriptionRef.changes(page).pipe(Stream.map(watched)),
+      });
     }),
   );

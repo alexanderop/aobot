@@ -5,12 +5,12 @@ import "./app.css";
 
 /** One conversation, with the Bot's screen beside it. Its id lives in the URL so a reload reopens it. */
 export function App(props: { readonly conversationId: ConversationId }) {
-  const { showsScreen } = useConversation(props.conversationId);
+  const { usesComputer } = useConversation(props.conversationId);
 
   return (
     <div className="workspace">
       <ConversationView conversationId={props.conversationId} />
-      <LiveScreen open={showsScreen} />
+      <LiveScreen usesComputer={usesComputer} />
     </div>
   );
 }

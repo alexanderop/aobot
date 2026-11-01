@@ -14,6 +14,7 @@ export interface TempoSpan {
   readonly parentSpanId?: string;
   readonly name: string;
   readonly attributes?: ReadonlyArray<TempoAttribute>;
+  readonly events?: ReadonlyArray<{ readonly name: string }>;
 }
 
 interface TempoTrace {

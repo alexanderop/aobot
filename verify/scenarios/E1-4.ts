@@ -3,31 +3,8 @@ import { Schema } from "effect";
 import { ModelStep } from "../../apps/server/src/features/agent/testing/model-script.ts";
 import { assert, browser, evaluate, waitFor } from "../browser.ts";
 import { answers, auditRows, doneCards, script, send } from "../chat.ts";
+import { frameColours, panelState } from "../screen.ts";
 import { computerContainer } from "../stack.ts";
-
-function panelState(): string {
-  return evaluate(Schema.String, `document.querySelector(".live-screen")?.dataset.state ?? "none"`);
-}
-
-/** How many colours the frame shows, sampled on a grid: none before a frame is drawn, one for a blank page. */
-function frameColours(): number {
-  return evaluate(
-    Schema.Number,
-    `(() => {
-      const frame = document.querySelector(".live-screen__frame");
-      if (!frame?.naturalWidth) return 0;
-      const canvas = document.createElement("canvas");
-      canvas.width = 128;
-      canvas.height = 80;
-      const context = canvas.getContext("2d");
-      context.drawImage(frame, 0, 0, 128, 80);
-      const pixels = context.getImageData(0, 0, 128, 80).data;
-      const colours = new Set();
-      for (let at = 0; at < pixels.length; at += 4) colours.add((pixels[at] >> 4) + "," + (pixels[at + 1] >> 4) + "," + (pixels[at + 2] >> 4));
-      return colours.size;
-    })()`,
-  );
-}
 
 /** Every WebSocket the page opens from now on, recorded by URL. */
 function recordSockets(): void {

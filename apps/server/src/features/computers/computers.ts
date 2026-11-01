@@ -4,6 +4,7 @@ import {
   CommandRan,
   type PageAction,
   PageRead,
+  type PersonInput,
   type RunCommand,
   Screen,
   ScreenFrame,
@@ -48,6 +49,8 @@ export interface Computer {
   readonly run: (
     command: RunCommand,
   ) => Effect.Effect<CommandRan, ComputerActFailed | ComputerLost>;
+  /** What a person in control did on the screen, over `POST /input`. */
+  readonly input: (input: PersonInput) => Effect.Effect<void, ComputerActFailed | ComputerLost>;
 }
 
 /** What `list` reports about one computer. */
@@ -65,6 +68,8 @@ export class Computers extends Context.Service<
   {
     /** The computer, started if it is not running, once it answers its health check. */
     readonly ensure: Effect.Effect<Computer, ComputerUnavailable>;
+    /** The computer if one this server started is running. Never starts one. */
+    readonly running: Effect.Effect<Computer, ComputerUnavailable>;
     readonly stop: Effect.Effect<void, ComputerUnavailable>;
     /** Throws the computer away, so the next `ensure` starts a fresh one. */
     readonly reset: Effect.Effect<void, ComputerUnavailable>;
@@ -89,11 +94,25 @@ function lost(error: { readonly message: string }) {
   return new ComputerLost({ message: error.message });
 }
 
+/** What each of the computer's routes takes. */
+interface Routes {
+  readonly "/act": ComputerAction;
+  readonly "/input": PersonInput;
+}
+
+/** The status each route answers when the computer carried the request out. */
+const done = { "/act": 200, "/input": 204 } as const satisfies Record<keyof Routes, number>;
+
+/** What the computer answered, once it carried the request out. */
+type ReadAnswer<A> = (
+  answer: HttpClientResponse.HttpClientResponse,
+) => Effect.Effect<A, { readonly message: string }>;
+
+/** What `response` says of a request to `path`: `read` of it when the computer carried it out. */
 function answered<A>(
+  path: keyof Routes,
   response: HttpClientResponse.HttpClientResponse,
-  decode: (
-    answer: HttpClientResponse.HttpClientResponse,
-  ) => Effect.Effect<A, { readonly message: string }>,
+  read: ReadAnswer<A>,
 ): Effect.Effect<A, ComputerActFailed | ComputerLost> {
   const refused = (answer: HttpClientResponse.HttpClientResponse) =>
     decodeRefusal(answer).pipe(
@@ -102,7 +121,8 @@ function answered<A>(
     );
 
   return HttpClientResponse.matchStatus(response, {
-    200: (answer) => decode(answer).pipe(Effect.mapError(lost)),
+    [done[path]]: (answer: HttpClientResponse.HttpClientResponse) =>
+      read(answer).pipe(Effect.mapError(lost)),
     403: refused,
     502: refused,
     // Any other 4xx turned the request away before it ran; anything else may have run partway.
@@ -123,26 +143,37 @@ const decodePage = HttpClientResponse.schemaBodyJson(PageRead);
 const decodeCommand = HttpClientResponse.schemaBodyJson(CommandRan);
 
 /**
-The computer at `address`, spoken to over `POST /act`. The client sends `traceparent` from the current
-span, so the computer's work lands inside the gateway's.
+The computer at `address`, spoken to over `POST /act` and `POST /input`. The client sends `traceparent`
+from the current span, so the computer's work lands inside the gateway's.
 */
 export function computerAt(address: ComputerAddress, client: HttpClient.HttpClient): Computer {
-  const send = (action: ComputerAction) =>
+  /** Posts `body` to `path`, and `read`s the answer once the computer carried it out. */
+  const send = <Path extends keyof Routes, A>(
+    path: Path,
+    body: Routes[Path],
+    read: ReadAnswer<A>,
+  ) =>
     client
       .execute(
-        HttpClientRequest.post(new URL("/act", address.url)).pipe(
+        HttpClientRequest.post(new URL(path, address.url)).pipe(
           HttpClientRequest.bearerToken(address.token),
-          HttpClientRequest.bodyJsonUnsafe(action),
+          HttpClientRequest.bodyJsonUnsafe(body),
         ),
       )
-      .pipe(Effect.mapError(lost));
+      .pipe(
+        Effect.mapError(lost),
+        Effect.flatMap((response) => answered(path, response, read)),
+      );
 
   return {
     browse: Effect.fn("Computer.act")(function* (action: PageAction) {
-      return yield* answered(yield* send(action), decodePage);
+      return yield* send("/act", action, decodePage);
     }),
     run: Effect.fn("Computer.act")(function* (command: RunCommand) {
-      return yield* answered(yield* send(command), decodeCommand);
+      return yield* send("/act", command, decodeCommand);
+    }),
+    input: Effect.fn("Computer.input")(function* (input: PersonInput) {
+      return yield* send("/input", input, () => Effect.void);
     }),
   };
 }

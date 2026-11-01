@@ -6,19 +6,27 @@ import {
   type CommandRan,
   commandTimeLimit,
   type ComputerAction,
+  ComputerNotStarted,
+  Control,
+  ControlNotChanged,
+  InputFailed,
+  NotInControl,
   type PageAction,
   type PageRead,
+  PersonInput,
 } from "@aobot/domain";
 import { NodeHttpServer } from "@effect/platform-node";
 import { SqliteClient } from "@effect/sql-sqlite-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  Arbitrary,
   Context,
   Deferred,
   Duration,
   Effect,
   Fiber,
   Layer,
+  Option,
   Redacted,
   Semaphore,
   Stream,
@@ -30,6 +38,7 @@ import { SqlClient } from "effect/sql";
 import { TestClock } from "effect/testing";
 import { ToolFailed } from "../../shared/tool-result.ts";
 import { auditLogLayer, migrateAudit } from "../audit/public.ts";
+import { botToolkit } from "../bots/public.ts";
 import {
   type Computer,
   ComputerActFailed,
@@ -37,17 +46,26 @@ import {
   Computers,
   ComputerUnavailable,
 } from "../computers/public.ts";
+import { ComputerControl } from "./control.ts";
 import { Gateway, gatewayLayer } from "./gateway.ts";
 import { gatewayMcpLayer } from "./mcp.ts";
-import { migrateGateway } from "./snapshot-store.ts";
+import { migrateGateway } from "./migrations.ts";
+import { botToolHandlers } from "./tools.ts";
 
-/** A computer whose browser and shell answer with `answers`, and that keeps every action it was sent. */
-function fakeComputers(answers: Partial<Computer>) {
+/**
+A computer whose browser and shell answer with `answers`, and that keeps every action it was sent. It is
+running and starts at once, unless `computers` says how `ensure` or `running` answer instead.
+*/
+function fakeComputers(
+  answers: Partial<Computer>,
+  computers: Partial<Pick<Computers["Service"], "ensure" | "running">> = {},
+) {
   const actions: Array<ComputerAction> = [];
 
   const {
     browse = () => Effect.die("this computer has no browser"),
     run = () => Effect.die("this computer has no shell"),
+    input = () => Effect.die("this computer takes no input"),
   } = answers;
 
   const computer: Computer = {
@@ -61,16 +79,19 @@ function fakeComputers(answers: Partial<Computer>) {
         Effect.sync(() => actions.push(command)),
         run(command),
       ),
+    input,
   };
 
   const layer = Layer.succeed(
     Computers,
     Computers.of({
       ensure: Effect.succeed(computer),
+      running: Effect.succeed(computer),
       stop: Effect.void,
       reset: Effect.void,
       list: Effect.succeed([]),
       screen: Stream.never,
+      ...computers,
     }),
   );
 
@@ -201,19 +222,13 @@ describe("Gateway", () => {
 
   it.effect("records failed when the computer cannot be started", () =>
     Effect.gen(function* () {
-      const unavailable = Layer.succeed(
-        Computers,
-        Computers.of({
-          ensure: Effect.fail(new ComputerUnavailable({ message: "Docker is not running." })),
-          stop: Effect.void,
-          reset: Effect.void,
-          list: Effect.succeed([]),
-          screen: Stream.never,
-        }),
+      const unavailable = fakeComputers(
+        {},
+        { ensure: Effect.fail(new ComputerUnavailable({ message: "Docker is not running." })) },
       );
 
       const error = yield* Gateway.use((gateway) => Effect.flip(gateway.act(bot, navigate))).pipe(
-        Effect.provide(startGateway(unavailable)),
+        Effect.provide(startGateway(unavailable.layer)),
       );
 
       expect(error.message).toContain("Docker is not running.");
@@ -480,11 +495,11 @@ function shell(ran: Partial<Omit<CommandRan, "action">>) {
 }
 
 function recordedSpans() {
-  const spans: Array<Tracer.Span> = [];
+  const spans: Array<Tracer.NativeSpan> = [];
 
   const tracer = Tracer.make({
     span: (options) => {
-      const span = Tracer.nativeTracer.span(options);
+      const span = new Tracer.NativeSpan(options);
       spans.push(span);
 
       return span;
@@ -530,6 +545,7 @@ function pagesOverHttp(...snapshots: ReadonlyArray<string>) {
 
       return Computers.of({
         ensure: Effect.succeed(computer),
+        running: Effect.succeed(computer),
         stop: Effect.void,
         reset: Effect.void,
         list: Effect.succeed([]),
@@ -889,5 +905,473 @@ describe("the gateway's MCP server", () => {
       expect(JSON.stringify(result.content)).toContain("Example Domain");
       expect((yield* auditRows).map((row) => row["trace_id"])).toEqual([traceId, traceId]);
     }).pipe(Effect.provide(database), Effect.scoped),
+  );
+});
+
+const personHasControl = "a person has control of your computer";
+
+const { Click } = PersonInput.cases;
+
+/** Each audit row as `action · decision`, oldest first. */
+const auditTrail = Effect.map(auditRows, (rows) =>
+  rows.map((row) => `${String(row["action"])} · ${String(row["decision"])}`),
+);
+
+/** The Bot's control as the page would first be shown it. */
+const controlNow = ComputerControl.use((control) =>
+  control.watch(bot).pipe(Stream.runHead, Effect.map(Option.getOrThrow)),
+);
+
+/** `use` of the gateway and its control, as one server start provides them. */
+function withControl<A, E, R>(
+  use: (gateway: Gateway["Service"], control: ComputerControl["Service"]) => Effect.Effect<A, E, R>,
+) {
+  return Effect.gen(function* () {
+    return yield* use(yield* Gateway, yield* ComputerControl);
+  });
+}
+
+describe("Gateway control", () => {
+  it.effect(
+    "refuses every Bot tool, through its own handler, while a person holds the computer",
+    () =>
+      Effect.gen(function* () {
+        const computer = shell({});
+        const tools = Object.values(botToolkit.tools);
+
+        const results = yield* Effect.gen(function* () {
+          yield* ComputerControl.use((control) => control.take(bot));
+          const toolkit = yield* botToolkit;
+
+          return yield* Effect.forEach(tools, (tool) =>
+            Effect.gen(function* () {
+              const [params] = yield* Arbitrary.sampleEffect(
+                Arbitrary.schema(tool.parametersSchema),
+                { count: 1, seed: 1 },
+              );
+
+              // SAFETY: `params` was sampled from this tool's own parameters schema.
+              const handled = yield* toolkit.handle(tool.name, params as never);
+
+              return yield* Stream.runCollect(handled);
+            }),
+          );
+        }).pipe(
+          Effect.provide(botToolHandlers.pipe(Layer.provideMerge(startGateway(computer.layer)))),
+        );
+
+        expect(tools.length).toBeGreaterThan(0);
+        expect(computer.actions).toEqual([]);
+
+        for (const [index, tool] of tools.entries()) {
+          const [answer] = results[index] ?? [];
+          expect(answer?.isFailure, tool.name).toBe(true);
+          expect(JSON.stringify(answer?.result), tool.name).toContain(personHasControl);
+        }
+
+        expect(yield* auditTrail).toEqual([
+          "control_taken · allow",
+          "control_taken · succeeded",
+          ...tools.map((tool) => `${tool.name} · deny`),
+        ]);
+        expect(
+          (yield* auditRows).slice(2).map((row) => JSON.parse(String(row["detail"])).reason),
+        ).toEqual(tools.map(() => "a person has control"));
+      }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("tells the model a person has control, whatever it asked for", () =>
+    Effect.gen(function* () {
+      const error = yield* withControl((gateway, control) =>
+        control.take(bot).pipe(Effect.andThen(Effect.flip(gateway.act(bot, navigate)))),
+      ).pipe(Effect.provide(startGateway(shell({}).layer)));
+
+      expect(error.message).toBe(
+        "navigate did not run: a person has control of your computer. Wait until they hand it back, then take a snapshot.",
+      );
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect(
+    "lets a click admitted before the take finish before the person holds the computer, refusing new calls meanwhile",
+    () =>
+      Effect.gen(function* () {
+        const admitted = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+
+        const computer = fakeComputers({
+          browse: (action) =>
+            action.action === "click"
+              ? Deferred.succeed(admitted, undefined).pipe(
+                  Effect.andThen(Deferred.await(release)),
+                  Effect.andThen(exampleDomain(action)),
+                )
+              : exampleDomain(action),
+        });
+
+        const [taken, refused] = yield* withControl((gateway, control) =>
+          Effect.gen(function* () {
+            yield* gateway.act(bot, { action: "snapshot" });
+
+            const clicking = yield* Effect.forkChild(
+              gateway.act(bot, { action: "click", ref: "e1" }),
+            );
+
+            yield* Deferred.await(admitted);
+
+            const taking = yield* Effect.forkChild(control.take(bot), {
+              startImmediately: true,
+            });
+
+            const waiting = yield* control
+              .watch(bot)
+              .pipe(Stream.filter(Control.guards.Taking), Stream.runHead);
+
+            expect(waiting).toEqual(Option.some(Control.cases.Taking.make({ waitingFor: 1 })));
+
+            const refused = yield* Effect.flip(gateway.act(bot, navigate));
+
+            yield* Deferred.succeed(release, undefined);
+            yield* Fiber.join(clicking);
+
+            return [yield* Fiber.join(taking), refused] as const;
+          }),
+        ).pipe(Effect.provide(startGateway(computer.layer)));
+
+        expect(Control.guards.Person(taken)).toBe(true);
+        expect(refused.message).toContain(personHasControl);
+        expect(computer.actions.map((action) => action.action)).toEqual(["snapshot", "click"]);
+        expect(yield* auditTrail).toEqual([
+          "snapshot · allow",
+          "snapshot · succeeded",
+          "click · allow",
+          "control_taken · allow",
+          "navigate · deny",
+          "click · succeeded",
+          "control_taken · succeeded",
+        ]);
+        expect(JSON.parse(String((yield* auditRows).at(-1)?.["detail"]))).toEqual({ waitedFor: 1 });
+      }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("refuses a command whose turn comes while a person holds the computer", () =>
+    Effect.gen(function* () {
+      const forwarded = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+
+      const computer = fakeComputers({
+        run: () =>
+          Deferred.succeed(forwarded, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.as({
+              action: "run",
+              end: Exited.make({ code: 0 }),
+              stdout: printed(""),
+              stderr: printed(""),
+              leftOutputOpen: false,
+            } as const),
+          ),
+      });
+
+      const queued = yield* withControl((gateway, control) =>
+        Effect.gen(function* () {
+          const running = yield* Effect.forkChild(gateway.act(bot, makeNotes));
+          yield* Deferred.await(forwarded);
+
+          const waiting = yield* Effect.forkChild(
+            gateway.act(bot, { action: "run", command: "ls" }),
+            { startImmediately: true },
+          );
+
+          const taking = yield* Effect.forkChild(control.take(bot), {
+            startImmediately: true,
+          });
+
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(running);
+          yield* Fiber.join(taking);
+
+          return yield* Effect.flip(Fiber.join(waiting));
+        }),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(queued.message).toContain(personHasControl);
+      expect(computer.actions).toEqual([makeNotes]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("keeps the person in control after a restart", () =>
+    Effect.gen(function* () {
+      const computer = shell({});
+
+      yield* ComputerControl.use((control) => control.take(bot)).pipe(
+        Effect.provide(startGateway(computer.layer)),
+      );
+
+      const [control, refused] = yield* Effect.all([
+        controlNow,
+        Gateway.use((gateway) => Effect.flip(gateway.act(bot, navigate))),
+      ]).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(Control.guards.Person(control)).toBe(true);
+      expect(refused.message).toContain(personHasControl);
+      expect(computer.actions).toEqual([]);
+
+      yield* ComputerControl.use((control) => control.handBack(bot)).pipe(
+        Effect.provide(startGateway(computer.layer)),
+      );
+
+      expect(yield* controlNow.pipe(Effect.provide(startGateway(computer.layer)))).toEqual(
+        Control.cases.Bot.make({}),
+      );
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("refuses the Bot's old refs after hand back, until it reads the page again", () =>
+    Effect.gen(function* () {
+      const computer = fakeComputers({ browse: exampleDomain });
+
+      const [handedBack, stale] = yield* withControl((gateway, control) =>
+        Effect.gen(function* () {
+          yield* gateway.act(bot, { action: "snapshot" });
+          yield* control.take(bot);
+
+          const handedBack = yield* control.handBack(bot);
+          const stale = yield* Effect.flip(gateway.act(bot, { action: "click", ref: "e1" }));
+
+          yield* gateway.act(bot, { action: "snapshot" });
+          yield* gateway.act(bot, { action: "click", ref: "e1" });
+
+          return [handedBack, stale] as const;
+        }),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(handedBack).toEqual(Control.cases.Bot.make({}));
+      expect(stale.message).toContain("e1 is not a ref in your latest snapshot");
+      expect(yield* auditTrail).toEqual([
+        "snapshot · allow",
+        "snapshot · succeeded",
+        "control_taken · allow",
+        "control_taken · succeeded",
+        "control_released · allow",
+        "control_released · succeeded",
+        "click · deny",
+        "snapshot · allow",
+        "snapshot · succeeded",
+        "click · allow",
+        "click · succeeded",
+      ]);
+      expect(JSON.parse(String((yield* auditRows)[6]?.["detail"]))).toEqual({
+        ref: "e1",
+        reason: "there is no snapshot yet",
+      });
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("records one take and one hand back, however often each is asked for", () =>
+    Effect.gen(function* () {
+      const answers = yield* ComputerControl.use((control) =>
+        Effect.all([
+          control.take(bot),
+          control.take(bot),
+          control.handBack(bot),
+          control.handBack(bot),
+        ]),
+      ).pipe(Effect.provide(startGateway(shell({}).layer)));
+
+      expect(answers.map((control) => control._tag)).toEqual(["Person", "Person", "Bot", "Bot"]);
+      expect(yield* auditTrail).toEqual([
+        "control_taken · allow",
+        "control_taken · succeeded",
+        "control_released · allow",
+        "control_released · succeeded",
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("keeps the Bot in control when the take cannot be stored", () =>
+    Effect.gen(function* () {
+      const [error, control] = yield* withControl((gateway, control) =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`DROP TABLE bot_control`;
+
+          const error = yield* Effect.flip(control.take(bot));
+          yield* gateway.act(bot, navigate);
+
+          return [error, yield* controlNow] as const;
+        }),
+      ).pipe(Effect.provide(startGateway(fakeComputers({ browse: exampleDomain }).layer)));
+
+      expect(error).toBeInstanceOf(ControlNotChanged);
+      expect(control).toEqual(Control.cases.Bot.make({}));
+      expect(yield* auditTrail).toEqual([
+        "control_taken · allow",
+        "control_taken · failed",
+        "navigate · allow",
+        "navigate · succeeded",
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("carries out a person's click only while they hold the computer", () =>
+    Effect.gen(function* () {
+      const clicks: Array<PersonInput> = [];
+      const centre = Click.make({ at: { x: 0.5, y: 0.5 } });
+
+      const computer = fakeComputers({
+        input: (input) => Effect.sync(() => void clicks.push(input)),
+      });
+
+      const [before, after] = yield* ComputerControl.use((control) =>
+        Effect.gen(function* () {
+          const before = yield* Effect.flip(control.input(bot, centre));
+
+          yield* control.take(bot);
+          yield* control.input(bot, centre);
+          yield* control.handBack(bot);
+
+          return [before, yield* Effect.flip(control.input(bot, centre))] as const;
+        }),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(before).toEqual(new NotInControl({ message: "Take control first." }));
+      expect(after).toBeInstanceOf(NotInControl);
+      expect(clicks).toEqual([centre]);
+      expect(yield* auditTrail).toEqual([
+        "control_taken · allow",
+        "control_taken · succeeded",
+        "control_released · allow",
+        "control_released · succeeded",
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("tells the person when the computer could not carry out their click", () =>
+    Effect.gen(function* () {
+      const computer = fakeComputers({
+        input: () =>
+          Effect.fail(
+            new ComputerActFailed({ reason: "failed", message: "Clicking failed: closed" }),
+          ),
+      });
+
+      const error = yield* ComputerControl.use((control) =>
+        control
+          .take(bot)
+          .pipe(
+            Effect.andThen(Effect.flip(control.input(bot, Click.make({ at: { x: 0, y: 0 } })))),
+          ),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(error).toEqual(new InputFailed({ message: "Clicking failed: closed" }));
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("adds each change of hands and each refusal to its span as an event", () =>
+    Effect.gen(function* () {
+      const tracing = recordedSpans();
+
+      yield* withControl((gateway, control) =>
+        Effect.gen(function* () {
+          yield* control.take(bot);
+          yield* Effect.flip(gateway.act(bot, navigate));
+          yield* control.handBack(bot);
+        }),
+      ).pipe(Effect.provide(startGateway(shell({}).layer)), Effect.provide(tracing.layer));
+
+      const events = (name: string) =>
+        tracing.spans
+          .filter((span) => span.name === name)
+          .flatMap((span) => span.events.map(([event, , attributes]) => [event, attributes]));
+
+      expect(events("ComputerControl.take")).toEqual([
+        ["control.door_closed", { "control.in_flight": 0 }],
+        ["control.taken", {}],
+      ]);
+      expect(events("Gateway.act")).toEqual([["control.refused", {}]]);
+      expect(events("ComputerControl.handBack")).toEqual([["control.released", {}]]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect(
+    "starts the computer for a person who takes control, or takes it again, while none runs",
+    () =>
+      Effect.gen(function* () {
+        let starts = 0;
+
+        const computers = fakeComputers(
+          {},
+          {
+            ensure: Effect.sync(() => {
+              starts += 1;
+            }).pipe(
+              Effect.andThen(
+                Effect.fail(new ComputerUnavailable({ message: "Docker is not running." })),
+              ),
+            ),
+            running: Effect.fail(new ComputerUnavailable({ message: "No computer is running." })),
+          },
+        );
+
+        const [first, again, control] = yield* ComputerControl.use((control) =>
+          Effect.all([Effect.flip(control.take(bot)), Effect.flip(control.take(bot)), controlNow]),
+        ).pipe(Effect.provide(startGateway(computers.layer)));
+
+        expect(first).toEqual(
+          new ComputerNotStarted({
+            message:
+              "You have control, but the computer could not be started: Docker is not running.",
+          }),
+        );
+        expect(again).toBeInstanceOf(ComputerNotStarted);
+        expect(starts).toBe(2);
+        expect(Control.guards.Person(control)).toBe(true);
+        expect(yield* auditTrail).toEqual(["control_taken · allow", "control_taken · succeeded"]);
+      }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("clicks only on a computer already running, never starting one", () =>
+    Effect.gen(function* () {
+      const computers = fakeComputers(
+        { input: () => Effect.die("a click went to a computer it started") },
+        { running: Effect.fail(new ComputerUnavailable({ message: "No computer is running." })) },
+      );
+
+      const error = yield* ComputerControl.use((control) =>
+        control
+          .take(bot)
+          .pipe(
+            Effect.andThen(Effect.flip(control.input(bot, Click.make({ at: { x: 0, y: 0 } })))),
+          ),
+      ).pipe(Effect.provide(startGateway(computers.layer)));
+
+      expect(error).toEqual(new InputFailed({ message: "No computer is running." }));
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect(
+    "tells the person a click the computer never answers failed, and lets them hand back",
+    () =>
+      Effect.gen(function* () {
+        const computer = fakeComputers({ input: () => Effect.never });
+
+        const [error, handedBack] = yield* ComputerControl.use((control) =>
+          Effect.gen(function* () {
+            yield* control.take(bot);
+
+            const clicking = yield* Effect.forkChild(
+              Effect.flip(control.input(bot, Click.make({ at: { x: 0, y: 0 } }))),
+            );
+
+            yield* TestClock.adjust(Duration.seconds(15));
+
+            return [yield* Fiber.join(clicking), yield* control.handBack(bot)] as const;
+          }),
+        ).pipe(Effect.provide(startGateway(computer.layer)));
+
+        expect(error).toEqual(new InputFailed({ message: "The computer did not answer in time." }));
+        expect(handedBack).toEqual(Control.cases.Bot.make({}));
+      }).pipe(Effect.provide(database)),
   );
 });

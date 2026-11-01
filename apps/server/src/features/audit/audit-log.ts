@@ -125,7 +125,7 @@ export const auditLogLayer = Layer.effect(
             allowRow: id,
             initiatorKind: "deployment",
             outcome: "unknown",
-            detail: { reason: "the server stopped before the computer answered" },
+            detail: { reason: "the server stopped before the outcome was recorded" },
           }),
         { discard: true },
       );

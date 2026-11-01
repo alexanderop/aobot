@@ -1,9 +1,9 @@
 import { createServer } from "node:http";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { AddressInfo, Socket as NetSocket } from "node:net";
-import { CommandEnd, type PageAction, ScreenFrame } from "@aobot/domain";
+import { CommandEnd, type PageAction, PersonInput, ScreenFrame } from "@aobot/domain";
 import { NodeHttpServer, NodeWS } from "@effect/platform-node";
-import { afterAll, describe, expect, it } from "vite-plus/test";
+import { afterAll, describe, expect, it, onTestFinished } from "vite-plus/test";
 import { Effect, Exit, Layer, Option, Redacted, Schema, Scope, Stream } from "effect";
 import {
   HttpMiddleware,
@@ -26,6 +26,9 @@ const token = "computer-token";
 
 const { Exited } = CommandEnd.cases;
 
+const { Click } = PersonInput.cases;
+
+/** A browser that fails or answers navigate with the span it ran in, so a test can see the caller's trace. */
 const fakeBrowser = Layer.succeed(
   Browser,
   Browser.of({
@@ -54,6 +57,7 @@ const fakeBrowser = Layer.succeed(
           truncated: false,
         } as const;
       }),
+    input: () => Effect.die("unused"),
     pages: Stream.never,
   }),
 );
@@ -90,14 +94,19 @@ const calledFrom = <E, R>(handle: Effect.Effect<HttpServerResponse.HttpServerRes
     ),
   );
 
-const app = HttpRouter.toWebHandler(
-  routesLayer(Redacted.make(token)).pipe(
-    Layer.provideMerge(Layer.mergeAll(fakeBrowser, fakeShell, fakeScreencast)),
-    Layer.provide(HttpServer.layerServices),
-    Layer.provideMerge(Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true)),
-  ),
-  { disableLogger: true, middleware: calledFrom },
-);
+/** The routes over `browser`, as a web handler. */
+function computerWith(browser: Layer.Layer<Browser>) {
+  return HttpRouter.toWebHandler(
+    routesLayer(Redacted.make(token)).pipe(
+      Layer.provideMerge(Layer.mergeAll(browser, fakeShell, fakeScreencast)),
+      Layer.provide(HttpServer.layerServices),
+      Layer.provideMerge(Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true)),
+    ),
+    { disableLogger: true, middleware: calledFrom },
+  );
+}
+
+const app = computerWith(fakeBrowser);
 
 afterAll(() => app.dispose());
 
@@ -212,6 +221,94 @@ describe("POST /act", () => {
   });
 });
 
+describe("POST /input", () => {
+  /** The routes over a browser that does `input` with what a person did. */
+  function computerTaking(input: Browser["Service"]["input"]) {
+    const computer = computerWith(
+      Layer.succeed(
+        Browser,
+        Browser.of({ act: () => Effect.die("unused"), input, pages: Stream.never }),
+      ),
+    );
+
+    onTestFinished(() => computer.dispose());
+
+    return (body: string, headers: Record<string, string>) =>
+      computer.handler(
+        new Request("http://computer/input", {
+          method: "POST",
+          headers: { "content-type": "application/json", ...headers },
+          body,
+        }),
+      );
+  }
+
+  const centre = JSON.stringify(Click.make({ at: { x: 0.5, y: 0.5 } }));
+
+  const unused = () => Effect.die("the browser was given nothing");
+
+  it("hands a person's click to the browser, inside the caller's trace, and answers 204", async () => {
+    const given: Array<readonly [PersonInput, string]> = [];
+
+    const input = computerTaking((person) =>
+      Effect.gen(function* () {
+        const span = yield* Effect.orDie(Effect.currentSpan);
+        given.push([
+          person,
+          Option.match(span.parent, { onNone: () => "", onSome: (outer) => outer.traceId }),
+        ]);
+      }),
+    );
+
+    const traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
+
+    const response = await input(JSON.stringify(Click.make({ at: { x: 0.25, y: 0.5 } })), {
+      ...bearer,
+      traceparent: `00-${traceId}-00f067aa0ba902b7-01`,
+    });
+
+    expect(response.status).toBe(204);
+    expect(given).toEqual([[Click.make({ at: { x: 0.25, y: 0.5 } }), traceId]]);
+  });
+
+  it("answers 502 failed when the browser cannot click", async () => {
+    const input = computerTaking(() =>
+      Effect.fail(new ActionFailed({ message: "The page has no viewport to click on." })),
+    );
+
+    const response = await input(centre, bearer);
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({
+      reason: "failed",
+      message: "The page has no viewport to click on.",
+    });
+  });
+
+  it.each([
+    '{"_tag":"Click","at":{"x":1.5,"y":0.5}}',
+    '{"_tag":"Click","at":{"x":0.5,"y":-0.1}}',
+    '{"_tag":"Click"}',
+    "not json",
+  ])("answers 400 to the body %s", async (body) => {
+    expect((await computerTaking(unused)(body, bearer)).status).toBe(400);
+  });
+
+  it("answers 401 without the token", async () => {
+    const response = await computerTaking(unused)(centre, {});
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "Not authorised." });
+  });
+
+  it("answers 403 to a caller on the computer itself, even with the token", async () => {
+    const response = await computerTaking(unused)(centre, {
+      ...bearer,
+      "x-remote-address": "127.0.0.1",
+    });
+
+    expect(response.status).toBe(403);
+  });
+});
+
 describe("GET /stream", () => {
   function stream(headers: Record<string, string>) {
     return app.handler(
@@ -282,6 +379,7 @@ async function computerShowing(page: WatchedPage) {
     Browser,
     Browser.of({
       act: () => Effect.die("unused"),
+      input: () => Effect.die("unused"),
       pages: Stream.make(page).pipe(Stream.concat(Stream.never)),
     }),
   );

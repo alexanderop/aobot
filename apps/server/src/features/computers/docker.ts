@@ -312,6 +312,15 @@ export function dockerComputers(options: DockerOptions) {
         return computerAt(address, client);
       }).pipe(untraced, oneAtATime.withPermits(1), Effect.withSpan("Computers.ensure"));
 
+      const runningComputer = SubscriptionRef.get(running).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.fail(unavailable("No computer is running.")),
+            onSome: (address) => Effect.succeed(computerAt(address, client)),
+          }),
+        ),
+      );
+
       // Stopping or removing someone else's container is not ours to do.
       const whenOurs = (effect: Effect.Effect<void, ComputerUnavailable>) =>
         engine.inspect.pipe(
@@ -348,6 +357,7 @@ export function dockerComputers(options: DockerOptions) {
 
       return Computers.of({
         ensure,
+        running: runningComputer,
         stop: whenOurs(engine.stop).pipe(Effect.withSpan("Computers.stop")),
         reset: whenOurs(engine.remove).pipe(Effect.withSpan("Computers.reset")),
         list,

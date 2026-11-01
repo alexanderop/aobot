@@ -4,8 +4,8 @@ import {
   ModelStep,
   refTo,
 } from "../../apps/server/src/features/agent/testing/model-script.ts";
-import { assert, browser, evaluate, waitFor } from "../browser.ts";
-import { answers, ask, auditRows, doneCards, modelRequests, script } from "../chat.ts";
+import { assert, browser, waitFor } from "../browser.ts";
+import { answers, ask, auditRows, cardResult, doneCards, modelRequests, script } from "../chat.ts";
 import { ancestry, traceSpans } from "../tempo.ts";
 
 const portal = "https://www.wikipedia.org/";
@@ -56,10 +56,7 @@ export default async function scenario(baseUrl: string, grafanaUrl: string): Pro
   await waitFor("the click and type cards to be done", 10_000, () => doneCards("type") === 1);
   assert(doneCards("click") === 1, "the click card is done");
 
-  const typedCard = evaluate(
-    Schema.String,
-    `document.querySelector('.tool-call[data-tool="type"] .tool-call__result')?.textContent ?? ""`,
-  );
+  const typedCard = cardResult("type");
 
   assert(holdsQuery.test(typedCard), `the transcript shows the search box holding "${query}"`);
   assert(typedCard.includes(`URL: ${portal}`), "typing did not submit the search");

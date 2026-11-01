@@ -10,7 +10,7 @@ import {
   foldChatEvent,
   initialState,
   isRunning,
-  showsScreen,
+  usesComputer,
   refuseMessage,
   seedFromSnapshot,
 } from "./conversation-state.ts";
@@ -150,11 +150,11 @@ describe("given a stored conversation", () => {
   });
 
   it("keeps the screen folded on a page that joined a running turn, since it cannot see the turn end", () => {
-    expect(showsScreen(stored({ running: true }))).toBe(false);
+    expect(usesComputer(stored({ running: true }))).toBe(false);
   });
 
   it("shows no screen when nothing is running", () => {
-    expect(showsScreen(stored({ running: false }))).toBe(false);
+    expect(usesComputer(stored({ running: false }))).toBe(false);
   });
 });
 
@@ -245,26 +245,26 @@ describe("given a Bot that calls a tool mid-answer", () => {
     const finished = fold(running, [{ type: "RUN_FINISHED", threadId: conversationId, runId }]);
 
     it("shows it once the running turn has called a tool", () => {
-      expect(showsScreen(running)).toBe(true);
+      expect(usesComputer(running)).toBe(true);
     });
 
     it("does not show it while the turn has only talked", () => {
-      expect(showsScreen(asked)).toBe(false);
-      expect(showsScreen(fold(asked, reply("Hello")))).toBe(false);
+      expect(usesComputer(asked)).toBe(false);
+      expect(usesComputer(fold(asked, reply("Hello")))).toBe(false);
     });
 
     it("folds it as the turn ends, however it ends", () => {
-      expect(showsScreen(finished)).toBe(false);
+      expect(usesComputer(finished)).toBe(false);
       expect(
-        showsScreen(fold(running, [{ type: "RUN_ERROR", message: "Stopped.", code: "stopped" }])),
+        usesComputer(fold(running, [{ type: "RUN_ERROR", message: "Stopped.", code: "stopped" }])),
       ).toBe(false);
-      expect(showsScreen(failIfStillRunning(running))).toBe(false);
+      expect(usesComputer(failIfStillRunning(running))).toBe(false);
     });
 
     it("does not show it in a new turn that has only talked, after one that used a tool", () => {
       const next = appendUserMessage(finished, MessageId.make("u2"), "Thanks");
 
-      expect(showsScreen(next)).toBe(false);
+      expect(usesComputer(next)).toBe(false);
     });
   });
 });
