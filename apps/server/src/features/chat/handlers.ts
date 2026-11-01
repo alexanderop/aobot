@@ -10,9 +10,9 @@ import {
   RunId,
   type SendMessage,
 } from "@aobot/domain";
-import { Deferred, Effect, MutableHashMap, Option, Ref, Stream } from "effect";
+import { Array, Deferred, Effect, MutableHashMap, Option, Ref, Stream } from "effect";
 import { AgentRuntime } from "../agent/public.ts";
-import { assistant, botSummary } from "../bots/public.ts";
+import { Bots, botSummary, turnInstructions } from "../bots/public.ts";
 import { ConversationStore } from "./conversation-store.ts";
 import { TurnStopped, isTerminal, turnEvents } from "./turn.ts";
 
@@ -32,6 +32,8 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
   Effect.gen(function* () {
     const store = yield* ConversationStore;
     const agent = yield* AgentRuntime;
+    // Until the page picks a Bot, every conversation is with the first Bot in the file.
+    const bot = Array.headNonEmpty((yield* Bots).list);
 
     // One server process owns every run, so this map is the whole "one run per conversation" rule:
     // an entry exists exactly while a turn runs, and a restart starts with none. Its value is that
@@ -44,7 +46,7 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
       const messages = yield* store.messages(conversationId);
 
       return {
-        bot: botSummary(assistant),
+        bot: botSummary(bot),
         messages,
         isRunning: MutableHashMap.has(runs, conversationId),
       };
@@ -81,7 +83,7 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
         () => release,
       );
 
-      yield* store.ensure(conversationId, assistant.id);
+      yield* store.ensure(conversationId, bot.id);
 
       const isNew = yield* store.append(conversationId, {
         id: message.messageId,
@@ -125,7 +127,7 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
             isStopped
               ? Stream.fail(new TurnStopped())
               : agent
-                  .run({ instructions: assistant.instructions, history })
+                  .run({ bot: bot.id, instructions: turnInstructions(bot), history })
                   .pipe(
                     Stream.interruptWhen(
                       Effect.andThen(Deferred.await(stopped), Effect.fail(new TurnStopped())),

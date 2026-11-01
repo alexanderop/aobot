@@ -11,6 +11,8 @@ export {
   SendMessage,
 } from "./chat-rpcs.ts";
 
+export { ToolName } from "./bot.ts";
+
 export { BotId, ConversationId, MessageId, RunId, ToolCallId } from "./ids.ts";
 
 export {

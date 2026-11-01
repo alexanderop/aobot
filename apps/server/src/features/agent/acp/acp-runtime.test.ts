@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { MessageId, ToolCallId } from "@aobot/domain";
+import { BotId, MessageId, ToolCallId } from "@aobot/domain";
 import { NodeChildProcessSpawner, NodeFileSystem, NodePath } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Duration, Effect, Fiber, Layer, Option, Queue, Stream, Tracer } from "effect";
@@ -15,6 +15,7 @@ import type { AcpLauncher } from "./launchers.ts";
 const fakeAgent = fileURLToPath(new URL("../testing/fake-acp-agent.ts", import.meta.url));
 
 const turn: Turn = {
+  bot: BotId.make("assistant"),
   instructions: "Answer briefly.",
   history: [{ id: MessageId.make("message-1"), role: "user", text: "Say hi" }],
 };

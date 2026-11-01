@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MessageId } from "@aobot/domain";
+import { BotId, MessageId } from "@aobot/domain";
 import {
   NodeChildProcessSpawner,
   NodeFileSystem,
@@ -43,6 +43,7 @@ pinned adapters through npx.
 const limits = { maxSteps: 4, stallTimeout: Duration.seconds(90) };
 
 const turn: Turn = {
+  bot: BotId.make("assistant"),
   instructions: "Answer briefly.",
   history: [{ id: MessageId.make("message-1"), role: "user", text: "Say hi" }],
 };
@@ -52,21 +53,28 @@ const canary = `aobot-canary-${crypto.randomUUID()}`;
 /** A line of `/etc/passwd`, on macOS and Linux alike. */
 const passwdLine = /root:[^:\n]*:0:0:/u;
 
-/** A gateway that keeps what it refused and what it was asked to do, and answers every call with a blank page. */
+/**
+A gateway that keeps what it refused and what it was asked to do on whose behalf, and answers every call
+with a blank page.
+*/
 function recordingGateway() {
   const refusals: Array<Refusal> = [];
   const requests: Array<Parameters<Gateway["Service"]["act"]>[1]> = [];
+  const askedBy: Array<Parameters<Gateway["Service"]["act"]>[0]> = [];
 
   const layer = Layer.succeed(
     Gateway,
     Gateway.of({
       refuse: (refusal) => Effect.sync(() => void refusals.push(refusal)),
-      act: (_bot, request) =>
-        Effect.sync(() => void requests.push(request)).pipe(Effect.as("The page is blank.")),
+      act: (bot, request) =>
+        Effect.sync(() => {
+          askedBy.push(bot);
+          requests.push(request);
+        }).pipe(Effect.as("The page is blank.")),
     }),
   );
 
-  return { refusals, requests, layer };
+  return { refusals, requests, askedBy, layer };
 }
 
 /** One runtime under test: how to build it against a mock model, and how its model would try to escape. */
@@ -357,7 +365,7 @@ describe.each(names)("the %s agent runtime", (name) => {
   });
 
   it.live.skipIf(Option.isNone(contender.snapshotTool))(
-    "runs a gateway tool the model calls without asking anyone for permission",
+    "runs a gateway tool the model calls on behalf of the turn's Bot, without asking anyone for permission",
     () => {
       const gateway = recordingGateway();
       const tool = Option.getOrElse(contender.snapshotTool, () => "");
@@ -383,6 +391,7 @@ describe.each(names)("the %s agent runtime", (name) => {
 
         expect(gateway.refusals).toEqual([]);
         expect(gateway.requests).toEqual([{ action: "snapshot" }]);
+        expect(gateway.askedBy).toEqual([Option.some(turn.bot)]);
         expect(textOf(events)).toContain("Read it.");
         expect(mock.requests().join("\n")).toContain("The page is blank.");
       });

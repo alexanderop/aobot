@@ -85,10 +85,48 @@ the Mac itself, the native dialog, because a rule written on the server cannot s
 person's disk. When the app is closed, a `mac` call fails with "your Mac is not connected" rather than
 waiting.
 
+## Bots and their grants
+
+An admin defines the Bots in `bots.yaml` at the repository root (`BOTS_FILE` points elsewhere; Compose
+mounts it into the server). Each Bot has an id, a name, its instructions, the tools it is granted, and
+where the sidebar shows it: `pinned`, or under a `group`.
+
+```yaml
+bots:
+  - id: researcher # lowercase letters, digits and dashes
+    name: Researcher
+    group: research
+    instructions: You are Researcher. You look things up on the web and report what you found.
+    tools: [snapshot, navigate, click]
+```
+
+The server decodes the file with Effect Schema once at start-up. A file that is missing, empty or not
+YAML, misses a field or misspells one, names a tool that does not exist, pins a Bot it also puts in a
+group, gives two Bots one id, or lists no Bot at all stops the server with the file's path, every
+problem in it and where in the file each is. An edit takes effect on the next start.
+
+Every Bot is offered every gateway tool, whichever runtime runs it, because the gateway is what enforces
+the grant: a model that calls a tool its Bot was not granted reads why. Its instructions describe only
+the tools it was granted, so a model rarely tries the others.
+
+Each turn runs on behalf of one Bot. The `api` runtime provides the turn's Bot to the tool handlers as
+`ActingBot`; the `acp` runtime offers the gateway's MCP server with an `aobot-bot` header naming it, and
+the server reads `ActingBot` from that header on every call.
+
+`Gateway.act` checks the grant before anything else the gateway does: before the door, before a ref is
+resolved or a path judged, and before any rule. Only the toolkit comes first, decoding the call's
+parameters. A tool the Bot was not granted, a Bot the file does not name, and a call that names no Bot
+are each a `deny` row with `{ reason: "not granted to <bot id>" }` (`an unnamed Bot` when it names
+none, and the header quoted as written when an `acp` CLI's `aobot-bot` header is no Bot id), the
+computer never hears of it, and the model reads:
+
+> run did not run: it is not granted to researcher. Use only the tools your instructions name.
+
 ## Life of one request
 
 1. A person sends a message with the Bot they picked.
-2. The server starts an agent turn with the Bot's instructions and its granted tools.
+2. The server starts an agent turn on behalf of that Bot, with its instructions, which name the tools it
+   was granted.
 3. The agent asks for a tool, for example `navigate`.
 4. The gateway checks the grant, then the rules, and writes one audit row either way.
 5. Only on "yes", the gateway asks the person's computer to act, and never when its row could not be
@@ -130,8 +168,8 @@ action is refused. `ComputerControl` does it, from the same layer as `Gateway`, 
 Bots' actions meet at one door. Every Bot shares the one computer until E3-3 gives each person their own,
 so there is one door for all of them, and a person who holds the computer holds it for every Bot.
 
-1. The computer has one door in the gateway, and every Bot action goes through it before anything else,
-   in `Gateway.act`, whatever the tool and whichever Bot asks. The door is `Open` while the Bots
+1. The computer has one door in the gateway, and every Bot action goes through it right after its grant
+   is checked, in `Gateway.act`, whatever the tool and whichever Bot asks. The door is `Open` while the Bots
    hold the computer, `Closing` while a take waits, and `Held` while the person holds it. Only an open
    door lets an action in. Commands wait for each other outside the door, since they share one shell, so a
    command whose turn comes while the person holds the computer is refused, and a take never waits for
@@ -226,7 +264,7 @@ copies the action, and its `detail` says why for `failed` and `unknown`.
 | `write_file` | `path`, `contents` | `POST /act {"action":"write_file","path","contents"}`         | `write_file · allow` with `{ path, name, extension, bytes }`, then `succeeded`, `failed` or `unknown`; `write_file · deny` with `{ path, name, extension, reason }` |
 | `list_files` | `path`             | `POST /act {"action":"list_files","path"}`                    | `list_files · allow` with `{ path, name, extension }`, then `succeeded`, `failed` or `unknown`; `list_files · deny` with `{ path, name, extension, reason }`        |
 
-While a person holds the computer, every tool of every Bot is refused before its ref is resolved: `<tool> · deny`
+While a person holds the computer, every granted tool of every Bot is refused before its ref is resolved: `<tool> · deny`
 with `{ reason: "a person has control" }` (see [Taking control](#taking-control)).
 
 Every browser action answers with the page read afresh: its URL, title and snapshot, capped at 12,000
@@ -253,7 +291,7 @@ on the tools, on `/act` and on both `/files` routes: `""` is read as `.`, the wo
 is trimmed, so the gateway and the computer judge the very same name, and `a.txt ` is a file of its own.
 A path is judged as the computer, which runs Linux, reads it: only a leading `/` makes it absolute and
 only `/` separates, so `c:notes.txt` and `a\b.txt` are each one file's name. A path that is absolute,
-`/workspace/notes.txt` included, or that goes up with `..` is denied before anything else, the computer
+`/workspace/notes.txt` included, or that goes up with `..` is denied before anything is forwarded, the computer
 never hears of it, and the model reads:
 
 > read_file did not run: /etc/passwd is outside your workspace. Name a file by its path inside /workspace,

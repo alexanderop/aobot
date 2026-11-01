@@ -1,10 +1,10 @@
-export { Gateway, gatewayLayer, type Refusal } from "./gateway.ts";
+export { Claim, Gateway, gatewayLayer, type Refusal } from "./gateway.ts";
 
 export { migrateGateway } from "./migrations.ts";
 
-export { gatewayMcpLayer, gatewayMcpName } from "./mcp.ts";
+export { botHeader, gatewayMcpLayer, gatewayMcpName } from "./mcp.ts";
 
-export { botToolHandlers } from "./tools.ts";
+export { ActingBot, botToolHandlers } from "./tools.ts";
 
 export { screenHandlers } from "./screen.ts";
 

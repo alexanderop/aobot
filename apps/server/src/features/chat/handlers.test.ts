@@ -14,6 +14,7 @@ import { AgentEvent, type AgentError, AgentRuntime, Stalled } from "../agent/pub
 import { ConversationStore, conversationStoreLayer } from "./conversation-store.ts";
 import { chatHandlersLayer } from "./handlers.ts";
 import { chatLayer } from "./public.ts";
+import { testBots } from "../bots/testing/test-bots.ts";
 import { testDatabase } from "./testing/test-database.ts";
 
 const conversationId = ConversationId.make("conversation-1");
@@ -21,7 +22,7 @@ const conversationId = ConversationId.make("conversation-1");
 function chatWith(answer: Stream.Stream<AgentEvent, AgentError>) {
   const agent = Layer.succeed(AgentRuntime, AgentRuntime.of({ run: () => answer }));
 
-  return chatLayer.pipe(Layer.provide([agent, testDatabase]));
+  return chatLayer.pipe(Layer.provide([agent, testDatabase, testBots]));
 }
 
 /** A chat whose store holds `ensure` open until `release` is completed, so a turn can be caught mid-startup. */
@@ -50,7 +51,10 @@ function chatWithSlowStartup(answer: Stream.Stream<AgentEvent, AgentError>) {
   return {
     entered,
     release,
-    layer: chatHandlersLayer.pipe(Layer.provide(slowStore), Layer.provide([agent, testDatabase])),
+    layer: chatHandlersLayer.pipe(
+      Layer.provide(slowStore),
+      Layer.provide([agent, testDatabase, testBots]),
+    ),
   };
 }
 
@@ -393,6 +397,6 @@ describe("Chat RPCs", () => {
 
       const next = yield* client["Chat.send"](send("Again", "user-2")).pipe(Stream.runCollect);
       expect(next.at(-1)?.type).toBe("RUN_FINISHED");
-    }).pipe(Effect.provide(chatLayer.pipe(Layer.provide([agent, testDatabase]))));
+    }).pipe(Effect.provide(chatLayer.pipe(Layer.provide([agent, testDatabase, testBots]))));
   });
 });

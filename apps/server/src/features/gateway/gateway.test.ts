@@ -41,6 +41,7 @@ import { TestClock } from "effect/testing";
 import { ToolFailed } from "../../shared/tool-result.ts";
 import { auditLogLayer, migrateAudit } from "../audit/public.ts";
 import { botToolkit } from "../bots/public.ts";
+import { assistant, researcher, testBots } from "../bots/testing/test-bots.ts";
 import {
   type Computer,
   ComputerActFailed,
@@ -50,11 +51,11 @@ import {
 } from "../computers/public.ts";
 import { fakeComputer } from "../computers/testing/fake-computer.ts";
 import { ComputerControl } from "./control.ts";
-import { Gateway, gatewayLayer } from "./gateway.ts";
+import { Claim, Gateway, gatewayLayer } from "./gateway.ts";
 import { FileTransfers } from "./transfers.ts";
-import { gatewayMcpLayer } from "./mcp.ts";
+import { botHeader, gatewayMcpLayer } from "./mcp.ts";
 import { migrateGateway } from "./migrations.ts";
-import { botToolHandlers } from "./tools.ts";
+import { ActingBot, botToolHandlers } from "./tools.ts";
 
 /**
 A computer that answers with `answers`, and keeps every page, command and file action it was sent. It is
@@ -118,7 +119,11 @@ const database = Layer.effectDiscard(Effect.andThen(migrateAudit, migrateGateway
 
 /** A gateway on the database in the context, as one server start would build it. */
 function startGateway(computers: Layer.Layer<Computers>) {
-  return gatewayLayer.pipe(Layer.provide(auditLogLayer), Layer.provide(computers));
+  return gatewayLayer.pipe(
+    Layer.provide(auditLogLayer),
+    Layer.provide(computers),
+    Layer.provide(testBots),
+  );
 }
 
 const auditRows = Effect.gen(function* () {
@@ -130,7 +135,19 @@ const auditRows = Effect.gen(function* () {
   `;
 });
 
-const bot = BotId.make("assistant");
+/** Each audit row as `action · decision`, with the reason its detail gives, oldest first. */
+const trailWithReasons = Effect.map(auditRows, (rows) =>
+  rows.map((row) => [
+    `${String(row["action"])} · ${String(row["decision"])}`,
+    JSON.parse(String(row["detail"])).reason,
+  ]),
+);
+
+const named = (id: BotId) => Claim.cases.Named.make({ bot: id });
+
+const bot = named(assistant.id);
+
+const otherBot = named(researcher.id);
 
 const { Exited, Signalled, TimedOut } = CommandEnd.cases;
 
@@ -348,6 +365,80 @@ const form = `- generic [ref=e1]:
 const sent = `- generic [ref=e1]:
   - heading "Thank you" [level=1] [ref=e4]`;
 
+describe("Gateway grants", () => {
+  it.effect("refuses a tool the Bot was not granted before resolving or forwarding anything", () =>
+    Effect.gen(function* () {
+      const computer = shell({});
+
+      const [run, type, read] = yield* Gateway.use((gateway) =>
+        Effect.all([
+          Effect.flip(gateway.act(otherBot, makeNotes)),
+          // A ref with no snapshot behind it: resolving it first would refuse it for that instead.
+          Effect.flip(gateway.act(otherBot, { action: "type", ref: "e9", text: "hunter2" })),
+          // A path outside the workspace: judging it first would refuse it for that instead.
+          Effect.flip(gateway.act(otherBot, { action: "read_file", path: "../x" })),
+        ]),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(run.message).toBe(
+        "run did not run: it is not granted to researcher. Use only the tools your instructions name.",
+      );
+      expect(type.message).toContain("type did not run: it is not granted to researcher");
+      expect(read.message).toContain("read_file did not run: it is not granted to researcher");
+      expect(computer.actions).toEqual([]);
+      expect(yield* trailWithReasons).toEqual([
+        ["run · deny", "not granted to researcher"],
+        ["type · deny", "not granted to researcher"],
+        ["read_file · deny", "not granted to researcher"],
+      ]);
+      expect(JSON.stringify(yield* auditRows)).not.toContain("hunter2");
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("refuses an ungranted tool for that, even while a person holds the computer", () =>
+    Effect.gen(function* () {
+      const refused = yield* withControl((gateway, control) =>
+        control.take.pipe(Effect.andThen(Effect.flip(gateway.act(otherBot, makeNotes)))),
+      ).pipe(Effect.provide(startGateway(shell({}).layer)));
+
+      expect(refused.message).toContain("not granted to researcher");
+      expect((yield* trailWithReasons).at(-1)).toEqual(["run · deny", "not granted to researcher"]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("refuses every tool to a Bot the server does not know, and to a call naming none", () =>
+    Effect.gen(function* () {
+      const computer = fakeComputers({ browse: exampleDomain });
+
+      yield* Gateway.use((gateway) =>
+        Effect.all([
+          Effect.flip(gateway.act(named(BotId.make("intruder")), navigate)),
+          Effect.flip(gateway.act(Claim.cases.Unnamed.make({}), navigate)),
+        ]),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(computer.actions).toEqual([]);
+      expect(yield* trailWithReasons).toEqual([
+        ["navigate · deny", "not granted to intruder"],
+        ["navigate · deny", "not granted to an unnamed Bot"],
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("lets a Bot use a tool it was granted", () =>
+    Effect.gen(function* () {
+      const computer = fakeComputers({ browse: exampleDomain });
+
+      yield* Gateway.use((gateway) => gateway.act(otherBot, navigate)).pipe(
+        Effect.provide(startGateway(computer.layer)),
+      );
+
+      expect(computer.actions).toEqual([navigate]);
+      expect(yield* auditTrail).toEqual(["navigate · allow", "navigate · succeeded"]);
+    }).pipe(Effect.provide(database)),
+  );
+});
+
 describe("Gateway refs", () => {
   it.effect(
     "denies a click on a ref missing from the latest snapshot, before the computer hears of it",
@@ -469,11 +560,7 @@ describe("Gateway refs", () => {
       const error = yield* Gateway.use((gateway) =>
         gateway
           .act(bot, { action: "snapshot" })
-          .pipe(
-            Effect.andThen(
-              Effect.flip(gateway.act(BotId.make("other"), { action: "click", ref: "e3" })),
-            ),
-          ),
+          .pipe(Effect.andThen(Effect.flip(gateway.act(otherBot, { action: "click", ref: "e3" })))),
       ).pipe(Effect.provide(startGateway(computer.layer)));
 
       expect(error.message).toContain("e3 is not a ref in your latest snapshot");
@@ -869,45 +956,84 @@ describe("Gateway run", () => {
   );
 });
 
+/**
+Serves the gateway's MCP server on a free port and calls `tool` once over HTTP with `headers`, as a CLI
+would. Answers the tool's result.
+*/
+const callOverMcp = Effect.fnUntraced(function* (
+  headers: Readonly<Record<string, string>>,
+  tool: string,
+  args: Readonly<Record<string, string>>,
+) {
+  const server = yield* Layer.build(
+    HttpRouter.serve(gatewayMcpLayer).pipe(
+      Layer.provide(startGateway(fakeComputers({ browse: exampleDomain }).layer)),
+      Layer.provideMerge(NodeHttpServer.layer(createServer, { port: 0, host: "127.0.0.1" })),
+      // As in the server: HTTP requests start no spans, so only the gateway can link the trace.
+      Layer.provide(Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true)),
+    ),
+  );
+
+  const url = `${HttpServer.formatAddress(Context.get(server, HttpServer.HttpServer).address)}/mcp`;
+
+  return yield* Effect.gen(function* () {
+    const client = yield* McpClient.McpClient;
+    const tools = yield* client.listTools();
+    const offered = tools.find((candidate) => candidate.name === tool);
+    expect(offered).toBeDefined();
+
+    return yield* client.callTool({ tool: offered!, arguments: args });
+  }).pipe(
+    Effect.provide(
+      McpClient.layerHttp({
+        name: "test-cli",
+        version: "0.0.0",
+        protocol: McpProtocol.v2025_11_25,
+        url,
+        headers,
+      }).pipe(Layer.provide(FetchHttpClient.layer)),
+    ),
+    // Only `headers` name a trace; the client's own propagation would name another.
+    Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+  );
+});
+
 describe("the gateway's MCP server", () => {
   it.live("runs a CLI's tool call inside the trace its traceparent names", () =>
     Effect.gen(function* () {
       const traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
 
-      const server = yield* Layer.build(
-        HttpRouter.serve(gatewayMcpLayer).pipe(
-          Layer.provide(startGateway(fakeComputers({ browse: exampleDomain }).layer)),
-          Layer.provideMerge(NodeHttpServer.layer(createServer, { port: 0, host: "127.0.0.1" })),
-          // As in the server: HTTP requests start no spans, so only the gateway can link the trace.
-          Layer.provide(Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true)),
-        ),
-      );
-
-      const url = `${HttpServer.formatAddress(Context.get(server, HttpServer.HttpServer).address)}/mcp`;
-
-      const result = yield* Effect.gen(function* () {
-        const client = yield* McpClient.McpClient;
-        const tools = yield* client.listTools();
-        const tool = tools.find((candidate) => candidate.name === "navigate");
-        expect(tool).toBeDefined();
-
-        return yield* client.callTool({ tool: tool!, arguments: { url: "https://example.com" } });
-      }).pipe(
-        Effect.provide(
-          McpClient.layerHttp({
-            name: "test-cli",
-            version: "0.0.0",
-            protocol: McpProtocol.v2025_11_25,
-            url,
-            headers: { traceparent: `00-${traceId}-00f067aa0ba902b7-01` },
-          }).pipe(Layer.provide(FetchHttpClient.layer)),
-        ),
-        // Only the header above names a trace; the client's own propagation would name another.
-        Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+      const result = yield* callOverMcp(
+        { traceparent: `00-${traceId}-00f067aa0ba902b7-01`, [botHeader]: assistant.id },
+        "navigate",
+        { url: "https://example.com" },
       );
 
       expect(JSON.stringify(result.content)).toContain("Example Domain");
       expect((yield* auditRows).map((row) => row["trace_id"])).toEqual([traceId, traceId]);
+    }).pipe(Effect.provide(database), Effect.scoped),
+  );
+
+  it.live("acts for the Bot its header names, with that Bot's grants", () =>
+    Effect.gen(function* () {
+      const result = yield* callOverMcp({ [botHeader]: researcher.id }, "run", { command: "ls" });
+
+      expect(JSON.stringify(result.content)).toContain(
+        "run did not run: it is not granted to researcher",
+      );
+      expect(yield* trailWithReasons).toEqual([["run · deny", "not granted to researcher"]]);
+    }).pipe(Effect.provide(database), Effect.scoped),
+  );
+
+  it.live("refuses a call that names no Bot, or one that is not a Bot id", () =>
+    Effect.gen(function* () {
+      yield* callOverMcp({}, "snapshot", {});
+      yield* callOverMcp({ [botHeader]: "Not A Bot" }, "snapshot", {});
+
+      expect(yield* trailWithReasons).toEqual([
+        ["snapshot · deny", "not granted to an unnamed Bot"],
+        ["snapshot · deny", 'not granted to "Not A Bot"'],
+      ]);
     }).pipe(Effect.provide(database), Effect.scoped),
   );
 });
@@ -961,6 +1087,7 @@ describe("Gateway control", () => {
             }),
           );
         }).pipe(
+          Effect.provideService(ActingBot, bot),
           Effect.provide(botToolHandlers.pipe(Layer.provideMerge(startGateway(computer.layer)))),
         );
 
@@ -1003,9 +1130,7 @@ describe("Gateway control", () => {
       const refused = yield* withControl((gateway, control) =>
         control.take.pipe(
           Effect.andThen(
-            Effect.forEach([bot, BotId.make("researcher")], (asking) =>
-              Effect.flip(gateway.act(asking, navigate)),
-            ),
+            Effect.forEach([bot, otherBot], (asking) => Effect.flip(gateway.act(asking, navigate))),
           ),
         ),
       ).pipe(Effect.provide(startGateway(computer.layer)));
@@ -1177,16 +1302,14 @@ describe("Gateway control", () => {
     "forgets every Bot's latest snapshot on hand back, since the page may have changed",
     () =>
       Effect.gen(function* () {
-        const other = BotId.make("researcher");
-
         const stale = yield* withControl((gateway, control) =>
           Effect.gen(function* () {
             yield* gateway.act(bot, { action: "snapshot" });
-            yield* gateway.act(other, { action: "snapshot" });
+            yield* gateway.act(otherBot, { action: "snapshot" });
             yield* control.take;
             yield* control.handBack;
 
-            return yield* Effect.forEach([bot, other], (asking) =>
+            return yield* Effect.forEach([bot, otherBot], (asking) =>
               Effect.flip(gateway.act(asking, { action: "click", ref: "e1" })),
             );
           }),

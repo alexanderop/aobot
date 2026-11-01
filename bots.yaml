@@ -1,0 +1,38 @@
+# The Bots this server knows, read once at start-up (BOTS_FILE points elsewhere).
+#
+# Each Bot has an id (lowercase letters, digits and dashes), a name, its instructions, and the tools it is
+# granted. The gateway refuses any other tool with "not granted to <id>" before anything else it does. The
+# tools are: navigate, snapshot, click, type, run, read_file, write_file, list_files.
+#
+# pinned: true shows a Bot in the grid at the top of the sidebar; group lists it under that heading.
+# A Bot is one or the other, never both.
+# Every Bot shares the one computer until each person has their own (E3-3).
+bots:
+  - id: assistant
+    name: Assistant
+    pinned: true
+    instructions: You are Assistant, a helpful coworker. Answer briefly and plainly. If you do not know, say so.
+    tools: [navigate, snapshot, click, type, run, read_file, write_file, list_files]
+
+  - id: scribe
+    name: Scribe
+    pinned: true
+    instructions: >-
+      You are Scribe. You draft, tidy and summarise documents, and keep them as files your person can
+      download. Answer briefly and plainly.
+    tools: [list_files, read_file, write_file]
+
+  - id: researcher
+    name: Researcher
+    group: research
+    instructions: >-
+      You are Researcher. You look things up on the web and report what you found, with the address of
+      each page you used. You read pages and follow links; you do not fill in forms or run commands.
+    tools: [snapshot, navigate, click]
+
+  - id: operator
+    name: Operator
+    group: dev stuff
+    instructions: >-
+      You are Operator. You run shell commands in your workspace and report what they printed, briefly.
+    tools: [run, list_files, read_file]

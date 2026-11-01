@@ -14,7 +14,7 @@ import {
 } from "effect";
 import { HttpTraceContext } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { Gateway, gatewayMcpName } from "../../gateway/public.ts";
+import { botHeader, Gateway, gatewayMcpName } from "../../gateway/public.ts";
 import {
   type AgentEvent,
   AgentRuntime,
@@ -206,13 +206,17 @@ export function layerAcp(options: AcpRuntimeOptions) {
           Option.getOrElse(() => false),
         );
 
-        // The CLI sends these on every call to the gateway, so its tool calls land in this turn's trace.
-        const traceHeaders = Option.match(yield* Effect.option(Effect.currentSpan), {
-          onNone: () => [],
-          onSome: (span) => [
-            { name: "traceparent", value: HttpTraceContext.toHeaders(span).traceparent },
-          ],
-        });
+        // The CLI sends these on every call to the gateway, so its tool calls are this turn's Bot's and
+        // land in this turn's trace.
+        const turnHeaders = [
+          { name: botHeader, value: turn.bot },
+          ...Option.match(yield* Effect.option(Effect.currentSpan), {
+            onNone: () => [],
+            onSome: (span) => [
+              { name: "traceparent", value: HttpTraceContext.toHeaders(span).traceparent },
+            ],
+          }),
+        ];
 
         const { sessionId } = yield* ask(
           connection,
@@ -225,7 +229,7 @@ export function layerAcp(options: AcpRuntimeOptions) {
                     type: "http",
                     name: gatewayMcpName,
                     url: options.gatewayMcpUrl,
-                    headers: traceHeaders,
+                    headers: turnHeaders,
                   },
                 ]
               : [],

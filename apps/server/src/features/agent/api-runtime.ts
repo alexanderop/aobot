@@ -9,6 +9,7 @@ import {
   type Tool,
   type Toolkit,
 } from "effect/ai";
+import { ActingBot, Claim } from "../gateway/public.ts";
 import {
   AgentEvent,
   type AgentError,
@@ -139,6 +140,8 @@ export function layerApi<Tools extends Record<string, Tool.Any>>(
 
       const run = (turn: Turn) =>
         Stream.unwrap(Effect.map(Chat.fromPrompt(toPrompt(turn)), (chat) => step(chat, 1))).pipe(
+          // Innermost, so the tool services captured when the runtime was built cannot replace it.
+          Stream.provideService(ActingBot, Claim.cases.Named.make({ bot: turn.bot })),
           Stream.provideService(LanguageModel.LanguageModel, model),
           Stream.provideContext(toolServices),
           Stream.withSpan("AgentRuntime.run"),

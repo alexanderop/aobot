@@ -1,5 +1,5 @@
 import {
-  type BotId,
+  BotId,
   ComputerAction,
   commandTimeLimit,
   escapesWorkspace,
@@ -11,6 +11,7 @@ import {
 } from "@aobot/domain";
 import { Context, Duration, Effect, Layer, Match, Option, Result, Schema } from "effect";
 import { AuditLog, type Outcome } from "../audit/public.ts";
+import { Bots, isGranted } from "../bots/public.ts";
 import {
   type Computer,
   type ComputerActFailed,
@@ -64,22 +65,48 @@ export const BotRequest = Schema.Union([
 /** A decoded {@link BotRequest}. */
 export type BotRequest = typeof BotRequest.Type;
 
+/**
+The Bot a call says it is made for: one named by its id, or, from an `acp` CLI whose `aobot-bot` header
+is no Bot id, that header as it was written. Only a named Bot can have been granted anything.
+*/
+export const Claim = Schema.TaggedUnion({
+  Named: { bot: BotId },
+  Unreadable: { header: Schema.String },
+  Unnamed: {},
+});
+
+/** A decoded {@link Claim}. */
+export type Claim = typeof Claim.Type;
+
 /** The only door a Bot's actions go through. */
 export class Gateway extends Context.Service<
   Gateway,
   {
     readonly refuse: (refusal: Refusal) => Effect.Effect<void>;
     /**
-    Refuses the call while a person holds the computer. Otherwise resolves its ref against the
-    Bot's latest snapshot, records the call, forwards it to the computer, records what became of it, and
-    answers what the model reads. A call that could not be carried out is a `ToolFailed` the model reads,
-    never a dead turn.
+    Refuses the call when the Bot it claims was not granted its tool, or is no Bot the server knows,
+    before anything else the gateway does. Then refuses it while a person holds the computer. Otherwise
+    resolves its ref against the latest snapshot, records the call, forwards it to the computer, records
+    what became of it, and answers what the model reads. A call that could not be carried out is a
+    `ToolFailed` the model reads, never a dead turn.
     */
-    readonly act: (bot: BotId, request: BotRequest) => Effect.Effect<string, ToolFailed>;
+    readonly act: (claim: Claim, request: BotRequest) => Effect.Effect<string, ToolFailed>;
   }
 >()("aobot/gateway/Gateway") {}
 
 type ActionName = ComputerAction["action"];
+
+/** The Bot a call claims was not granted the tool, or is no Bot the server knows, so it is denied. */
+class NotGranted extends Schema.TaggedError<NotGranted>()("NotGranted", { claim: Claim }) {}
+
+const claimedHeaderLimit = 100;
+
+/** How a refusal names the Bot a call claimed: its id, the header as written, or none. */
+const claimedName = Claim.match({
+  Named: ({ bot }): string => bot,
+  Unreadable: ({ header }) => JSON.stringify(capText(header, claimedHeaderLimit)),
+  Unnamed: () => "an unnamed Bot",
+});
 
 /** A ref the gateway could not find in the Bot's latest snapshot, so the call is denied. */
 class UnknownRef extends Schema.TaggedError<UnknownRef>()("UnknownRef", {
@@ -100,6 +127,11 @@ function outsideWorkspaceAnswer({ action, path }: FileAction): string {
 /** What the model reads when its ref is not in its latest snapshot. */
 function unknownRefAnswer(action: ActionName, ref: string): string {
   return `${action} did not run: ${ref} is not a ref in your latest snapshot. Take a snapshot and use a ref from it.`;
+}
+
+/** What the model reads when it asks for a tool it was not granted. */
+function notGrantedAnswer(action: ActionName, claim: Claim): string {
+  return `${action} did not run: it is not granted to ${claimedName(claim)}. Use only the tools your instructions name.`;
 }
 
 /** What the model reads, whatever it asked for, while a person holds its computer. */
@@ -212,6 +244,7 @@ door, and {@link FileTransfers}, so a person's files are audited in the same tra
 export const gatewayLayer = Layer.effectContext(
   Effect.gen(function* () {
     const audit = yield* AuditLog;
+    const bots = yield* Bots;
     const rows = yield* personAudit;
     const computers = yield* Computers;
     const snapshots = yield* snapshotStore;
@@ -334,11 +367,12 @@ export const gatewayLayer = Layer.effectContext(
     });
 
     const carryOut = Effect.fnUntraced(function* (bot: BotId, request: BotRequest) {
-      // A ref is resolved before anything else, so the rules E2 brings judge the element, not its ref.
+      // A ref is resolved before any rule, so the rules E2 brings judge the element, not its ref.
       // A path outside the workspace is denied here; the computer still confines every path itself.
       const action = yield* resolve(bot, request);
 
-      // Grants and rules arrive with E2. Until then everything is allowed, and still recorded first.
+      // The grant was checked before the door. Rules arrive with E2-2; until then a granted call is
+      // allowed, and still recorded first.
       const allowRow = yield* rows.decide("allow", action.action, auditDetail(action)).pipe(
         Effect.tapError((error) =>
           Effect.logError(
@@ -371,14 +405,34 @@ export const gatewayLayer = Layer.effectContext(
       return yield* Effect.fromResult(settled.answer);
     });
 
-    const act = Effect.fn("Gateway.act")(function* (bot: BotId, request: BotRequest) {
+    /** The Bot `claim` names, when the server knows it and it was granted `tool`. */
+    const grant = (claim: Claim, tool: ActionName): Effect.Effect<BotId, NotGranted> => {
+      const known = Claim.guards.Named(claim) ? bots.get(claim.bot) : Option.none();
+
+      return Option.match(
+        Option.filter(known, (bot) => isGranted(bot, tool)),
+        {
+          onNone: () => Effect.fail(new NotGranted({ claim })),
+          onSome: (bot) => Effect.succeed(bot.id),
+        },
+      );
+    };
+
+    const act = Effect.fn("Gateway.act")(function* (claim: Claim, request: BotRequest) {
       yield* Effect.annotateCurrentSpan({ "gateway.action": request.action });
 
       // Commands run one at a time, in the order they were asked for.
       const queued = request.action === "run";
 
-      return yield* doors.admit(carryOut(bot, request), { queued }).pipe(
+      return yield* grant(claim, request.action).pipe(
+        Effect.flatMap((bot) => doors.admit(carryOut(bot, request), { queued })),
         Effect.catchTags({
+          NotGranted: (refused) =>
+            deny(
+              request.action,
+              { reason: `not granted to ${claimedName(refused.claim)}` },
+              notGrantedAnswer(request.action, refused.claim),
+            ),
           PersonHasControl: () =>
             spanEvent("control.refused").pipe(
               Effect.andThen(

@@ -6,6 +6,8 @@ import { privateHostsProblem, sharedSubscriptionProblem } from "./local-only.ts"
 
 const builtWebApp = fileURLToPath(new URL("../../../web/dist", import.meta.url));
 
+const botsAtTheRoot = fileURLToPath(new URL("../../../../bots.yaml", import.meta.url));
+
 const settings = Config.all({
   deployment: Config.Literals(["development", "production"], "AOBOT_ENV").pipe(
     Config.withDefault("development"),
@@ -19,6 +21,8 @@ const settings = Config.all({
   singleUser: Config.Boolean("SINGLE_USER").pipe(Config.withDefault(false)),
   webDistDir: Config.String("WEB_DIST_DIR").pipe(Config.withDefault(builtWebApp)),
   databasePath: Config.String("DATABASE_PATH").pipe(Config.withDefault("data/aobot.db")),
+  // The Bots this server knows. Read once at start-up: an edit takes effect on the next start.
+  botsFile: Config.String("BOTS_FILE").pipe(Config.withDefault(botsAtTheRoot)),
   // Unset means no telemetry export, so the server runs without a collector.
   otlpEndpoint: Config.option(Config.String("OTEL_EXPORTER_OTLP_ENDPOINT")),
   runtime: agentRuntimeConfig,

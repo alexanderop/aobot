@@ -23,7 +23,7 @@ import {
   layerApi,
 } from "../features/agent/public.ts";
 import { auditLogLayer, migrateAudit } from "../features/audit/public.ts";
-import { botToolkit } from "../features/bots/public.ts";
+import { botsFileLayer, botToolkit } from "../features/bots/public.ts";
 import { chatLayer, migrateChat } from "../features/chat/public.ts";
 import { computersLayer } from "../features/computers/public.ts";
 import {
@@ -61,6 +61,9 @@ const server = Layer.unwrap(
 
     const ownAddress = isIPv6(config.host) ? `[${config.host}]` : config.host;
 
+    // Read once, so the chat and the gateway know the same Bots with the same grants.
+    const bots = botsFileLayer(config.botsFile).pipe(Layer.provide(NodeFileSystem.layer));
+
     // One Computers for the gateway and the screen: two would start two containers with two tokens.
     const computers = computersLayer(config.computers, { otlpEndpoint: config.otlpEndpoint }).pipe(
       Layer.provide([FetchHttpClient.layer, NodeWS.layerWebSocketConstructor]),
@@ -71,6 +74,7 @@ const server = Layer.unwrap(
     const gateway = gatewayLayer.pipe(
       Layer.provide(auditLogLayer),
       Layer.provide(computers),
+      Layer.provide(bots),
       Layer.provide(database),
     );
 
@@ -118,6 +122,7 @@ const server = Layer.unwrap(
         controlHandlers.pipe(Layer.provide(gateway)),
       ]),
       Layer.provide(runtime.agent),
+      Layer.provide(bots),
       Layer.provide(database),
     );
 

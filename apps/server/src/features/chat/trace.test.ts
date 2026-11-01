@@ -5,6 +5,7 @@ import { LanguageModel, type Response, Toolkit } from "effect/ai";
 import { RpcTest } from "effect/rpc";
 import { layerApi } from "../agent/public.ts";
 import { chatLayer } from "./public.ts";
+import { testBots } from "../bots/testing/test-bots.ts";
 import { testDatabase } from "./testing/test-database.ts";
 
 /** A tracer that keeps every span it starts, so a test can read the tree a turn produced. */
@@ -87,7 +88,7 @@ describe("Chat tracing", () => {
         expect.arrayContaining(["Chat.turn", "AgentRuntime.run", "LanguageModel.streamText"]),
       ]);
     }).pipe(
-      Effect.provide(chatLayer.pipe(Layer.provide([agent, testDatabase]))),
+      Effect.provide(chatLayer.pipe(Layer.provide([agent, testDatabase, testBots]))),
       Effect.provide(recorder.layer),
     );
   });
