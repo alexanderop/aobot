@@ -655,6 +655,61 @@ describe("Gateway run", () => {
     }).pipe(Effect.provide(database)),
   );
 
+  it.effect("never forwards a command stopped while it waits for the Bot's command before it", () =>
+    Effect.gen(function* () {
+      const forwarded = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+
+      const computer = fakeComputers(() =>
+        Deferred.succeed(forwarded, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as({
+            action: "run",
+            end: Exited.make({ code: 0 }),
+            stdout: printed(""),
+            stderr: printed(""),
+            leftOutputOpen: false,
+          } as const),
+        ),
+      );
+
+      const first = { action: "run", command: "sleep 3" } as const;
+      const next = { action: "run", command: "ls" } as const;
+
+      yield* Gateway.use((gateway) =>
+        Effect.gen(function* () {
+          const running = yield* Effect.forkChild(gateway.act(bot, first));
+          yield* Deferred.await(forwarded);
+
+          const waiting = yield* Effect.forkChild(
+            gateway.act(bot, { action: "run", command: "touch b-ran" }),
+            { startImmediately: true },
+          );
+
+          yield* Fiber.interrupt(waiting);
+
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(running);
+          // Queued after the stopped one, so it would have run by the time this one answers.
+          yield* gateway.act(bot, next);
+        }),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(computer.actions).toEqual([first, next]);
+      expect(
+        (yield* auditRows).map((row) => [
+          row["decision"],
+          JSON.parse(String(row["detail"])).command,
+        ]),
+      ).toEqual([
+        ["allow", first.command],
+        ["succeeded", undefined],
+        ["allow", next.command],
+        ["succeeded", undefined],
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
   it.effect("keeps the Bot's latest page when a command answers, so its refs still resolve", () =>
     Effect.gen(function* () {
       const computer = shell({ stdout: printed("- heading [ref=e9]\n") });
