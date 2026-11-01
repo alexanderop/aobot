@@ -41,6 +41,8 @@ export {
   ScreenPoint,
 } from "./control.ts";
 
+export { ControlRpcs } from "./control-rpcs.ts";
+
 export { ScreenRpcs } from "./screen-rpcs.ts";
 
 export { keepFirst, keepLast } from "./text.ts";

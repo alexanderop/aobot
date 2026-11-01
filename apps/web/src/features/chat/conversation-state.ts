@@ -283,11 +283,11 @@ function calledToolThisTurn(transcript: ReadonlyArray<TranscriptItem>): boolean 
 }
 
 /**
-Whether the Bot's screen is worth showing: a run this page started is in flight and has called a tool this
-turn. A page that joined a running turn sees none of its steps, nor when it ends, so it keeps the screen
-folded.
+Whether the Bot uses its computer this turn, so its screen is worth showing: a run this page started is in
+flight and has called a tool this turn. A page that joined a running turn sees none of its steps, nor when
+it ends, so it keeps the screen folded.
 */
-export function showsScreen(state: ConversationState): boolean {
+export function usesComputer(state: ConversationState): boolean {
   return isRunning(state) && calledToolThisTurn(state.transcript);
 }
 

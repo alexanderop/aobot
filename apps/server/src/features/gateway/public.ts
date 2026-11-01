@@ -7,3 +7,5 @@ export { gatewayMcpLayer, gatewayMcpName } from "./mcp.ts";
 export { botToolHandlers } from "./tools.ts";
 
 export { screenHandlers } from "./screen.ts";
+
+export { controlHandlers } from "./control-rpcs.ts";

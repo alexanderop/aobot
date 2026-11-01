@@ -1,4 +1,4 @@
-import { ChatRpcs, ConversationId, MessageId } from "@aobot/domain";
+import { ChatRpcs, ControlRpcs, ConversationId, MessageId } from "@aobot/domain";
 import { SqliteClient } from "@effect/sql-sqlite-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Duration, Effect, Layer, Option, Predicate, Stream, Tracer } from "effect";
@@ -10,7 +10,12 @@ import { auditLogLayer, migrateAudit } from "../features/audit/public.ts";
 import { botToolkit } from "../features/bots/public.ts";
 import { chatLayer, migrateChat } from "../features/chat/public.ts";
 import { Computers } from "../features/computers/public.ts";
-import { botToolHandlers, gatewayLayer, migrateGateway } from "../features/gateway/public.ts";
+import {
+  botToolHandlers,
+  controlHandlers,
+  gatewayLayer,
+  migrateGateway,
+} from "../features/gateway/public.ts";
 import { toolInputsRedacted } from "../shared/span-redaction.ts";
 
 /**
@@ -97,7 +102,7 @@ const computers = Layer.succeed(
           truncated: false,
         } as const),
     }),
-    running: Effect.die("nobody takes control here"),
+    running: Effect.die("nobody clicks here"),
     stop: Effect.void,
     reset: Effect.void,
     list: Effect.succeed([]),
@@ -157,6 +162,51 @@ describe("a tool call in an api turn", () => {
         Effect.provide(chatLayer.pipe(Layer.provide(agent))),
         Effect.provide(database),
         Effect.provide(recorder.layer),
+      );
+    },
+  );
+
+  it.effect(
+    "refuses the Bot's call once the page took control: the agent and the page share one door",
+    () => {
+      const model = navigatingModel();
+
+      // As main.ts builds it: one gateway reference, provided to the agent's tools and the page's controls.
+      const gateway = gatewayLayer.pipe(Layer.provide([auditLogLayer, computers]));
+
+      const agent = layerApi(botToolkit, { maxSteps: 4, stallTimeout: Duration.seconds(60) }).pipe(
+        Layer.provide(botToolHandlers),
+        Layer.provide(gateway),
+        Layer.provide(model.layer),
+      );
+
+      return Effect.gen(function* () {
+        const chat = yield* RpcTest.makeClient(ChatRpcs);
+        const control = yield* RpcTest.makeClient(ControlRpcs);
+        const sql = yield* SqlClient.SqlClient;
+
+        yield* control["Control.take"]();
+
+        yield* chat["Chat.send"]({
+          conversationId: ConversationId.make("conversation-1"),
+          messageId: MessageId.make("user-1"),
+          text: "Open example.com and tell me the page title.",
+        }).pipe(Stream.runCollect);
+
+        const rows = yield* sql`SELECT decision, action FROM audit_rows ORDER BY seq`;
+        expect(rows).toEqual([
+          { decision: "allow", action: "control_taken" },
+          { decision: "succeeded", action: "control_taken" },
+          { decision: "deny", action: "navigate" },
+        ]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            chatLayer.pipe(Layer.provide(agent)),
+            controlHandlers.pipe(Layer.provide(gateway)),
+          ),
+        ),
+        Effect.provide(database),
       );
     },
   );
