@@ -29,6 +29,10 @@ const ownerLabel = "aobot.computer";
 
 const healthTimeout = Duration.seconds(60);
 
+// Docker Desktop can accept a connection to the published port just as the computer starts listening and
+// never answer it, so one poll must not be allowed to wait out the whole start.
+const healthPollTimeout = Duration.seconds(2);
+
 /** What the docker provider needs: where Docker is, what to run, and what the computer is told. */
 export interface DockerOptions {
   readonly docker: DockerSettings;
@@ -242,6 +246,7 @@ export function dockerComputers(options: DockerOptions) {
       const answering = (address: ComputerAddress) =>
         client.get(new URL("/health", address.url)).pipe(
           Effect.flatMap(HttpClientResponse.filterStatusOk),
+          Effect.timeout(healthPollTimeout),
           Effect.retry(Schedule.spaced("250 millis")),
           Effect.mapError((error) =>
             unavailable(`${containerName} is not answering: ${error.message}`),
