@@ -70,7 +70,7 @@ export class Gateway extends Context.Service<
   {
     readonly refuse: (refusal: Refusal) => Effect.Effect<void>;
     /**
-    Refuses the call while a person holds the Bot's computer. Otherwise resolves its ref against the
+    Refuses the call while a person holds the computer. Otherwise resolves its ref against the
     Bot's latest snapshot, records the call, forwards it to the computer, records what became of it, and
     answers what the model reads. A call that could not be carried out is a `ToolFailed` the model reads,
     never a dead turn.
@@ -206,8 +206,8 @@ function settle(name: ActionName, result: Result.Result<string, ForwardFailure>)
 
 /**
 The {@link Gateway}: one audit row per decision, and one outcome row per allowed call. The same layer
-provides {@link ComputerControl}, so a person's take and the Bot's actions meet at one door per Bot, and
-{@link FileTransfers}, so a person's files are audited in the same trail.
+provides {@link ComputerControl}, so a person's take and every Bot's actions meet at the computer's one
+door, and {@link FileTransfers}, so a person's files are audited in the same trail.
 */
 export const gatewayLayer = Layer.effectContext(
   Effect.gen(function* () {
@@ -374,10 +374,10 @@ export const gatewayLayer = Layer.effectContext(
     const act = Effect.fn("Gateway.act")(function* (bot: BotId, request: BotRequest) {
       yield* Effect.annotateCurrentSpan({ "gateway.action": request.action });
 
-      // A Bot's commands run one at a time, in the order it asked for them.
+      // Commands run one at a time, in the order they were asked for.
       const queued = request.action === "run";
 
-      return yield* doors.admit(bot, carryOut(bot, request), { queued }).pipe(
+      return yield* doors.admit(carryOut(bot, request), { queued }).pipe(
         Effect.catchTags({
           PersonHasControl: () =>
             spanEvent("control.refused").pipe(

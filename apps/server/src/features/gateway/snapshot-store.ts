@@ -29,10 +29,10 @@ export const snapshotStore = Effect.gen(function* () {
     `;
   });
 
-  /** Forgets the Bot's latest snapshot, so none of its refs resolve until it reads a page again. */
-  const forget = Effect.fn("SnapshotStore.forget")(function* (bot: BotId) {
-    yield* sql`DELETE FROM bot_snapshots WHERE bot_id = ${bot}`;
+  /** Forgets every Bot's latest snapshot, so no ref resolves until its Bot reads a page again. */
+  const forgetAll = Effect.fn("SnapshotStore.forgetAll")(function* () {
+    yield* sql`DELETE FROM bot_snapshots`;
   });
 
-  return { latest, save, forget };
+  return { latest, save, forgetAll };
 });

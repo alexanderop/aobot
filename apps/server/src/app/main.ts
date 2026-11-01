@@ -67,7 +67,7 @@ const server = Layer.unwrap(
     );
 
     // One gateway for both runtimes, the MCP server and the control handlers: layers are built once per
-    // reference, so there is one door per Bot whoever asks.
+    // reference, so there is one door to the computer whoever asks.
     const gateway = gatewayLayer.pipe(
       Layer.provide(auditLogLayer),
       Layer.provide(computers),

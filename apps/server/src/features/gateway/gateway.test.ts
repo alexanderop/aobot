@@ -22,6 +22,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   Arbitrary,
   Context,
+  DateTime,
   Deferred,
   Duration,
   Effect,
@@ -922,7 +923,7 @@ const auditTrail = Effect.map(auditRows, (rows) =>
 
 /** The Bot's control as the page would first be shown it. */
 const controlNow = ComputerControl.use((control) =>
-  control.watch(bot).pipe(Stream.runHead, Effect.map(Option.getOrThrow)),
+  control.watch.pipe(Stream.runHead, Effect.map(Option.getOrThrow)),
 );
 
 /** `use` of the gateway and its control, as one server start provides them. */
@@ -943,7 +944,7 @@ describe("Gateway control", () => {
         const tools = Object.values(botToolkit.tools);
 
         const results = yield* Effect.gen(function* () {
-          yield* ComputerControl.use((control) => control.take(bot));
+          yield* ComputerControl.use((control) => control.take);
           const toolkit = yield* botToolkit;
 
           return yield* Effect.forEach(tools, (tool) =>
@@ -986,12 +987,34 @@ describe("Gateway control", () => {
   it.effect("tells the model a person has control, whatever it asked for", () =>
     Effect.gen(function* () {
       const error = yield* withControl((gateway, control) =>
-        control.take(bot).pipe(Effect.andThen(Effect.flip(gateway.act(bot, navigate)))),
+        control.take.pipe(Effect.andThen(Effect.flip(gateway.act(bot, navigate)))),
       ).pipe(Effect.provide(startGateway(shell({}).layer)));
 
       expect(error.message).toBe(
         "navigate did not run: a person has control of your computer. Wait until they hand it back, then take a snapshot.",
       );
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("refuses every Bot while a person holds the one computer they share", () =>
+    Effect.gen(function* () {
+      const computer = shell({});
+
+      const refused = yield* withControl((gateway, control) =>
+        control.take.pipe(
+          Effect.andThen(
+            Effect.forEach([bot, BotId.make("researcher")], (asking) =>
+              Effect.flip(gateway.act(asking, navigate)),
+            ),
+          ),
+        ),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(refused.map((error) => error.message)).toEqual([
+        expect.stringContaining(personHasControl),
+        expect.stringContaining(personHasControl),
+      ]);
+      expect(computer.actions).toEqual([]);
     }).pipe(Effect.provide(database)),
   );
 
@@ -1022,13 +1045,14 @@ describe("Gateway control", () => {
 
             yield* Deferred.await(admitted);
 
-            const taking = yield* Effect.forkChild(control.take(bot), {
+            const taking = yield* Effect.forkChild(control.take, {
               startImmediately: true,
             });
 
-            const waiting = yield* control
-              .watch(bot)
-              .pipe(Stream.filter(Control.guards.Taking), Stream.runHead);
+            const waiting = yield* control.watch.pipe(
+              Stream.filter(Control.guards.Taking),
+              Stream.runHead,
+            );
 
             expect(waiting).toEqual(Option.some(Control.cases.Taking.make({ waitingFor: 1 })));
 
@@ -1086,7 +1110,7 @@ describe("Gateway control", () => {
             { startImmediately: true },
           );
 
-          const taking = yield* Effect.forkChild(control.take(bot), {
+          const taking = yield* Effect.forkChild(control.take, {
             startImmediately: true,
           });
 
@@ -1107,7 +1131,7 @@ describe("Gateway control", () => {
     Effect.gen(function* () {
       const computer = shell({});
 
-      yield* ComputerControl.use((control) => control.take(bot)).pipe(
+      yield* ComputerControl.use((control) => control.take).pipe(
         Effect.provide(startGateway(computer.layer)),
       );
 
@@ -1120,7 +1144,7 @@ describe("Gateway control", () => {
       expect(refused.message).toContain(personHasControl);
       expect(computer.actions).toEqual([]);
 
-      yield* ComputerControl.use((control) => control.handBack(bot)).pipe(
+      yield* ComputerControl.use((control) => control.handBack).pipe(
         Effect.provide(startGateway(computer.layer)),
       );
 
@@ -1130,6 +1154,51 @@ describe("Gateway control", () => {
     }).pipe(Effect.provide(database)),
   );
 
+  it.effect("keeps a person holding a Bot's computer in control once the computer is shared", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`DELETE FROM computer_control`;
+      yield* sql`DROP TABLE computer_control`;
+      yield* sql`CREATE TABLE bot_control (bot_id text PRIMARY KEY, since text NOT NULL)`;
+      yield* sql`INSERT INTO bot_control VALUES ('assistant', '2026-10-01T09:00:00.000Z')`;
+      yield* sql`DELETE FROM gateway_migrations WHERE name = 'share_computer_control'`;
+
+      yield* migrateGateway;
+
+      const control = yield* controlNow.pipe(Effect.provide(startGateway(shell({}).layer)));
+
+      expect(control).toEqual(
+        Control.cases.Person.make({ since: DateTime.makeUnsafe("2026-10-01T09:00:00.000Z") }),
+      );
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect(
+    "forgets every Bot's latest snapshot on hand back, since the page may have changed",
+    () =>
+      Effect.gen(function* () {
+        const other = BotId.make("researcher");
+
+        const stale = yield* withControl((gateway, control) =>
+          Effect.gen(function* () {
+            yield* gateway.act(bot, { action: "snapshot" });
+            yield* gateway.act(other, { action: "snapshot" });
+            yield* control.take;
+            yield* control.handBack;
+
+            return yield* Effect.forEach([bot, other], (asking) =>
+              Effect.flip(gateway.act(asking, { action: "click", ref: "e1" })),
+            );
+          }),
+        ).pipe(Effect.provide(startGateway(fakeComputers({ browse: exampleDomain }).layer)));
+
+        expect(stale.map((error) => error.message)).toEqual([
+          expect.stringContaining("e1 is not a ref in your latest snapshot"),
+          expect.stringContaining("e1 is not a ref in your latest snapshot"),
+        ]);
+      }).pipe(Effect.provide(database)),
+  );
+
   it.effect("refuses the Bot's old refs after hand back, until it reads the page again", () =>
     Effect.gen(function* () {
       const computer = fakeComputers({ browse: exampleDomain });
@@ -1137,9 +1206,9 @@ describe("Gateway control", () => {
       const [handedBack, stale] = yield* withControl((gateway, control) =>
         Effect.gen(function* () {
           yield* gateway.act(bot, { action: "snapshot" });
-          yield* control.take(bot);
+          yield* control.take;
 
-          const handedBack = yield* control.handBack(bot);
+          const handedBack = yield* control.handBack;
           const stale = yield* Effect.flip(gateway.act(bot, { action: "click", ref: "e1" }));
 
           yield* gateway.act(bot, { action: "snapshot" });
@@ -1174,12 +1243,7 @@ describe("Gateway control", () => {
   it.effect("records one take and one hand back, however often each is asked for", () =>
     Effect.gen(function* () {
       const answers = yield* ComputerControl.use((control) =>
-        Effect.all([
-          control.take(bot),
-          control.take(bot),
-          control.handBack(bot),
-          control.handBack(bot),
-        ]),
+        Effect.all([control.take, control.take, control.handBack, control.handBack]),
       ).pipe(Effect.provide(startGateway(shell({}).layer)));
 
       expect(answers.map((control) => control._tag)).toEqual(["Person", "Person", "Bot", "Bot"]);
@@ -1197,9 +1261,9 @@ describe("Gateway control", () => {
       const [error, control] = yield* withControl((gateway, control) =>
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
-          yield* sql`DROP TABLE bot_control`;
+          yield* sql`DROP TABLE computer_control`;
 
-          const error = yield* Effect.flip(control.take(bot));
+          const error = yield* Effect.flip(control.take);
           yield* gateway.act(bot, navigate);
 
           return [error, yield* controlNow] as const;
@@ -1228,13 +1292,13 @@ describe("Gateway control", () => {
 
       const [before, after] = yield* ComputerControl.use((control) =>
         Effect.gen(function* () {
-          const before = yield* Effect.flip(control.input(bot, centre));
+          const before = yield* Effect.flip(control.input(centre));
 
-          yield* control.take(bot);
-          yield* control.input(bot, centre);
-          yield* control.handBack(bot);
+          yield* control.take;
+          yield* control.input(centre);
+          yield* control.handBack;
 
-          return [before, yield* Effect.flip(control.input(bot, centre))] as const;
+          return [before, yield* Effect.flip(control.input(centre))] as const;
         }),
       ).pipe(Effect.provide(startGateway(computer.layer)));
 
@@ -1260,11 +1324,9 @@ describe("Gateway control", () => {
       });
 
       const error = yield* ComputerControl.use((control) =>
-        control
-          .take(bot)
-          .pipe(
-            Effect.andThen(Effect.flip(control.input(bot, Click.make({ at: { x: 0, y: 0 } })))),
-          ),
+        control.take.pipe(
+          Effect.andThen(Effect.flip(control.input(Click.make({ at: { x: 0, y: 0 } })))),
+        ),
       ).pipe(Effect.provide(startGateway(computer.layer)));
 
       expect(error).toEqual(new InputFailed({ message: "Clicking failed: closed" }));
@@ -1277,9 +1339,9 @@ describe("Gateway control", () => {
 
       yield* withControl((gateway, control) =>
         Effect.gen(function* () {
-          yield* control.take(bot);
+          yield* control.take;
           yield* Effect.flip(gateway.act(bot, navigate));
-          yield* control.handBack(bot);
+          yield* control.handBack;
         }),
       ).pipe(Effect.provide(startGateway(shell({}).layer)), Effect.provide(tracing.layer));
 
@@ -1318,7 +1380,7 @@ describe("Gateway control", () => {
         );
 
         const [first, again, control] = yield* ComputerControl.use((control) =>
-          Effect.all([Effect.flip(control.take(bot)), Effect.flip(control.take(bot)), controlNow]),
+          Effect.all([Effect.flip(control.take), Effect.flip(control.take), controlNow]),
         ).pipe(Effect.provide(startGateway(computers.layer)));
 
         expect(first).toEqual(
@@ -1342,11 +1404,9 @@ describe("Gateway control", () => {
       );
 
       const error = yield* ComputerControl.use((control) =>
-        control
-          .take(bot)
-          .pipe(
-            Effect.andThen(Effect.flip(control.input(bot, Click.make({ at: { x: 0, y: 0 } })))),
-          ),
+        control.take.pipe(
+          Effect.andThen(Effect.flip(control.input(Click.make({ at: { x: 0, y: 0 } })))),
+        ),
       ).pipe(Effect.provide(startGateway(computers.layer)));
 
       expect(error).toEqual(new InputFailed({ message: "No computer is running." }));
@@ -1361,15 +1421,15 @@ describe("Gateway control", () => {
 
         const [error, handedBack] = yield* ComputerControl.use((control) =>
           Effect.gen(function* () {
-            yield* control.take(bot);
+            yield* control.take;
 
             const clicking = yield* Effect.forkChild(
-              Effect.flip(control.input(bot, Click.make({ at: { x: 0, y: 0 } }))),
+              Effect.flip(control.input(Click.make({ at: { x: 0, y: 0 } }))),
             );
 
             yield* TestClock.adjust(Duration.seconds(15));
 
-            return [yield* Fiber.join(clicking), yield* control.handBack(bot)] as const;
+            return [yield* Fiber.join(clicking), yield* control.handBack] as const;
           }),
         ).pipe(Effect.provide(startGateway(computer.layer)));
 

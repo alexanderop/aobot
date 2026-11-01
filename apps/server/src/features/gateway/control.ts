@@ -1,5 +1,4 @@
 import {
-  type BotId,
   ComputerNotStarted,
   type Control,
   ControlNotChanged,
@@ -8,7 +7,6 @@ import {
   type PersonInput,
 } from "@aobot/domain";
 import {
-  Cache,
   Context,
   DateTime,
   Effect,
@@ -27,44 +25,34 @@ import { computerMessageLimit, personAudit } from "./person-audit.ts";
 import { snapshotStore } from "./snapshot-store.ts";
 import { spanEvent } from "./span-event.ts";
 
-/** A person taking a Bot's computer, clicking on its screen, and handing it back. */
+/**
+A person taking the computer, clicking on its screen, and handing it back. Every Bot shares the one
+computer until E3-3 gives each person their own, so a person who holds it holds it for every Bot.
+*/
 export class ComputerControl extends Context.Service<
   ComputerControl,
   {
     /**
-    A person takes the Bot's computer. Answers once every Bot action already running is done, so the
-    person never shares the screen with one, and once the computer runs. Taking what the person already
-    holds changes nothing, but starts the computer if none runs. A computer that does not start leaves
-    the person holding it.
+    A person takes the computer. Answers once every Bot action already running is done, so the person
+    never shares the screen with one, and once the computer runs. Taking what the person already holds
+    changes nothing, but starts the computer if none runs. A computer that does not start leaves the
+    person holding it.
     */
-    readonly take: (bot: BotId) => Effect.Effect<Control, ControlNotChanged | ComputerNotStarted>;
-    /** The person hands the computer back to the Bot, which must read the page again before it acts on it. */
-    readonly handBack: (bot: BotId) => Effect.Effect<Control, ControlNotChanged>;
-    /** What the person in control did on the Bot's running computer. Not audited. */
-    readonly input: (
-      bot: BotId,
-      input: PersonInput,
-    ) => Effect.Effect<void, NotInControl | InputFailed>;
-    /** Who holds the Bot's computer: now, then each change. */
-    readonly watch: (bot: BotId) => Stream.Stream<Control>;
+    readonly take: Effect.Effect<Control, ControlNotChanged | ComputerNotStarted>;
+    /** The person hands the computer back to the Bots, which must read the page again before they act on it. */
+    readonly handBack: Effect.Effect<Control, ControlNotChanged>;
+    /** What the person in control did on the running computer. Not audited. */
+    readonly input: (input: PersonInput) => Effect.Effect<void, NotInControl | InputFailed>;
+    /** Who holds the computer: now, then each change. */
+    readonly watch: Stream.Stream<Control>;
   }
 >()("aobot/gateway/ComputerControl") {}
 
-/** A Bot action turned away at the door: a person holds its computer, or is taking it. */
+/** A Bot action turned away at the door: a person holds the computer, or is taking it. */
 export class PersonHasControl extends Schema.TaggedError<PersonHasControl>()(
   "PersonHasControl",
   {},
 ) {}
-
-/**
-One Bot's door in the gateway. `door` is what every Bot action goes through; `handover` lets one change
-of hands, or one input, happen at a time; `commands` is the queue a Bot's commands wait in, one at a time.
-*/
-interface BotDoor {
-  readonly door: SubscriptionRef.SubscriptionRef<Door>;
-  readonly handover: Semaphore.Semaphore;
-  readonly commands: Semaphore.Semaphore;
-}
 
 /** How long a person's input may take before the person is told it failed. */
 const inputTimeLimit = "15 seconds";
@@ -88,8 +76,10 @@ const notStored = new ControlNotChanged({
 });
 
 /**
-Each Bot's door in the gateway, and what a person does with its computer. Who holds it is stored, and read
-once here: one server process owns the database (architecture.md, "Local now, AWS later").
+The computer's door in the gateway, and what a person does with the computer. `door` is what every Bot
+action goes through; `handover` lets one change of hands, or one input, happen at a time; `commands` is the
+queue commands wait in, one at a time, since they share one shell. Who holds the computer is stored, and
+read once here: one server process owns the database (architecture.md, "Local now, AWS later").
 */
 export const controlDoors = Effect.gen(function* () {
   const rows = yield* personAudit;
@@ -98,45 +88,35 @@ export const controlDoors = Effect.gen(function* () {
   const store = yield* controlStore;
   const snapshots = yield* snapshotStore;
 
-  const heldAtBoot = yield* store.held;
+  const door = yield* SubscriptionRef.make<Door>(
+    Option.match(yield* store.held, {
+      onNone: () => Door.Open({ inFlight: 0 }),
+      onSome: (since) => Door.Held({ since }),
+    }),
+  );
 
-  const doors = yield* Cache.make({
-    capacity: Number.POSITIVE_INFINITY,
-    lookup: (bot: BotId): Effect.Effect<BotDoor> =>
-      Effect.all({
-        door: SubscriptionRef.make<Door>(
-          Option.match(Option.fromNullishOr(heldAtBoot.get(bot)), {
-            onNone: () => Door.Open({ inFlight: 0 }),
-            onSome: (since) => Door.Held({ since }),
-          }),
-        ),
-        handover: Semaphore.make(1),
-        commands: Semaphore.make(1),
-      }),
-  });
+  const handover = yield* Semaphore.make(1);
+  const commands = yield* Semaphore.make(1);
 
   /**
-  `effect` as one action through the Bot's door, or `PersonHasControl` when the door is not open. Every
-  Bot action comes here, whatever its tool, so no tool can skip it. A `queued` action waits for the one
-  before it outside the door, so a take never waits on the queue and one whose turn comes while a person
-  holds the computer is refused.
+  `effect` as one action through the door, or `PersonHasControl` when the door is not open. Every Bot
+  action comes here, whatever its tool and whichever Bot asks, so none can skip it. A `queued` action
+  waits for the one before it outside the door, so a take never waits on the queue and one whose turn
+  comes while a person holds the computer is refused.
   */
   const admit = <A, E, R>(
-    bot: BotId,
     effect: Effect.Effect<A, E, R>,
     { queued }: { readonly queued: boolean },
-  ): Effect.Effect<A, E | PersonHasControl, R> =>
-    Effect.flatMap(Cache.get(doors, bot), ({ door, commands }) => {
-      const through = Effect.acquireUseRelease(
-        SubscriptionRef.modify(door, enter),
-        (admission): Effect.Effect<A, E | PersonHasControl, R> =>
-          admission === "admitted" ? effect : Effect.fail(new PersonHasControl()),
-        (admission) =>
-          admission === "admitted" ? SubscriptionRef.update(door, leave) : Effect.void,
-      );
+  ): Effect.Effect<A, E | PersonHasControl, R> => {
+    const through = Effect.acquireUseRelease(
+      SubscriptionRef.modify(door, enter),
+      (admission): Effect.Effect<A, E | PersonHasControl, R> =>
+        admission === "admitted" ? effect : Effect.fail(new PersonHasControl()),
+      (admission) => (admission === "admitted" ? SubscriptionRef.update(door, leave) : Effect.void),
+    );
 
-      return queued ? commands.withPermits(1)(through) : through;
-    });
+    return queued ? commands.withPermits(1)(through) : through;
+  };
 
   const recordChange = (action: "control_taken" | "control_released") =>
     rows.decide("allow", action, {}).pipe(
@@ -154,9 +134,7 @@ export const controlDoors = Effect.gen(function* () {
   Once the door is closed, only reaching `Held` or opening it again may follow, so the change of hands
   cannot be interrupted.
   */
-  const take = Effect.fn("ComputerControl.take")(function* (bot: BotId) {
-    const { door, handover } = yield* Cache.get(doors, bot);
-
+  const take = Effect.gen(function* () {
     const held = yield* handover
       .withPermits(1)(
         Effect.gen(function* () {
@@ -170,7 +148,7 @@ export const controlDoors = Effect.gen(function* () {
 
           const since = yield* DateTime.now;
 
-          yield* store.hold(bot, since).pipe(
+          yield* store.hold(since).pipe(
             Effect.tapError((error) =>
               Effect.all([
                 SubscriptionRef.update(door, reopen),
@@ -196,54 +174,49 @@ export const controlDoors = Effect.gen(function* () {
     yield* computers.ensure.pipe(Effect.mapError(notStarted));
 
     return held;
-  });
+  }).pipe(Effect.withSpan("ComputerControl.take"));
 
   /**
-  Hands the computer back to the Bot and forgets its latest snapshot, so its old refs are refused and it
-  must read the page again before it acts on an element. The `succeeded` row commits with the holder and
-  the snapshot, so it is on record exactly when the Bot holds its computer again.
+  Hands the computer back to the Bots and forgets every latest snapshot, since the person may have changed
+  the page: old refs are refused, and a Bot must read the page again before it acts on an element. The
+  `succeeded` row commits with the holder and the snapshots, so it is on record exactly when the Bots hold
+  the computer again.
   */
-  const handBack = Effect.fn("ComputerControl.handBack")(function* (bot: BotId) {
-    const { door, handover } = yield* Cache.get(doors, bot);
+  const handBack = handover
+    .withPermits(1)(
+      Effect.gen(function* () {
+        const before = yield* SubscriptionRef.get(door);
 
-    return yield* handover
-      .withPermits(1)(
-        Effect.gen(function* () {
-          const before = yield* SubscriptionRef.get(door);
+        if (!Door.$is("Held")(before)) return view(before);
 
-          if (!Door.$is("Held")(before)) return view(before);
+        const allowRow = yield* recordChange("control_released");
 
-          const allowRow = yield* recordChange("control_released");
+        yield* Effect.all([
+          store.release(),
+          snapshots.forgetAll(),
+          rows.outcome(allowRow, "succeeded", {}),
+        ]).pipe(
+          sql.withTransaction,
+          Effect.tapError((error) =>
+            rows.settle(allowRow, "failed", { reason: "not stored", message: error.message }),
+          ),
+          Effect.mapError(() => notStored),
+        );
 
-          yield* Effect.all([
-            store.release(bot),
-            snapshots.forget(bot),
-            rows.outcome(allowRow, "succeeded", {}),
-          ]).pipe(
-            sql.withTransaction,
-            Effect.tapError((error) =>
-              rows.settle(allowRow, "failed", { reason: "not stored", message: error.message }),
-            ),
-            Effect.mapError(() => notStored),
-          );
+        const open = Door.Open({ inFlight: 0 });
+        yield* SubscriptionRef.set(door, open);
+        yield* spanEvent("control.released");
 
-          const open = Door.Open({ inFlight: 0 });
-          yield* SubscriptionRef.set(door, open);
-          yield* spanEvent("control.released");
-
-          return view(open);
-        }),
-      )
-      .pipe(Effect.uninterruptible);
-  });
+        return view(open);
+      }),
+    )
+    .pipe(Effect.uninterruptible, Effect.withSpan("ComputerControl.handBack"));
 
   /**
-  A person's input on the Bot's screen, only while they hold it, and only on a computer already running:
+  A person's input on the screen, only while they hold it, and only on a computer already running:
   starting one is the take's job, and must not hold up a hand back behind the input.
   */
-  const input = Effect.fn("ComputerControl.input")(function* (bot: BotId, given: PersonInput) {
-    const { door, handover } = yield* Cache.get(doors, bot);
-
+  const input = Effect.fn("ComputerControl.input")(function* (given: PersonInput) {
     yield* handover
       .withPermits(1)(
         Effect.gen(function* () {
@@ -266,10 +239,10 @@ export const controlDoors = Effect.gen(function* () {
       );
   });
 
-  const watch = (bot: BotId): Stream.Stream<Control> =>
-    Stream.unwrap(
-      Effect.map(Cache.get(doors, bot), ({ door }) => SubscriptionRef.changes(door)),
-    ).pipe(Stream.map(view), Stream.changes);
+  const watch = SubscriptionRef.changes(door).pipe(Stream.map(view), Stream.changes);
 
-  return { admit, control: ComputerControl.of({ take, handBack, input, watch }) };
+  return {
+    admit,
+    control: ComputerControl.of({ take, handBack, input, watch }),
+  };
 });

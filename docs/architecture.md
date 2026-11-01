@@ -127,21 +127,23 @@ goes into a log, a span or an audit row.
 A person takes the mouse when their Bot reaches a login or a CAPTCHA, clicks on the live screen
 themselves, and hands it back. While the person holds the computer, the panel stays open, and every Bot
 action is refused. `ComputerControl` does it, from the same layer as `Gateway`, so a person's take and the
-Bot's actions meet at one door per Bot.
+Bots' actions meet at one door. Every Bot shares the one computer until E3-3 gives each person their own,
+so there is one door for all of them, and a person who holds the computer holds it for every Bot.
 
-1. Each Bot has one door in the gateway, and every Bot action goes through it before anything else, in
-   `Gateway.act`, whatever its tool. The door is `Open` while the Bot holds its computer, `Closing` while a
-   take waits, and `Held` while the person holds it. Only an open door lets an action in. A Bot's
-   commands wait for each other outside the door, so a command whose turn comes while the person holds
-   the computer is refused, and a take never waits for one.
-2. `Control.take` writes `control_taken · allow`, closes the door, stores a row for the Bot in
-   `bot_control`, then waits for the actions the door already let in to finish. The page shows `Taking`
-   meanwhile. Once the person holds the computer, the take starts it if none runs, and answers. A
+1. The computer has one door in the gateway, and every Bot action goes through it before anything else,
+   in `Gateway.act`, whatever the tool and whichever Bot asks. The door is `Open` while the Bots
+   hold the computer, `Closing` while a take waits, and `Held` while the person holds it. Only an open
+   door lets an action in. Commands wait for each other outside the door, since they share one shell, so a
+   command whose turn comes while the person holds the computer is refused, and a take never waits for
+   one.
+2. `Control.take` writes `control_taken · allow`, closes the door, stores the one row of
+   `computer_control`, then waits for the actions the door already let in to finish. The page shows
+   `Taking` meanwhile. Once the person holds the computer, the take starts it if none runs, and answers. A
    computer that does not start leaves the person holding it, and the page says why. Taking again while
    holding it changes nothing but starts the computer again.
-3. `bot_control` is read at start-up, so a restart, even one in the middle of a take, leaves the person in
-   control. No computer runs then: the panel says the computer is not showing a page and offers to start
-   it, which takes control again.
+3. `computer_control` is read at start-up, so a restart, even one in the middle of a take, leaves the
+   person in control. No computer runs then: the panel says the computer is not showing a page and offers
+   to start it, which takes control again.
 4. While the door is not open, a Bot call is a `deny` row with `{ reason: "a person has control" }`, the
    computer never hears of it, and the model reads:
 
@@ -155,9 +157,10 @@ Bot's actions meet at one door per Bot.
    caller stopped waiting for it, so a Bot action from a stopped turn never lands beside the person's
    click. A click the page holds up past 5 seconds fails, and the browser is free for the next action.
    A person's clicks are not audited: the rows around them say who held the computer.
-6. `Control.handBack` writes `control_released · allow`, and in one transaction deletes the Bot's
-   `bot_control` row, forgets its latest snapshot and writes `succeeded`. The Bot's old refs are then
-   refused like any ref without a snapshot, so it reads the page again before it acts on an element.
+6. `Control.handBack` writes `control_released · allow`, and in one transaction deletes the
+   `computer_control` row, forgets every Bot's latest snapshot, since the person may have changed the
+   page, and writes `succeeded`. Old refs are then refused like any ref without a snapshot, so a Bot reads
+   the page again before it acts on an element.
 
 `/rpc` refuses a request with 403, before any RPC, unless the host it was sent to, its `Host`, is
 `localhost`, `127.0.0.1`, `[::1]` or the server's `PUBLIC_HOST`, and a page's `Origin`, when it sends one,
@@ -176,7 +179,7 @@ either is swept to `unknown` at start-up like any other call. Their spans, `Comp
 ## Files in and out of the workspace
 
 A person gives the Bot a file to work on and downloads the file it made, without copying text through the
-chat. Both are the person's own calls, not the Bot's, so they do not go through the Bot's door: a person
+chat. Both are the person's own calls, not the Bot's, so they do not go through the Bots' door: a person
 holding the computer can still move files. `FileTransfers` does them, from the same layer as `Gateway`.
 
 1. `＋` in the composer uploads a picked file at once with `PUT /files?path=<name>`. The server
@@ -223,7 +226,7 @@ copies the action, and its `detail` says why for `failed` and `unknown`.
 | `write_file` | `path`, `contents` | `POST /act {"action":"write_file","path","contents"}`         | `write_file · allow` with `{ path, name, extension, bytes }`, then `succeeded`, `failed` or `unknown`; `write_file · deny` with `{ path, name, extension, reason }` |
 | `list_files` | `path`             | `POST /act {"action":"list_files","path"}`                    | `list_files · allow` with `{ path, name, extension }`, then `succeeded`, `failed` or `unknown`; `list_files · deny` with `{ path, name, extension, reason }`        |
 
-While a person holds the Bot's computer, every tool is refused before its ref is resolved: `<tool> · deny`
+While a person holds the computer, every tool of every Bot is refused before its ref is resolved: `<tool> · deny`
 with `{ reason: "a person has control" }` (see [Taking control](#taking-control)).
 
 Every browser action answers with the page read afresh: its URL, title and snapshot, capped at 12,000
