@@ -66,6 +66,42 @@ describe("aobot standards enforced by Oxlint", () => {
       "no-tagged-error-instanceof",
     ],
     [
+      "Effect.runPromise in a test",
+      "apps/web/src/features/chat/x.test.ts",
+      'import { Effect } from "effect";\nimport { it } from "vite-plus/test";\n\nit("a", () => Effect.runPromise(Effect.void));',
+      "no-manual-effect-runtime-in-tests",
+    ],
+    [
+      "Effect.runPromise passed to pipe in a test",
+      "apps/web/src/features/chat/x.test.ts",
+      'import { Effect } from "effect";\nimport { it } from "vite-plus/test";\n\nit("a", () => Effect.void.pipe(Effect.runPromise));',
+      "no-manual-effect-runtime-in-tests",
+    ],
+    [
+      "ManagedRuntime.make in a contract suite",
+      "apps/server/src/features/agent/x.contract.ts",
+      'import { Layer, ManagedRuntime } from "effect";\n\nexport const runtime = ManagedRuntime.make(Layer.empty);',
+      "no-manual-effect-runtime-in-tests",
+    ],
+    [
+      "a test declared in a for loop",
+      "apps/server/src/features/chat/x.test.ts",
+      'import { expect, it } from "vite-plus/test";\n\nfor (const n of [1, 2]) it(`n ${n}`, () => expect(n).toBeGreaterThan(0));',
+      "no-test-in-loop",
+    ],
+    [
+      "it.effect declared in a forEach",
+      "apps/server/src/features/chat/x.test.ts",
+      'import { it } from "@effect/vitest";\nimport { Effect } from "effect";\n\n[1, 2].forEach((n) => it.effect(`n ${n}`, () => Effect.succeed(n)));',
+      "no-test-in-loop",
+    ],
+    [
+      "Effect.catchTag",
+      "apps/server/src/features/chat/x.ts",
+      `import { Effect } from "effect";\n${doc}export const f = (e: Effect.Effect<number, { readonly _tag: "A" }>) => e.pipe(Effect.catchTag("A", () => Effect.succeed(0)));`,
+      "prefer-catch-tags",
+    ],
+    [
       "explicit any",
       "apps/server/src/features/chat/x.ts",
       `${doc}export const f = (x: any) => x;`,
@@ -97,6 +133,31 @@ describe("aobot standards enforced by Oxlint", () => {
       `${doc}export function f(id?: string): string | undefined { return id; }`,
     ],
     ["a documented export", "packages/domain/src/x.ts", `${doc}export const value = 1;`],
+    [
+      "Effect.runPromise outside a test, at a boundary",
+      "apps/web/src/app/x.ts",
+      `import { Effect } from "effect";\n${doc}export const start = () => Effect.runPromise(Effect.void);`,
+    ],
+    [
+      "a loop inside a test body",
+      "apps/server/src/features/chat/x.test.ts",
+      'import { expect, it } from "vite-plus/test";\n\nit("a", () => {\n  for (const n of [1, 2]) expect(n).toBeGreaterThan(0);\n});',
+    ],
+    [
+      "it.each",
+      "apps/server/src/features/chat/x.test.ts",
+      'import { expect, it } from "vite-plus/test";\n\nit.each([1, 2])("n %i", (n) => expect(n).toBeGreaterThan(0));',
+    ],
+    [
+      "Effect.catchTags",
+      "apps/server/src/features/chat/x.ts",
+      `import { Effect } from "effect";\n${doc}export const f = (e: Effect.Effect<number, { readonly _tag: "A" }>) => e.pipe(Effect.catchTags({ A: () => Effect.succeed(0) }));`,
+    ],
+    [
+      "a local named Effect with a catchTag method",
+      "apps/server/src/features/chat/x.ts",
+      `const Effect = { catchTag: (tag: string) => tag };\n${doc}export const f = () => Effect.catchTag("A");`,
+    ],
   ])("allows %s", (_name, path, code) => {
     expect(lint(path, code)).not.toContain("aobot-standards");
   });

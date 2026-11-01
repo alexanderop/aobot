@@ -252,11 +252,12 @@ export function layerAcp(options: AcpRuntimeOptions) {
       const run = (turn: Turn) =>
         Stream.unwrap(
           startTurn(turn).pipe(
-            Effect.catchTag("PlatformError", (error) =>
-              Effect.fail(
-                new ModelFailed({ reason: `Could not start ${agent}: ${error.message}` }),
-              ),
-            ),
+            Effect.catchTags({
+              PlatformError: (error) =>
+                Effect.fail(
+                  new ModelFailed({ reason: `Could not start ${agent}: ${error.message}` }),
+                ),
+            }),
           ),
         ).pipe(
           Stream.provideService(Path.Path, path),

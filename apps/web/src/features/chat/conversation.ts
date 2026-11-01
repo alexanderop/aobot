@@ -79,14 +79,14 @@ export function makeConversations(
                 ),
               ),
             ),
-            Effect.catchTag("ConversationBusy", () =>
-              Atom.update(state(id), (current) => refuseMessage(current, outgoing.messageId)),
-            ),
-            Effect.catchTag("MessageAlreadySent", () =>
-              Atom.update(state(id), (current) =>
-                acknowledgeDuplicate(current, outgoing.messageId),
-              ),
-            ),
+            Effect.catchTags({
+              ConversationBusy: () =>
+                Atom.update(state(id), (current) => refuseMessage(current, outgoing.messageId)),
+              MessageAlreadySent: () =>
+                Atom.update(state(id), (current) =>
+                  acknowledgeDuplicate(current, outgoing.messageId),
+                ),
+            }),
             Effect.catch(() =>
               Atom.update(state(id), (current) =>
                 failConnection(current, "Cannot reach the server."),

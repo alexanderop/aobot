@@ -236,7 +236,7 @@ const noTaggedErrorInstanceof = defineRule({
     docs: { description: "Narrow tagged errors by tag, not by class identity." },
     messages: {
       violation:
-        'Narrow `{{name}}` by its tag (`Effect.catchTag`, `Predicate.isTagged(error, "{{name}}")` or `Match.tag`) instead of `instanceof`.',
+        'Narrow `{{name}}` by its tag (`Effect.catchTags`, `Predicate.isTagged(error, "{{name}}")` or `Match.tag`) instead of `instanceof`.',
     },
   },
   create(context) {
@@ -251,10 +251,192 @@ const noTaggedErrorInstanceof = defineRule({
   },
 });
 
+/** Test files of every tier: unit and service tests, the contract suites and the nightly smoke test. */
+const testFilePattern = /\.(?:test|contract|smoke)\.[cm]?[jt]sx?$/u;
+
+/** Whether `name` at `node` is bound by `import { name } from "effect"`, not a local of the same name. */
+function isEffectImport(context: Context, node: ESTree.IdentifierReference, name: string): boolean {
+  let scope = context.sourceCode.getScope(node);
+
+  while (true) {
+    const variable = scope.set.get(node.name);
+
+    if (variable !== undefined) {
+      return variable.defs.some(
+        (definition) =>
+          definition.type === "ImportBinding" &&
+          definition.node.type === "ImportSpecifier" &&
+          definition.parent?.type === "ImportDeclaration" &&
+          definition.parent.source.value === "effect" &&
+          (definition.node.imported.type === "Identifier"
+            ? definition.node.imported.name
+            : definition.node.imported.value) === name,
+      );
+    }
+
+    if (scope.upper === null) return false;
+    scope = scope.upper;
+  }
+}
+
+/** `Effect.runPromise` and friends: each builds a runtime of its own instead of the test's. */
+const effectRunners = new Set([
+  "runCallback",
+  "runCallbackWith",
+  "runFork",
+  "runForkWith",
+  "runPromise",
+  "runPromiseExit",
+  "runPromiseExitWith",
+  "runPromiseWith",
+  "runSync",
+  "runSyncExit",
+  "runSyncExitWith",
+  "runSyncWith",
+]);
+
+/** The member `object.property` read without computed access, as two names. */
+function memberNames(
+  node: ESTree.Node,
+): { object: ESTree.IdentifierReference; property: string } | undefined {
+  if (node.type !== "MemberExpression" || node.computed) return undefined;
+  if (node.object.type !== "Identifier" || node.property.type !== "Identifier") return undefined;
+
+  return { object: node.object, property: node.property.name };
+}
+
+const noManualEffectRuntimeInTests = defineRule({
+  meta: {
+    type: "problem",
+    docs: {
+      description:
+        "Run Effects in tests through @effect/vitest, not a runtime the test builds itself.",
+    },
+    messages: {
+      violation:
+        "Do not call `{{name}}` in a test. Write the test as `it.effect` (or `it.live` for real time) from @effect/vitest and yield the Effect.",
+    },
+  },
+  create(context) {
+    if (!testFilePattern.test(context.filename)) return {};
+
+    return {
+      // A member read, not only a call: `.pipe(Effect.runPromise)` builds a runtime too.
+      MemberExpression(node: ESTree.MemberExpression) {
+        const member = memberNames(node);
+        if (member === undefined) return;
+
+        const runner =
+          (member.object.name === "Effect" && effectRunners.has(member.property)) ||
+          (member.object.name === "ManagedRuntime" && member.property === "make");
+
+        if (runner && isEffectImport(context, member.object, member.object.name))
+          context.report({
+            node,
+            messageId: "violation",
+            data: { name: `${member.object.name}.${member.property}` },
+          });
+      },
+    };
+  },
+});
+
+const testFunctions = new Set(["describe", "it", "test"]);
+
+/** `it(…)`, `describe(…)`, `it.effect(…)`, `it.live(…)`: calls that declare a test or a group. */
+function declaresTest(callee: ESTree.Node): string | undefined {
+  if (callee.type === "Identifier") return testFunctions.has(callee.name) ? callee.name : undefined;
+
+  const member = memberNames(callee);
+  if (member === undefined || !testFunctions.has(member.object.name)) return undefined;
+
+  return ["effect", "live", "layer"].includes(member.property)
+    ? `${member.object.name}.${member.property}`
+    : undefined;
+}
+
+const loops = new Set(["ForStatement", "ForInStatement", "ForOfStatement", "WhileStatement"]);
+
+const functions = new Set(["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"]);
+
+/** Whether `node` runs once per iteration of a loop. Inside a function it runs once per call. */
+function isInsideLoop(node: ESTree.Node): boolean {
+  let current = node.parent;
+
+  while (current !== null && current.type !== "Program") {
+    if (loops.has(current.type)) return true;
+    if (functions.has(current.type)) {
+      const call = current.parent;
+      // `[…].forEach((x) => it(…))` and `.map` are loops too.
+      if (call.type !== "CallExpression") return false;
+      const callee = call.callee;
+
+      return (
+        callee.type === "MemberExpression" &&
+        callee.property.type === "Identifier" &&
+        ["forEach", "map", "flatMap"].includes(callee.property.name)
+      );
+    }
+
+    current = current.parent;
+  }
+
+  return false;
+}
+
+const noTestInLoop = defineRule({
+  meta: {
+    type: "problem",
+    docs: { description: "Declare one test per case with `.each`, not inside a loop." },
+    messages: {
+      violation:
+        "Do not call `{{name}}(…)` inside a loop. Use `{{name}}.each(cases)(name, …)`, so each case is named and reported on its own.",
+    },
+  },
+  create(context) {
+    if (!testFilePattern.test(context.filename)) return {};
+
+    return {
+      CallExpression(node: ESTree.CallExpression) {
+        const name = declaresTest(node.callee);
+
+        if (name !== undefined && isInsideLoop(node))
+          context.report({ node: node.callee, messageId: "violation", data: { name } });
+      },
+    };
+  },
+});
+
+const preferCatchTags = defineRule({
+  meta: {
+    type: "suggestion",
+    docs: { description: "Catch known tags with `catchTags`, even for one tag." },
+    messages: {
+      violation:
+        "Use `{{module}}.catchTags({ Tag: handler })` instead of `{{module}}.catchTag`, even for one tag, so adding a second is one more key.",
+    },
+  },
+  create(context) {
+    return {
+      MemberExpression(node: ESTree.MemberExpression) {
+        const member = memberNames(node);
+        if (member === undefined || member.property !== "catchTag") return;
+        if (!["Effect", "Stream", "Layer"].includes(member.object.name)) return;
+
+        if (isEffectImport(context, member.object, member.object.name))
+          context.report({ node, messageId: "violation", data: { module: member.object.name } });
+      },
+    };
+  },
+});
+
 /** Project coding standards that the vendored anti-slop rules do not cover. */
 export default eslintCompatPlugin({
   meta: { name: "aobot-standards" },
   rules: {
+    "no-manual-effect-runtime-in-tests": noManualEffectRuntimeInTests,
+    "no-test-in-loop": noTestInLoop,
+    "prefer-catch-tags": preferCatchTags,
     "no-effect-leaf-imports": noEffectLeafImports,
     "no-optional-values": noOptionalValues,
     "no-tagged-error-instanceof": noTaggedErrorInstanceof,

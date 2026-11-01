@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
   BotId,
   ChatRpcs,
@@ -80,13 +80,12 @@ function until(
   registry: AtomRegistry.AtomRegistry,
   atom: Atom.Atom<ConversationState>,
   predicate: (state: ConversationState) => boolean,
-): Promise<ConversationState> {
+): Effect.Effect<ConversationState> {
   return Atom.toStream(atom).pipe(
     Stream.filter(predicate),
     Stream.runHead,
     Effect.map(Option.getOrThrow),
     Effect.provideService(AtomRegistry.AtomRegistry, registry),
-    Effect.runPromise,
   );
 }
 
@@ -97,44 +96,48 @@ afterEach(() => {
 const userMessage = { messageId: MessageId.make("u1"), text: "Say hi in five words" };
 
 describe("given a conversation served by an in-memory Bot", () => {
-  it("loads the stored Bot before anything is sent", async () => {
-    const { registry, atoms } = start({ send: () => Stream.empty });
-    const state = await until(registry, atoms.state, (current) => Option.isSome(current.bot));
+  it.live("loads the stored Bot before anything is sent", () =>
+    Effect.gen(function* () {
+      const { registry, atoms } = start({ send: () => Stream.empty });
+      const state = yield* until(registry, atoms.state, (current) => Option.isSome(current.bot));
 
-    expect(isRunning(state)).toBe(false);
-  });
+      expect(isRunning(state)).toBe(false);
+    }),
+  );
 
   describe("when the person presses stop before the server has started the run", () => {
-    it("holds the stop until the run starts, so the Bot says nothing", async () => {
-      const pickedUp = Deferred.makeUnsafe<void>();
-      const runStarted = Deferred.makeUnsafe<void>();
+    it.live("holds the stop until the run starts, so the Bot says nothing", () =>
+      Effect.gen(function* () {
+        const pickedUp = Deferred.makeUnsafe<void>();
+        const runStarted = Deferred.makeUnsafe<void>();
 
-      const { registry, atoms } = start({
-        send: (stopped) =>
-          Stream.unwrap(
-            Deferred.await(pickedUp).pipe(
-              Effect.andThen(Deferred.succeed(runStarted, undefined)),
-              Effect.as(
-                Stream.concat(
-                  Stream.fromIterable<ChatEvent>([
-                    { type: "RUN_STARTED", threadId: conversationId, runId },
-                  ]),
-                  Stream.unwrap(
-                    Effect.raceFirst(
-                      Deferred.await(stopped).pipe(
-                        Effect.as(
-                          Stream.fromIterable<ChatEvent>([
-                            { type: "RUN_ERROR", message: "Stopped.", code: "stopped" },
-                          ]),
+        const { registry, atoms } = start({
+          send: (stopped) =>
+            Stream.unwrap(
+              Deferred.await(pickedUp).pipe(
+                Effect.andThen(Deferred.succeed(runStarted, undefined)),
+                Effect.as(
+                  Stream.concat(
+                    Stream.fromIterable<ChatEvent>([
+                      { type: "RUN_STARTED", threadId: conversationId, runId },
+                    ]),
+                    Stream.unwrap(
+                      Effect.raceFirst(
+                        Deferred.await(stopped).pipe(
+                          Effect.as(
+                            Stream.fromIterable<ChatEvent>([
+                              { type: "RUN_ERROR", message: "Stopped.", code: "stopped" },
+                            ]),
+                          ),
                         ),
-                      ),
-                      Effect.sleep("100 millis").pipe(
-                        Effect.as(
-                          Stream.fromIterable<ChatEvent>([
-                            ...started.slice(1),
-                            { type: "TEXT_MESSAGE_END", messageId: botMessage },
-                            { type: "RUN_FINISHED", threadId: conversationId, runId },
-                          ]),
+                        Effect.sleep("100 millis").pipe(
+                          Effect.as(
+                            Stream.fromIterable<ChatEvent>([
+                              ...started.slice(1),
+                              { type: "TEXT_MESSAGE_END", messageId: botMessage },
+                              { type: "RUN_FINISHED", threadId: conversationId, runId },
+                            ]),
+                          ),
                         ),
                       ),
                     ),
@@ -142,148 +145,166 @@ describe("given a conversation served by an in-memory Bot", () => {
                 ),
               ),
             ),
-          ),
-        stop: (stopped) =>
-          Deferred.isDone(runStarted).pipe(
-            Effect.flatMap((isStarted) =>
-              isStarted ? Deferred.succeed(stopped, undefined) : Effect.succeed(false),
+          stop: (stopped) =>
+            Deferred.isDone(runStarted).pipe(
+              Effect.flatMap((isStarted) =>
+                isStarted ? Deferred.succeed(stopped, undefined) : Effect.succeed(false),
+              ),
+              Effect.asVoid,
             ),
-            Effect.asVoid,
-          ),
-      });
+        });
 
-      await until(registry, atoms.state, (current) => Option.isSome(current.bot));
-      registry.set(atoms.send, userMessage);
-      registry.set(atoms.stop, undefined);
-      Deferred.doneUnsafe(pickedUp, Effect.void);
+        yield* until(registry, atoms.state, (current) => Option.isSome(current.bot));
+        registry.set(atoms.send, userMessage);
+        registry.set(atoms.stop, undefined);
+        Deferred.doneUnsafe(pickedUp, Effect.void);
 
-      const state = await until(registry, atoms.state, (current) => !isRunning(current));
+        const state = yield* until(registry, atoms.state, (current) => !isRunning(current));
 
-      expect(state.messages.map((message) => message.text)).toEqual([userMessage.text]);
-      expect(ConversationStatus.$is("Idle")(state.status)).toBe(true);
-    });
+        expect(state.messages.map((message) => message.text)).toEqual([userMessage.text]);
+        expect(ConversationStatus.$is("Idle")(state.status)).toBe(true);
+      }),
+    );
   });
 
   describe("when the person sends a message and the Bot is still talking", () => {
-    it("shows their message and the Bot's words so far, and is running", async () => {
-      const { registry, atoms } = start({
-        send: () => Stream.concat(Stream.fromIterable(started), Stream.never),
-      });
+    it.live("shows their message and the Bot's words so far, and is running", () =>
+      Effect.gen(function* () {
+        const { registry, atoms } = start({
+          send: () => Stream.concat(Stream.fromIterable(started), Stream.never),
+        });
 
-      await until(registry, atoms.state, (current) => Option.isSome(current.bot));
-      registry.set(atoms.send, userMessage);
+        yield* until(registry, atoms.state, (current) => Option.isSome(current.bot));
+        registry.set(atoms.send, userMessage);
 
-      const state = await until(registry, atoms.state, (current) => current.messages.length === 2);
+        const state = yield* until(
+          registry,
+          atoms.state,
+          (current) => current.messages.length === 2,
+        );
 
-      expect(state.messages.map((message) => message.text)).toEqual([userMessage.text, "Hello"]);
-      expect(isRunning(state)).toBe(true);
-    });
+        expect(state.messages.map((message) => message.text)).toEqual([userMessage.text, "Hello"]);
+        expect(isRunning(state)).toBe(true);
+      }),
+    );
 
-    it("ends the run when the person stops it", async () => {
-      const { registry, atoms } = start({
-        send: (stopped) =>
-          Stream.concat(
-            Stream.fromIterable(started),
-            Stream.fromEffect(
-              Deferred.await(stopped).pipe(
-                Effect.as<ChatEvent>({ type: "RUN_ERROR", message: "stopped", code: "stopped" }),
+    it.live("ends the run when the person stops it", () =>
+      Effect.gen(function* () {
+        const { registry, atoms } = start({
+          send: (stopped) =>
+            Stream.concat(
+              Stream.fromIterable(started),
+              Stream.fromEffect(
+                Deferred.await(stopped).pipe(
+                  Effect.as<ChatEvent>({ type: "RUN_ERROR", message: "stopped", code: "stopped" }),
+                ),
               ),
             ),
-          ),
+        });
+
+        yield* until(registry, atoms.state, (current) => Option.isSome(current.bot));
+        registry.set(atoms.send, userMessage);
+        yield* until(registry, atoms.state, (current) => current.messages.length === 2);
+        registry.set(atoms.stop, undefined);
+
+        const state = yield* until(registry, atoms.state, (current) => !isRunning(current));
+
+        expect(ConversationStatus.$is("Idle")(state.status)).toBe(true);
+        expect(state.messages.at(-1)?.text).toBe("Hello");
+      }),
+    );
+  });
+
+  it.live("finishes the run when the Bot's last word arrives", () =>
+    Effect.gen(function* () {
+      const { registry, atoms } = start({
+        send: () =>
+          Stream.fromIterable<ChatEvent>([
+            ...started,
+            { type: "RUN_FINISHED", threadId: conversationId, runId },
+          ]),
       });
 
-      await until(registry, atoms.state, (current) => Option.isSome(current.bot));
+      yield* until(registry, atoms.state, (current) => Option.isSome(current.bot));
       registry.set(atoms.send, userMessage);
-      await until(registry, atoms.state, (current) => current.messages.length === 2);
-      registry.set(atoms.stop, undefined);
 
-      const state = await until(registry, atoms.state, (current) => !isRunning(current));
+      const state = yield* until(
+        registry,
+        atoms.state,
+        (current) => current.messages.length === 2 && !isRunning(current),
+      );
 
       expect(ConversationStatus.$is("Idle")(state.status)).toBe(true);
-      expect(state.messages.at(-1)?.text).toBe("Hello");
-    });
-  });
+    }),
+  );
 
-  it("finishes the run when the Bot's last word arrives", async () => {
-    const { registry, atoms } = start({
-      send: () =>
-        Stream.fromIterable<ChatEvent>([
-          ...started,
-          { type: "RUN_FINISHED", threadId: conversationId, runId },
-        ]),
-    });
+  it.live("shows a readable busy state and drops the refused message", () =>
+    Effect.gen(function* () {
+      const { registry, atoms } = start({
+        send: () => Stream.fail(new ConversationBusy({ conversationId })),
+      });
 
-    await until(registry, atoms.state, (current) => Option.isSome(current.bot));
-    registry.set(atoms.send, userMessage);
+      yield* until(registry, atoms.state, (current) => Option.isSome(current.bot));
+      registry.set(atoms.send, userMessage);
 
-    const state = await until(
-      registry,
-      atoms.state,
-      (current) => current.messages.length === 2 && !isRunning(current),
-    );
+      const state = yield* until(registry, atoms.state, (current) =>
+        ConversationStatus.$is("Failed")(current.status),
+      );
 
-    expect(ConversationStatus.$is("Idle")(state.status)).toBe(true);
-  });
+      expect(state.status).toMatchObject({ code: "busy" });
+      expect(state.messages).toEqual([]);
+    }),
+  );
 
-  it("shows a readable busy state and drops the refused message", async () => {
-    const { registry, atoms } = start({
-      send: () => Stream.fail(new ConversationBusy({ conversationId })),
-    });
+  it.live("goes idle and keeps one bubble when the server says it already had the message", () =>
+    Effect.gen(function* () {
+      const { registry, atoms } = start({
+        send: () => Stream.fail(new MessageAlreadySent({ messageId: userMessage.messageId })),
+      });
 
-    await until(registry, atoms.state, (current) => Option.isSome(current.bot));
-    registry.set(atoms.send, userMessage);
+      yield* until(registry, atoms.state, (current) => Option.isSome(current.bot));
+      registry.set(atoms.send, userMessage);
 
-    const state = await until(registry, atoms.state, (current) =>
-      ConversationStatus.$is("Failed")(current.status),
-    );
+      const state = yield* until(
+        registry,
+        atoms.state,
+        (current) => current.messages.length === 1 && !isRunning(current),
+      );
 
-    expect(state.status).toMatchObject({ code: "busy" });
-    expect(state.messages).toEqual([]);
-  });
-
-  it("goes idle and keeps one bubble when the server says it already had the message", async () => {
-    const { registry, atoms } = start({
-      send: () => Stream.fail(new MessageAlreadySent({ messageId: userMessage.messageId })),
-    });
-
-    await until(registry, atoms.state, (current) => Option.isSome(current.bot));
-    registry.set(atoms.send, userMessage);
-
-    const state = await until(
-      registry,
-      atoms.state,
-      (current) => current.messages.length === 1 && !isRunning(current),
-    );
-
-    expect(ConversationStatus.$is("Idle")(state.status)).toBe(true);
-  });
+      expect(ConversationStatus.$is("Idle")(state.status)).toBe(true);
+    }),
+  );
 });
 
 describe("given a server that crashes while opening the conversation once", () => {
-  it("reports it, then reconnects and loads the Bot", async () => {
-    const reconnect = Deferred.makeUnsafe<void>();
-    let opens = 0;
+  it.live("reports it, then reconnects and loads the Bot", () =>
+    Effect.gen(function* () {
+      const reconnect = Deferred.makeUnsafe<void>();
+      let opens = 0;
 
-    const { registry, atoms } = start({
-      send: () => Stream.empty,
-      open: Effect.suspend(() =>
-        opens++ === 0
-          ? Effect.die("database is locked")
-          : Deferred.await(reconnect).pipe(Effect.as({ bot, messages: [], isRunning: false })),
-      ),
-    });
+      const { registry, atoms } = start({
+        send: () => Stream.empty,
+        open: Effect.suspend(() =>
+          opens++ === 0
+            ? Effect.die("database is locked")
+            : Deferred.await(reconnect).pipe(Effect.as({ bot, messages: [], isRunning: false })),
+        ),
+      });
 
-    const failed = await until(registry, atoms.state, (current) =>
-      ConversationStatus.$is("Failed")(current.status),
-    );
+      const failed = yield* until(registry, atoms.state, (current) =>
+        ConversationStatus.$is("Failed")(current.status),
+      );
 
-    expect(failed.status).toMatchObject({ code: "connection" });
-    expect(Option.isNone(failed.bot)).toBe(true);
+      expect(failed.status).toMatchObject({ code: "connection" });
+      expect(Option.isNone(failed.bot)).toBe(true);
 
-    Deferred.doneUnsafe(reconnect, Effect.void);
+      Deferred.doneUnsafe(reconnect, Effect.void);
 
-    const recovered = await until(registry, atoms.state, (current) => Option.isSome(current.bot));
+      const recovered = yield* until(registry, atoms.state, (current) =>
+        Option.isSome(current.bot),
+      );
 
-    expect(ConversationStatus.$is("Idle")(recovered.status)).toBe(true);
-  });
+      expect(ConversationStatus.$is("Idle")(recovered.status)).toBe(true);
+    }),
+  );
 });
