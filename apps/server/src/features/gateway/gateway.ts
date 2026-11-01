@@ -1,12 +1,8 @@
 import {
   type BotId,
-  CommandEnd,
-  type CommandOutput,
-  type CommandRan,
   ComputerAction,
   type ComputerActResult,
   commandTimeLimit,
-  type PageRead,
   RunCommand,
   snapshotRefs,
 } from "@aobot/domain";
@@ -26,6 +22,7 @@ import {
   toolResult,
 } from "../../shared/tool-result.ts";
 import { redact } from "../../shared/redact.ts";
+import { endAttributes, presentCommand, presentPage } from "./present.ts";
 import { snapshotStore } from "./snapshot-store.ts";
 
 /** Something an agent asked for that the gateway turned down. `detail` is already redacted. */
@@ -119,58 +116,6 @@ const auditDetail = ComputerAction.match({
   type: ({ target, text }): Schema.JsonObject => ({ ...target, text: redact(text) }),
   run: ({ command }): Schema.JsonObject => ({ command: capText(command, auditCommandLimit) }),
 });
-
-function presentPage({ url, title, snapshot, truncated }: PageRead): string {
-  return [
-    `URL: ${url}`,
-    `Title: ${title}`,
-    "",
-    snapshot,
-    ...(truncated ? ["[the computer cut this snapshot short]"] : []),
-  ].join("\n");
-}
-
-function presentEnd(end: CommandEnd): string {
-  return CommandEnd.match(end, {
-    Exited: ({ code }) => `Exit code: ${code}`,
-    Signalled: ({ signal }) => `The command was ended by ${signal}.`,
-    TimedOut: () =>
-      `The command ran past ${Duration.format(commandTimeLimit)}, so the computer stopped it.`,
-  });
-}
-
-function presentOutput(name: string, { text, truncated }: CommandOutput): ReadonlyArray<string> {
-  return [
-    `${name}:`,
-    text === "" ? "(nothing)" : text,
-    ...(truncated ? [`[the computer kept only the end of ${name}]`] : []),
-  ];
-}
-
-function presentCommand({ end, stdout, stderr, leftOutputOpen }: CommandRan): string {
-  return [
-    presentEnd(end),
-    "",
-    ...presentOutput("stdout", stdout),
-    "",
-    ...presentOutput("stderr", stderr),
-    ...(leftOutputOpen
-      ? [
-          "",
-          "[the computer stopped what the command left running, so anything it printed later is missing]",
-        ]
-      : []),
-  ].join("\n");
-}
-
-/** The `Gateway.act` span's attributes for how a command ended. Never the command or its output. */
-function endAttributes(end: CommandEnd): Record<string, string | number> {
-  return CommandEnd.match(end, {
-    Exited: ({ code }) => ({ "gateway.command_end": "exited", "gateway.exit_code": code }),
-    Signalled: ({ signal }) => ({ "gateway.command_end": "signalled", "gateway.signal": signal }),
-    TimedOut: () => ({ "gateway.command_end": "timed_out" }),
-  });
-}
 
 /** Why a forwarded call did not come back with a result. */
 type ForwardFailure = ComputerUnavailable | ComputerActFailed | ComputerLost | ToolTimedOut;
