@@ -23,3 +23,9 @@ export const BotId = Schema.String.pipe(Schema.brand("BotId"));
 
 /** A decoded {@link BotId}. */
 export type BotId = typeof BotId.Type;
+
+/** One tool call a Bot made during a turn. The agent runtime names it, so it is unique within a turn. */
+export const ToolCallId = Schema.String.pipe(Schema.brand("ToolCallId"));
+
+/** A decoded {@link ToolCallId}. */
+export type ToolCallId = typeof ToolCallId.Type;

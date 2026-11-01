@@ -11,4 +11,8 @@ export {
   SendMessage,
 } from "./chat-rpcs.ts";
 
-export { BotId, ConversationId, MessageId, RunId } from "./ids.ts";
+export { BotId, ConversationId, MessageId, RunId, ToolCallId } from "./ids.ts";
+
+export { ComputerAction, ComputerActError, ComputerActResult, snapshotLimit } from "./computer.ts";
+
+export { tokensMatch } from "./token.ts";

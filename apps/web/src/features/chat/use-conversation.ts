@@ -1,11 +1,11 @@
 import { useAtomMount, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { MessageId } from "@aobot/domain";
-import type { BotSummary, ConversationId, Message } from "@aobot/domain";
+import type { BotSummary, ConversationId } from "@aobot/domain";
 import { Option } from "effect";
 import { useCallback } from "react";
 import { conversation } from "./conversation.ts";
 import { ConversationStatus, isRunning } from "./conversation-state.ts";
-import type { FailureCode } from "./conversation-state.ts";
+import type { FailureCode, TranscriptItem } from "./conversation-state.ts";
 
 /** What went wrong with the last attempt, in words the person can read. */
 interface ConversationError {
@@ -16,7 +16,8 @@ interface ConversationError {
 /** Everything a component needs from one conversation, as values and functions. */
 export interface UseConversation {
   readonly bot: Option.Option<BotSummary>;
-  readonly messages: ReadonlyArray<Message>;
+  /** Messages and tool calls, in the order they happened. */
+  readonly transcript: ReadonlyArray<TranscriptItem>;
   readonly isRunning: boolean;
   readonly error: Option.Option<ConversationError>;
   readonly send: (text: string) => void;
@@ -49,7 +50,7 @@ export function useConversation(id: ConversationId): UseConversation {
 
   return {
     bot: state.bot,
-    messages: state.messages,
+    transcript: state.transcript,
     isRunning: running,
     error: ConversationStatus.$match(state.status, {
       Idle: () => Option.none(),

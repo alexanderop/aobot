@@ -2,7 +2,7 @@
 id: E1-1
 title: A Bot opens a page and tells me its title
 epic: E1
-status: todo
+status: done
 depends_on: [E0-3]
 estimate: 4d
 ---

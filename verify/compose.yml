@@ -7,6 +7,8 @@ services:
       MODEL_NAME: mock
       MODEL_API_KEY: mock
       MODEL_BASE_URL: http://mock-model:4010/v1
+      # Only here, for the fixture page. The server refuses it in production.
+      COMPUTER_ALLOW_PRIVATE_HOSTS: "true"
     ports: !override
       - "127.0.0.1:3100:3000"
 
@@ -17,3 +19,13 @@ services:
   mock-model:
     build: .
     command: ["node", "verify/mock-model.ts"]
+    # On loopback, so a scenario can script the turn (PUT /mock/script) and read what the model saw.
+    ports:
+      - "127.0.0.1:4110:4010"
+
+  # Pages for the computer to open. Only the computer's network reaches it.
+  fixture:
+    build: .
+    command: ["node", "verify/fixture.ts"]
+    networks:
+      - computers

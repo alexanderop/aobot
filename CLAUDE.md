@@ -4,7 +4,7 @@ AI coworkers with their own computer and guardrails. Read `docs/README.md` first
 
 ## Status
 
-E0-1 to E0-5 are done: chat with one Bot over `docker compose up`, or on the host on your own Claude Code or Codex subscription over ACP with their own tools switched off (OpenCode passes the contract suite, not yet the demo); each chat turn is one `Chat.turn` trace in Grafana, every test runs on a scripted model, and `vp run check` fails CI when a change breaks one of our rules, proven by `vp run verify E0-1` to `E0-5`. The next ticket is `docs/backlog/E1-a-computer/E1-1-a-bot-opens-a-page-and-tells-me-its-title.md`.
+E0-1 to E0-5 are done: chat with one Bot over `docker compose up`, or on the host on your own Claude Code or Codex subscription over ACP with their own tools switched off (OpenCode passes the contract suite, not yet the demo); each chat turn is one `Chat.turn` trace in Grafana, every test runs on a scripted model, and `vp run check` fails CI when a change breaks one of our rules, proven by `vp run verify E0-1` to `E0-5`. E1-1 is done: a Bot opens a page on its own computer (Playwright and a headed Chromium in Docker) and reads it, every call goes through the gateway with an audit row and a `Gateway.act` span, and pages reach the model only as untrusted data, proven by `vp run verify E1-1`. The next ticket is `docs/backlog/E1-a-computer/E1-2-click-and-type-by-ref.md`.
 
 ## Commands
 
@@ -13,10 +13,11 @@ E0-1 to E0-5 are done: chat with one Bot over `docker compose up`, or on the hos
 - Imports: tests use `vite-plus/test`, lint plugins use `vite-plus/lint/plugins` (enforced by `vite-plus/prefer-vite-plus-imports`).
 - `vp run test:smoke` (from E0-3): one turn against the real model in `MODEL_*`. Not part of `check`; runs nightly.
 - `vp run test:contract:agents` (from E0-5): agent runtime contract suite (`*.contract.ts`): `api` and each `acp` CLI against the mock model server, streaming, cancel, and no shell or file access outside the gateway. Starts the real pinned adapters through `npx`. Not part of `check`.
-- `vp run test:contract` (from E1-1): computer provider contract suite. Needs Docker.
+- `vp run test:contract` (from E1-1): computer provider contract suite. Builds `aobot-computer:dev` from `apps/computer/Dockerfile` and runs it against a local fixture. Needs Docker. Not part of `check`; CI runs it.
+- The computer image (from E1-1): `docker compose up --build` builds `aobot-computer:dev` through its `computer-image` service. A server on the host needs it built by hand: `docker build -f apps/computer/Dockerfile -t aobot-computer:dev .` from the root.
 - `acp` on your own subscription (from E0-5): `AGENT_RUNTIME=acp ACP_AGENT=claude-code SINGLE_USER=true HOST=127.0.0.1 node apps/server/src/app/main.ts`, with the CLI signed in as usual. `acp` refuses to start without single-user mode on loopback, so it never runs in compose.
 - `vp run verify <ticket-id>` (from E0-1): the ticket's demo in a real browser with `agent-browser`. A slice is done only when this passes. Its stack publishes the server on 3100 and Grafana on 3400, so it runs beside `docker compose up`. A scenario that exports `stack = false` runs without the stack.
-- `docker compose up` (from E0-1): the server (SQLite file on a volume), `grafana/otel-lgtm` (Grafana on http://localhost:3300, traces under Explore → Tempo from E0-2).
+- `docker compose up` (from E0-1): the server (SQLite file on a volume only it mounts), `grafana/otel-lgtm` (Grafana on http://localhost:3300, traces under Explore → Tempo from E0-2). From E1-1 the server mounts the Docker socket and starts the computer (`aobot-computer`) itself, on the `aobot_computers` network it shares only with the server and the collector.
 
 ## Rules
 

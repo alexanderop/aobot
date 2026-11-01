@@ -6,7 +6,7 @@ import type {
   Message,
   RunErrorCode,
 } from "@aobot/domain";
-import type { MessageId, RunId } from "@aobot/domain";
+import type { MessageId, RunId, ToolCallId } from "@aobot/domain";
 
 /**
 Why a conversation is in the failed state. `stopped` is not here: the person asked for it, so a stopped
@@ -36,25 +36,63 @@ export type ConversationStatus = Data.TaggedEnum<{
 /** Constructors and matchers for {@link ConversationStatus}. */
 export const ConversationStatus = Data.taggedEnum<ConversationStatus>();
 
+/**
+Where one tool call stands: running, answered, answered with a failure, or cut off when its run ended
+without a result.
+*/
+export type ToolCallStatus = Data.TaggedEnum<{
+  Running: Record<never, never>;
+  Done: { readonly result: string };
+  Failed: { readonly result: string };
+  Unfinished: Record<never, never>;
+}>;
+
+/** Constructors and matchers for {@link ToolCallStatus}. */
+export const ToolCallStatus = Data.taggedEnum<ToolCallStatus>();
+
+/** One tool call a Bot made. `args` is its input as the JSON text AG-UI streamed. */
+export interface ToolCall {
+  readonly id: ToolCallId;
+  readonly name: string;
+  readonly args: string;
+  readonly status: ToolCallStatus;
+}
+
+/** One entry in the transcript, in the order it happened: a message, or a tool call between messages. */
+export type TranscriptItem = Data.TaggedEnum<{
+  Message: Message;
+  ToolCall: ToolCall;
+}>;
+
+/** Constructors and matchers for {@link TranscriptItem}. */
+export const TranscriptItem = Data.taggedEnum<TranscriptItem>();
+
 /** Everything the page knows about one conversation. */
 export interface ConversationState {
   readonly bot: Option.Option<BotSummary>;
-  readonly messages: ReadonlyArray<Message>;
+  readonly transcript: ReadonlyArray<TranscriptItem>;
   readonly status: ConversationStatus;
 }
 
 /** A conversation the page has not heard about yet. */
 export const initialState: ConversationState = {
   bot: Option.none(),
-  messages: [],
+  transcript: [],
   status: ConversationStatus.Idle(),
 };
+
+function isMessage(
+  item: TranscriptItem,
+  messageId: MessageId,
+): item is Data.TaggedEnum.Value<TranscriptItem, "Message"> {
+  return TranscriptItem.$is("Message")(item) && item.id === messageId;
+}
 
 /** Start from what the server stored. A run already in flight was started elsewhere, so a stop goes out at once. */
 export function seedFromSnapshot(snapshot: ConversationSnapshot): ConversationState {
   return {
     bot: Option.some(snapshot.bot),
-    messages: snapshot.messages,
+    transcript: snapshot.messages.map((message) => TranscriptItem.Message(message)),
     status: snapshot.isRunning
       ? ConversationStatus.Running({ phase: RunPhase.Observed() })
       : ConversationStatus.Idle(),
@@ -69,7 +107,10 @@ export function appendUserMessage(
 ): ConversationState {
   return {
     ...state,
-    messages: [...state.messages, { id: messageId, role: "user", text }],
+    transcript: [
+      ...state.transcript,
+      TranscriptItem.Message({ id: messageId, role: "user", text }),
+    ],
     status: ConversationStatus.Running({ phase: RunPhase.Sending({ stopRequested: false }) }),
   };
 }
@@ -78,7 +119,7 @@ export function appendUserMessage(
 export function refuseMessage(state: ConversationState, messageId: MessageId): ConversationState {
   return {
     ...state,
-    messages: state.messages.filter((message) => message.id !== messageId),
+    transcript: state.transcript.filter((item) => !isMessage(item, messageId)),
     status: ConversationStatus.Failed({
       code: "busy",
       message: "Bot is still answering. Wait for it to finish or stop it.",
@@ -91,12 +132,12 @@ export function acknowledgeDuplicate(
   state: ConversationState,
   messageId: MessageId,
 ): ConversationState {
-  const first = state.messages.findIndex((message) => message.id === messageId);
+  const first = state.transcript.findIndex((item) => isMessage(item, messageId));
 
   return {
     ...state,
-    messages: state.messages.filter(
-      (message, index) => message.id !== messageId || index === first,
+    transcript: state.transcript.filter(
+      (item, index) => !isMessage(item, messageId) || index === first,
     ),
     status: ConversationStatus.Idle(),
   };
@@ -115,15 +156,38 @@ export function failIfStillRunning(state: ConversationState): ConversationState 
 }
 
 function appendAssistantText(
-  messages: ReadonlyArray<Message>,
+  transcript: ReadonlyArray<TranscriptItem>,
   messageId: MessageId,
   delta: string,
-): ReadonlyArray<Message> {
-  return messages.some((message) => message.id === messageId)
-    ? messages.map((message) =>
-        message.id === messageId ? { ...message, text: message.text + delta } : message,
+): ReadonlyArray<TranscriptItem> {
+  return transcript.some((item) => isMessage(item, messageId))
+    ? transcript.map((item) =>
+        isMessage(item, messageId)
+          ? TranscriptItem.Message({ ...item, text: item.text + delta })
+          : item,
       )
-    : [...messages, { id: messageId, role: "assistant", text: delta }];
+    : [...transcript, TranscriptItem.Message({ id: messageId, role: "assistant", text: delta })];
+}
+
+function updateToolCall(
+  transcript: ReadonlyArray<TranscriptItem>,
+  toolCallId: ToolCallId,
+  update: (call: ToolCall) => ToolCall,
+): ReadonlyArray<TranscriptItem> {
+  return transcript.map((item) =>
+    TranscriptItem.$is("ToolCall")(item) && item.id === toolCallId
+      ? TranscriptItem.ToolCall(update(item))
+      : item,
+  );
+}
+
+/** A run that ended leaves no tool call running: one still waiting for its result never gets it. */
+function endToolCalls(transcript: ReadonlyArray<TranscriptItem>): ReadonlyArray<TranscriptItem> {
+  return transcript.map((item) =>
+    TranscriptItem.$is("ToolCall")(item) && ToolCallStatus.$is("Running")(item.status)
+      ? TranscriptItem.ToolCall({ ...item, status: ToolCallStatus.Unfinished() })
+      : item,
+  );
 }
 
 /** Fold one streamed event into the conversation. Pure: the same events always give the same state. */
@@ -136,23 +200,64 @@ export function foldChatEvent(state: ConversationState, event: ChatEvent): Conve
       };
 
     case "TEXT_MESSAGE_START":
-      return { ...state, messages: appendAssistantText(state.messages, event.messageId, "") };
+      return { ...state, transcript: appendAssistantText(state.transcript, event.messageId, "") };
 
     case "TEXT_MESSAGE_CONTENT":
       return {
         ...state,
-        messages: appendAssistantText(state.messages, event.messageId, event.delta),
+        transcript: appendAssistantText(state.transcript, event.messageId, event.delta),
       };
 
     case "TEXT_MESSAGE_END":
+    case "TOOL_CALL_END":
       return state;
 
+    case "TOOL_CALL_START":
+      return {
+        ...state,
+        transcript: [
+          ...state.transcript,
+          TranscriptItem.ToolCall({
+            id: event.toolCallId,
+            name: event.toolCallName,
+            args: "",
+            status: ToolCallStatus.Running(),
+          }),
+        ],
+      };
+
+    case "TOOL_CALL_ARGS":
+      return {
+        ...state,
+        transcript: updateToolCall(state.transcript, event.toolCallId, (call) => ({
+          ...call,
+          args: call.args + event.delta,
+        })),
+      };
+
+    case "TOOL_CALL_RESULT":
+      return {
+        ...state,
+        transcript: updateToolCall(state.transcript, event.toolCallId, (call) => ({
+          ...call,
+          status:
+            event.metadata?.failed === true
+              ? ToolCallStatus.Failed({ result: event.content })
+              : ToolCallStatus.Done({ result: event.content }),
+        })),
+      };
+
     case "RUN_FINISHED":
-      return { ...state, status: ConversationStatus.Idle() };
+      return {
+        ...state,
+        transcript: endToolCalls(state.transcript),
+        status: ConversationStatus.Idle(),
+      };
 
     case "RUN_ERROR":
       return {
         ...state,
+        transcript: endToolCalls(state.transcript),
         status:
           event.code === "stopped"
             ? ConversationStatus.Idle()

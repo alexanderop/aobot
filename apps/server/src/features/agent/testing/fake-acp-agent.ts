@@ -1,15 +1,15 @@
 import { spawn } from "node:child_process";
 import { appendFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
-import type { Schema } from "effect";
+import { Schema } from "effect";
 
 /**
 A stand-in for a CLI's ACP adapter, for tier-2 tests: `node fake-acp-agent.ts` speaks ACP on stdio and
 does what `FAKE_ACP` (JSON, see {@link FakeAgentScript}) says. Plain Node, no imports from the app.
 */
 export interface FakeAgentScript {
-  /** Text chunks of the answer, sent as `agent_message_chunk` updates. */
-  readonly chunks: ReadonlyArray<string>;
+  /** The turn's updates in order: text is sent as an `agent_message_chunk`, an object as the `update` itself. */
+  readonly chunks: ReadonlyArray<string | Schema.JsonObject>;
   /** Requests to send the client before answering. Each reply's error code is told back as a chunk. */
   readonly ask: ReadonlyArray<{ readonly method: string; readonly params: Schema.JsonObject }>;
   /** Never answer `session/prompt`: the agent goes silent. */
@@ -44,12 +44,16 @@ function ask(method: string, params: Schema.JsonObject): Promise<Message> {
   return new Promise((resolve) => waiting.set(id, resolve));
 }
 
-function update(sessionId: string, text: string) {
+const isText = Schema.is(Schema.String);
+
+function update(sessionId: string, chunk: string | Schema.JsonObject) {
   send({
     method: "session/update",
     params: {
       sessionId,
-      update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+      update: isText(chunk)
+        ? { sessionUpdate: "agent_message_chunk", content: { type: "text", text: chunk } }
+        : chunk,
     },
   });
 }

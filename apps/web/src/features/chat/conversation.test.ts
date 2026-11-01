@@ -14,7 +14,7 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 import { RpcTest } from "effect/rpc";
 import { ChatClient } from "./chat-client.ts";
 import { makeConversations } from "./conversation.ts";
-import { ConversationStatus, isRunning } from "./conversation-state.ts";
+import { ConversationStatus, TranscriptItem, isRunning } from "./conversation-state.ts";
 import type { ConversationState } from "./conversation-state.ts";
 
 const conversationId = ConversationId.make("c1");
@@ -53,6 +53,9 @@ const fakeServer = (script: {
     ),
   );
 };
+
+const texts = (state: ConversationState) =>
+  state.transcript.flatMap((item) => (TranscriptItem.$is("Message")(item) ? [item.text] : []));
 
 const registries: AtomRegistry.AtomRegistry[] = [];
 
@@ -159,7 +162,7 @@ describe("given a conversation served by an in-memory Bot", () => {
 
       const state = await until(registry, atoms.state, (current) => !isRunning(current));
 
-      expect(state.messages.map((message) => message.text)).toEqual([userMessage.text]);
+      expect(texts(state)).toEqual([userMessage.text]);
       expect(ConversationStatus.$is("Idle")(state.status)).toBe(true);
     });
   });
@@ -173,9 +176,13 @@ describe("given a conversation served by an in-memory Bot", () => {
       await until(registry, atoms.state, (current) => Option.isSome(current.bot));
       registry.set(atoms.send, userMessage);
 
-      const state = await until(registry, atoms.state, (current) => current.messages.length === 2);
+      const state = await until(
+        registry,
+        atoms.state,
+        (current) => current.transcript.length === 2,
+      );
 
-      expect(state.messages.map((message) => message.text)).toEqual([userMessage.text, "Hello"]);
+      expect(texts(state)).toEqual([userMessage.text, "Hello"]);
       expect(isRunning(state)).toBe(true);
     });
 
@@ -194,13 +201,13 @@ describe("given a conversation served by an in-memory Bot", () => {
 
       await until(registry, atoms.state, (current) => Option.isSome(current.bot));
       registry.set(atoms.send, userMessage);
-      await until(registry, atoms.state, (current) => current.messages.length === 2);
+      await until(registry, atoms.state, (current) => current.transcript.length === 2);
       registry.set(atoms.stop, undefined);
 
       const state = await until(registry, atoms.state, (current) => !isRunning(current));
 
       expect(ConversationStatus.$is("Idle")(state.status)).toBe(true);
-      expect(state.messages.at(-1)?.text).toBe("Hello");
+      expect(texts(state).at(-1)).toBe("Hello");
     });
   });
 
@@ -219,7 +226,7 @@ describe("given a conversation served by an in-memory Bot", () => {
     const state = await until(
       registry,
       atoms.state,
-      (current) => current.messages.length === 2 && !isRunning(current),
+      (current) => current.transcript.length === 2 && !isRunning(current),
     );
 
     expect(ConversationStatus.$is("Idle")(state.status)).toBe(true);
@@ -238,7 +245,7 @@ describe("given a conversation served by an in-memory Bot", () => {
     );
 
     expect(state.status).toMatchObject({ code: "busy" });
-    expect(state.messages).toEqual([]);
+    expect(state.transcript).toEqual([]);
   });
 
   it("goes idle and keeps one bubble when the server says it already had the message", async () => {
@@ -252,7 +259,7 @@ describe("given a conversation served by an in-memory Bot", () => {
     const state = await until(
       registry,
       atoms.state,
-      (current) => current.messages.length === 1 && !isRunning(current),
+      (current) => current.transcript.length === 1 && !isRunning(current),
     );
 
     expect(ConversationStatus.$is("Idle")(state.status)).toBe(true);

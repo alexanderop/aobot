@@ -91,12 +91,30 @@ waiting.
 2. The server starts an agent turn with the Bot's instructions and its granted tools.
 3. The agent asks for a tool, for example `navigate`.
 4. The gateway checks the grant, then the rules, and writes one audit row either way.
-5. Only on "yes", the gateway asks the person's computer to act. If the computer then fails, the gateway
-   writes a second row, `failed`, so "allowed" never reads as "done".
+5. Only on "yes", the gateway asks the person's computer to act, and never when its row could not be
+   written. Every `allow` row then gets exactly one outcome row, `succeeded`, `failed` or `unknown`, so
+   "allowed" never reads as "done". `unknown` means the server lost track, by a timeout or a restart; such a
+   call is never run again, and a row left without an outcome by a crash is marked `unknown` at start-up.
 6. The computer returns the page as text: the accessibility tree, with a ref per element.
 7. The gateway wraps it as untrusted data (decision 10) before the agent sees it.
 8. The agent reads it and decides the next step. Every step goes through the same door.
 9. The answer streams back to the page, with each tool call shown between the text.
+
+## Gateway tools
+
+Every tool a Bot has, in either runtime. The tool map test (`apps/server/src/features/gateway/tool-map.test.ts`)
+fails when a tool in `botToolkit` is missing here or a row here names no tool. Each call writes the `allow`
+row first, then one outcome row linked to it by `outcome_of`. Both carry the turn's `trace_id`; the outcome row
+copies the action, and its `detail` says why for `failed` and `unknown`.
+
+| Tool       | Parameters | Computer action                         | Audit rows                                                                 |
+| ---------- | ---------- | --------------------------------------- | -------------------------------------------------------------------------- |
+| `navigate` | `url`      | `POST /act {"action":"navigate","url"}` | `navigate · allow` with `{ url }`, then `succeeded`, `failed` or `unknown` |
+| `snapshot` | none       | `POST /act {"action":"snapshot"}`       | `snapshot · allow` with `{}`, then `succeeded`, `failed` or `unknown`      |
+
+A tool result reaches the model through one seam: `markUntrusted()`, a 20,000-character cap with a visible
+`[truncated: N characters]` note, and a per-tool timeout. A failed call is a result the model reads, not a
+dead turn.
 
 ## Decisions
 
@@ -131,12 +149,12 @@ export class ChatRpcs extends RpcGroup.make(
 
 // apps/web: the RPC client as an atom service, one conversation atom per id
 class ChatClient extends AtomRpc.Service<ChatClient>()("ChatClient", { group: ChatRpcs, protocol }) {}
-const conversation = Atom.family((id: ConversationId) => /* fold ChatEvents into messages, tool calls, status */)
+const conversation = Atom.family((id: ConversationId) => /* fold ChatEvents into one ordered transcript and a status */)
 ```
 
 | Hook                    | Shaped like CopilotKit's             | What it gives a component                                                               | From |
 | ----------------------- | ------------------------------------ | --------------------------------------------------------------------------------------- | ---- |
-| `useConversation(id)`   | `useAgent`                           | `messages`, `toolCalls`, `isRunning`, `send`, `stop` as values and functions            | E0-1 |
+| `useConversation(id)`   | `useAgent`                           | `transcript` (messages and tool calls in order), `isRunning`, `send`, `stop`            | E0-1 |
 | `useToolCallRenderer()` | `useRenderTool`, `useRenderToolCall` | A registry from tool name to a component that draws one tool call in each of its states | E1-1 |
 | `useLiveScreen(bot)`    | (none)                               | The latest screen frame, and `takeControl` and `handBack`                               | E1-4 |
 
@@ -165,14 +183,22 @@ Rules that keep the move cheap:
 4. The images Compose runs are the images AWS runs.
 5. Every computer provider passes the same contract test suite before it is used. See [testing.md](testing.md).
 
-The `Computers` service has four operations, the same as OpenBot's supervisor:
+The `Computers` service has four operations, the same as OpenBot's supervisor. There is one shared
+computer until E3-3 adds a `person` argument:
 
 ```ts
 export interface Interface {
-  readonly ensure: (person: PersonId) => Effect.Effect<Handle, Unavailable>; // start if needed, wait until healthy
-  readonly stop: (person: PersonId) => Effect.Effect<void, Unavailable>;
-  readonly reset: (person: PersonId) => Effect.Effect<void, Unavailable>;
-  readonly list: Effect.Effect<ReadonlyArray<ComputerStatus>, Unavailable>;
+  readonly ensure: Effect.Effect<Computer, ComputerUnavailable>; // start if needed, wait until healthy
+  readonly stop: Effect.Effect<void, ComputerUnavailable>;
+  readonly reset: Effect.Effect<void, ComputerUnavailable>;
+  readonly list: Effect.Effect<ReadonlyArray<ComputerStatus>, ComputerUnavailable>;
+}
+
+// A running computer: a URL and a token behind one method, whichever provider started it.
+export interface Computer {
+  readonly act: (
+    action: ComputerAction,
+  ) => Effect.Effect<ComputerActResult, ComputerActFailed | ComputerLost>;
 }
 ```
 

@@ -1,4 +1,4 @@
-import { MessageId } from "@aobot/domain";
+import { MessageId, ToolCallId } from "@aobot/domain";
 import { describe, expect, it } from "@effect/vitest";
 import { Duration, Effect, Fiber, Layer, Queue, Ref, Schema, Stream } from "effect";
 import { Tool, Toolkit } from "effect/ai";
@@ -97,7 +97,22 @@ describe("AgentRuntime (api)", () => {
     Effect.gen(function* () {
       const events = yield* runTurn;
 
-      expect(events).toEqual([AgentEvent.TextDelta({ text: "pong" }), AgentEvent.Done()]);
+      expect(events).toEqual([
+        AgentEvent.ToolCallStarted({ id: ToolCallId.make("call-1-0"), name: "ping", params: {} }),
+        AgentEvent.ToolCallFinished({
+          id: ToolCallId.make("call-1-0"),
+          result: "pong",
+          failed: false,
+        }),
+        AgentEvent.ToolCallStarted({ id: ToolCallId.make("call-2-0"), name: "ping", params: {} }),
+        AgentEvent.ToolCallFinished({
+          id: ToolCallId.make("call-2-0"),
+          result: "pong",
+          failed: false,
+        }),
+        AgentEvent.TextDelta({ text: "pong" }),
+        AgentEvent.Done(),
+      ]);
     }).pipe(
       Effect.provide(
         runtimeWith((call) =>
@@ -167,7 +182,7 @@ describe("AgentRuntime (api)", () => {
   );
 
   it.effect(
-    "hands a scripted tool call's input to the tool, then streams the scripted answer",
+    "reports a scripted tool call with its input and result, then streams the scripted answer",
     () =>
       Effect.gen(function* () {
         const asked = yield* Ref.make<ReadonlyArray<typeof Forecast.parametersSchema.Type>>([]);
@@ -194,6 +209,16 @@ describe("AgentRuntime (api)", () => {
 
         expect(yield* Ref.get(asked)).toEqual([{ city: "Vienna", days: 3 }]);
         expect(events).toEqual([
+          AgentEvent.ToolCallStarted({
+            id: ToolCallId.make("call-1-0"),
+            name: "forecast",
+            params: { city: "Vienna", days: 3 },
+          }),
+          AgentEvent.ToolCallFinished({
+            id: ToolCallId.make("call-1-0"),
+            result: "sunny",
+            failed: false,
+          }),
           AgentEvent.TextDelta({ text: "Sunny" }),
           AgentEvent.TextDelta({ text: " in" }),
           AgentEvent.TextDelta({ text: " Vienna" }),
@@ -201,4 +226,85 @@ describe("AgentRuntime (api)", () => {
         ]);
       }),
   );
+
+  it.effect(
+    "reports a tool that answered with its failure as failed, with what the model read",
+    () => {
+      class Unreachable extends Schema.TaggedError<Unreachable>()("Unreachable", {
+        message: Schema.String,
+      }) {}
+
+      const Open = Tool.make("open", {
+        description: "Opens a page",
+        parameters: Schema.Struct({ url: Schema.String }),
+        success: Schema.String,
+        failure: Unreachable,
+        failureMode: "return",
+      });
+
+      const OpenToolkit = Toolkit.make(Open);
+
+      const handlers = OpenToolkit.toLayer({
+        open: () => Effect.fail(new Unreachable({ message: "The computer is not available." })),
+      });
+
+      const script = [
+        ModelStep.CallTools({ calls: [{ name: "open", params: { url: "https://example.com" } }] }),
+        ModelStep.Say({ words: ["Could not open it"] }),
+      ];
+
+      return Effect.gen(function* () {
+        const events = yield* runTurn;
+
+        const [finished, ...more] = events.filter(AgentEvent.$is("ToolCallFinished"));
+
+        expect(more).toEqual([]);
+        expect(finished).toMatchObject({ id: "call-1-0", failed: true });
+        expect(finished?.result).toContain("The computer is not available.");
+      }).pipe(
+        Effect.provide(
+          layerApi(OpenToolkit, limits).pipe(
+            Layer.provide([scriptedModel(replay(script)), handlers]),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect("reports a result that is not text as JSON, the way the model reads it", () => {
+    const Lookup = Tool.make("lookup", {
+      description: "Finds a page",
+      parameters: Schema.Struct({ query: Schema.String }),
+      success: Schema.Struct({ title: Schema.String, words: Schema.Number }),
+    });
+
+    const LookupToolkit = Toolkit.make(Lookup);
+
+    const handlers = LookupToolkit.toLayer({
+      lookup: () => Effect.succeed({ title: "Example Domain", words: 28 }),
+    });
+
+    const script = [
+      ModelStep.CallTools({ calls: [{ name: "lookup", params: { query: "example" } }] }),
+      ModelStep.Say({ words: ["Found it"] }),
+    ];
+
+    return Effect.gen(function* () {
+      const events = yield* runTurn;
+
+      expect(events.filter(AgentEvent.$is("ToolCallFinished"))).toEqual([
+        AgentEvent.ToolCallFinished({
+          id: ToolCallId.make("call-1-0"),
+          result: JSON.stringify({ title: "Example Domain", words: 28 }),
+          failed: false,
+        }),
+      ]);
+    }).pipe(
+      Effect.provide(
+        layerApi(LookupToolkit, limits).pipe(
+          Layer.provide([scriptedModel(replay(script)), handlers]),
+        ),
+      ),
+    );
+  });
 });

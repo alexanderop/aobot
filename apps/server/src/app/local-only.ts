@@ -34,3 +34,21 @@ export function sharedSubscriptionProblem(
 
   return Option.none();
 }
+
+/** Where this server runs. `production` is anything other people rely on. */
+export type Deployment = "development" | "production";
+
+/**
+Why the server must not start, if it must not. Private hosts are for local fixtures; in production they
+would let a Bot browse to internal services and the metadata address.
+*/
+export function privateHostsProblem(
+  deployment: Deployment,
+  allowPrivateHosts: boolean,
+): Option.Option<string> {
+  return deployment === "production" && allowPrivateHosts
+    ? Option.some(
+        "COMPUTER_ALLOW_PRIVATE_HOSTS=true lets a Bot browse to private and metadata addresses, so it is refused with AOBOT_ENV=production.",
+      )
+    : Option.none();
+}

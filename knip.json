@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "ignoreBinaries": ["pgrep"],
+  "ignoreBinaries": ["pgrep", "Xvfb"],
   "workspaces": {
     ".": {
       "entry": [
@@ -8,7 +8,8 @@
         "tools/**/*.test.ts",
         "vite.smoke.config.ts",
         "verify/mock-model.ts",
-        "vite.contract.config.ts"
+        "vite.contract.config.ts",
+        "vite.contract.computers.config.ts"
       ],
       "project": ["tools/**/*.ts", "*.ts"],
       "ignore": ["tools/oxlint/anti-slop/**"],
@@ -30,6 +31,10 @@
     "apps/web": {
       "entry": ["src/**/*.test.ts"],
       "project": ["src/**/*.{ts,tsx}"]
+    },
+    "apps/computer": {
+      "entry": ["src/**/*.test.ts", "src/**/*.contract.ts"],
+      "project": ["src/**/*.ts"]
     }
   }
 }
