@@ -159,9 +159,14 @@ You may use one of these, you may use several, it is unlikely you will use all o
 
 Concrete evidence that the change works. Show a before and after.
 
-Screenshots are S-tier - when the environment is set up for it and the change is visual.
+Every PR body includes at least one screenshot or video of the change working. No exceptions. CI fails a PR whose body has none.
 
-Execution-based evidence is A-tier. Test results, console output. Show the exact test that now fails and passes, using pseudocode.
+- A UI change: record the flow with `agent-browser record start <file>.mp4 <url>` and `agent-browser record stop`, or take `agent-browser screenshot <file>.png`.
+- A server, CLI or tooling change: capture the terminal running the real command, or the browser showing its effect, such as a trace in Grafana.
+- Upload the file to the `pr-evidence` branch at `<pr-branch>/<file>`. Embed an image as `![what it shows](https://raw.githubusercontent.com/<owner>/<repo>/pr-evidence/<pr-branch>/<file>.png)`. Link a video as `[what it shows](https://github.com/<owner>/<repo>/blob/pr-evidence/<pr-branch>/<file>.mp4)`.
+- Write one line under each file that says what it proves.
+
+Execution-based evidence goes next to it. Test results, console output. Show the exact test that now fails and passes, using pseudocode.
 
 ### Merge Danger
 
