@@ -80,6 +80,10 @@ describe("the RPC socket", () => {
     expect(await handshake({ origin: `http://${rebound}`, host: rebound })).toBe(403);
   });
 
+  it("refuses a name that is not this server's even without an Origin", async () => {
+    expect(await handshake({ host: `evil.example:${port()}` })).toBe(403);
+  });
+
   it.each(["127.0.0.1", "localhost", "[::1]"])(
     "upgrades a page this server served at %s",
     async (name) => {
@@ -88,6 +92,21 @@ describe("the RPC socket", () => {
       expect(await handshake({ origin: `http://${host}`, host })).toBe(101);
     },
   );
+
+  it.each(["cross-site", "same-site"])(
+    "refuses a request a browser says another site sent (%s), even without an Origin",
+    async (site) => {
+      expect(await handshake({ "sec-fetch-site": site })).toBe(403);
+    },
+  );
+
+  it("upgrades a page this server served that says it is the same origin", async () => {
+    const host = `127.0.0.1:${port()}`;
+
+    expect(
+      await handshake({ origin: `http://${host}`, host, "sec-fetch-site": "same-origin" }),
+    ).toBe(101);
+  });
 
   it("upgrades a page at the public host it was given, and a client that is no page", async () => {
     expect(
