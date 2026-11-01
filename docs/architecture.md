@@ -159,16 +159,51 @@ Bot's actions meet at one door per Bot.
    `bot_control` row, forgets its latest snapshot and writes `succeeded`. The Bot's old refs are then
    refused like any ref without a snapshot, so it reads the page again before it acts on an element.
 
-`/rpc` refuses a WebSocket upgrade from a page with 403, before any RPC, unless its `Origin` names the host
-the request was sent to and that host is `localhost`, `127.0.0.1`, `[::1]` or the server's `PUBLIC_HOST`. A
-browser lets any page open a socket to any address, so without the first check any site the person visits
-could take control; without the second, a site that points its own name at this machine (DNS rebinding)
-could. A client that is no page sends no `Origin` and is let through.
+`/rpc` refuses a request with 403, before any RPC, unless the host it was sent to, its `Host`, is
+`localhost`, `127.0.0.1`, `[::1]` or the server's `PUBLIC_HOST`, and a page's `Origin`, when it sends one,
+names that same host. A browser lets any page open a socket to any address, so without the `Origin` check
+any site the person visits could take control. Without the `Host` check, a site that points its own name
+at this machine (DNS rebinding) could, and it needs no `Origin` for it: a browser sends none with a
+same-origin `GET`. A client that is no page sends no `Origin` and is let through to this machine's names,
+unless a browser's `Sec-Fetch-Site` says another site sent it, as it does for a link or an `<img>` that
+carries no `Origin`. The `/files` routes below are guarded the same way.
 
 `control_taken` and `control_released` are `allow` rows with an outcome, so a crash in the middle of
 either is swept to `unknown` at start-up like any other call. Their spans, `ComputerControl.take` and
 `ComputerControl.handBack`, carry the events `control.door_closed` (with `control.in_flight`),
 `control.taken` and `control.released`; a refused call adds `control.refused` to its `Gateway.act` span.
+
+## Files in and out of the workspace
+
+A person gives the Bot a file to work on and downloads the file it made, without copying text through the
+chat. Both are the person's own calls, not the Bot's, so they do not go through the Bot's door: a person
+holding the computer can still move files. `FileTransfers` does them, from the same layer as `Gateway`.
+
+1. `＋` in the composer uploads a picked file at once with `PUT /files?path=<name>`. The server
+   needs its `Content-Length`: past 100 MiB it is `file.uploaded · deny` with `{ reason: "too large" }`
+   and a 413 before a byte of the body is read. Otherwise `file.uploaded · allow` with
+   `{ path, name, extension, bytes }`, the computer is started if none runs, and the body streams through
+   to the computer's own `PUT /files?path=`, never held whole. The computer writes it to a file of its own
+   in the same folder and renames it into place only once all of it arrived, counting as it goes: past 100
+   MiB it stops with 413 and keeps nothing. The outcome row says `succeeded` with the bytes saved, or
+   `failed` with `{ reason: "the upload stopped partway" }` when the person's body broke off, since the
+   computer kept none of it. Taking the chip out while it uploads stops the upload.
+2. The message the person sends then ends with a line naming every file that arrived, such as
+   `I put expenses.csv in your workspace.`, so the model knows it is there. Those chips clear only once
+   the message went, so a message the conversation turned away keeps them.
+3. A `write_file` card that is done holds a file chip, a link to `GET /files?path=`. That is
+   `file.downloaded · allow` with `{ path, name, extension }`, and the computer's `GET /files?path=` streams
+   the exact bytes back with their length, through the server to the browser. A download never starts a
+   computer. Its outcome row is written when the person's request ends: `succeeded` with the size when
+   the last byte went out, and `unknown` when the person went away before it or the body was never sent.
+   The computer's answer is dropped then too, read to its end or not. A `HEAD /files` is answered 405
+   without asking the computer, and writes no row.
+
+A path that is absolute or goes up with `..` is a `deny` row with `{ reason: "outside workspace" }`, and
+the computer never hears of it. The rows never hold what a file holds. Both spans, `FileTransfers.upload`
+and `FileTransfers.download`, record `gateway.file_bytes`; the download's lasts until the person's request
+ends. The HTTP client's spans of the server's requests to the computer's `/files` record the path as
+`REDACTED`.
 
 ## Gateway tools
 
@@ -207,6 +242,36 @@ same way. A Bot's commands wait for each other in the gateway, so each one's tim
 one before is done.
 The `Gateway.act` span records `gateway.command_end` (`exited`, `signalled` or `timed_out`) with
 `gateway.exit_code` or `gateway.signal`; the command is in the audit row, never in a span or a log.
+
+`read_file`, `write_file` and `list_files` name a file by its path inside `/workspace`, such as
+`reports/august.csv`; the audit row records that path with its `name` and `extension`, the three that
+rules see as `file.path`, `file.name` and `file.extension`. The path is a `WorkspacePath` from the domain,
+on the tools, on `/act` and on both `/files` routes: `""` is read as `.`, the workspace itself, and nothing
+is trimmed, so the gateway and the computer judge the very same name, and `a.txt ` is a file of its own.
+A path is judged as the computer, which runs Linux, reads it: only a leading `/` makes it absolute and
+only `/` separates, so `c:notes.txt` and `a\b.txt` are each one file's name. A path that is absolute,
+`/workspace/notes.txt` included, or that goes up with `..` is denied before anything else, the computer
+never hears of it, and the model reads:
+
+> read_file did not run: /etc/passwd is outside your workspace. Name a file by its path inside /workspace,
+> such as notes.txt, with no leading / and no "..".
+
+The computer confines every path again on its own, because only it can see where a link leads: resolved on
+disk, with every link followed as the kernel follows it, the file must still be inside `/workspace`,
+compared as a relative path so `/workspace-evil` is not inside it. Node's own `realpath`, which `FileSystem`
+uses, reads `..` after a link as text and would put `sub/..` back inside when `sub` leads out, so the
+workspace asks the kernel instead. A write also follows a link already at its name, dangling or not, each
+hop read from the folder it really is in. A link that points back inside keeps working. A link that leads
+out is refused there, an `allow` row followed by `failed`.
+
+`read_file` answers the first 16,000 bytes as UTF-8 text with the file's size, wrapped as untrusted
+`file contents`. `write_file` saves at most 1 MB, writing a file of its own beside the target, under a short
+name of its own so the longest name still fits, and renaming it into place, so a failed write leaves what
+was there. `list_files` answers at most 500 files and folders, every level down, in name order, and does
+not follow links. A folder it cannot open, or a file it cannot size, is listed as could not be read, and
+the rest of the listing still comes back. The `Gateway.act` span records
+`gateway.file_bytes` for a read or a write and `gateway.file_entries` for a listing; never a path or what a
+file holds.
 
 ### Refs
 
@@ -265,12 +330,13 @@ class ChatClient extends AtomRpc.Service<ChatClient>()("ChatClient", { group: Ch
 const conversation = Atom.family((id: ConversationId) => /* fold ChatEvents into one ordered transcript and a status */)
 ```
 
-| Hook                    | Shaped like CopilotKit's             | What it gives a component                                                                                      | From |
-| ----------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------- | ---- |
-| `useConversation(id)`   | `useAgent`                           | `transcript` (messages and tool calls in order), `isRunning`, `usesComputer`, `send`, `stop`                   | E0-1 |
-| `useToolCallRenderer()` | `useRenderTool`, `useRenderToolCall` | A registry from tool name to a component that draws one tool call in each of its states                        | E1-1 |
-| `useLiveScreen()`       | (none)                               | The latest screen frame, none while the screen is blank                                                        | E1-4 |
-| `useControl()`          | (none)                               | Who holds the Bot's computer, why the last take, click or hand back failed, `takeControl`, `handBack`, `click` | E1-5 |
+| Hook                       | Shaped like CopilotKit's             | What it gives a component                                                                                                                     | From |
+| -------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| `useConversation(id)`      | `useAgent`                           | `transcript` (messages and tool calls in order), `isRunning`, `usesComputer`, `send`, `stop`                                                  | E0-1 |
+| `useToolCallRenderer()`    | `useRenderTool`, `useRenderToolCall` | A registry from tool name to a component that draws one tool call in each of its states                                                       | E1-1 |
+| `useLiveScreen()`          | (none)                               | The latest screen frame, none while the screen is blank                                                                                       | E1-4 |
+| `useControl()`             | (none)                               | Who holds the Bot's computer, why the last take, click or hand back failed, `takeControl`, `handBack`, `click`                                | E1-5 |
+| `useAttachments(id, send)` | (none)                               | The files picked in the conversation's composer and how each upload went, `attach`, `dismiss`, and `send`, which names the files that arrived | E1-6 |
 
 Not copied: `useFrontendTool` (it runs a Bot's tool in the open tab, which breaks routines, the Mac and
 closed tabs) and CopilotKit's provider. The wire format stays AG-UI, so a CopilotKit or other AG-UI client
@@ -311,9 +377,10 @@ export interface Interface {
   readonly screen: Stream.Stream<Screen>;
 }
 
-// A running computer: a URL and a token, whichever provider started it. `browse` and `run` are
+// A running computer: a URL and a token, whichever provider started it. `browse`, `run` and `files` are
 // `POST /act`, and each reads only the answer its action promises, so a page answering a command is
-// ComputerLost. `input` is `POST /input`, what a person in control did on the screen.
+// ComputerLost. `download` and `upload` are `GET` and `PUT /files`, a file's bytes as they are. `input` is
+// `POST /input`, what a person in control did on the screen.
 export interface Computer {
   readonly browse: (
     action: PageAction,
@@ -321,6 +388,17 @@ export interface Computer {
   readonly run: (
     command: RunCommand,
   ) => Effect.Effect<CommandRan, ComputerActFailed | ComputerLost>;
+  readonly files: (
+    action: FileAction,
+  ) => Effect.Effect<FileAnswer, ComputerActFailed | ComputerLost>;
+  readonly download: (
+    path: string,
+  ) => Effect.Effect<FileDownload, ComputerActFailed | ComputerLost>;
+  // A body that fails partway fails the upload with its own error.
+  readonly upload: <E>(
+    path: string,
+    body: Stream.Stream<Uint8Array, E>,
+  ) => Effect.Effect<FileSaved, ComputerActFailed | ComputerLost | E>;
   readonly input: (input: PersonInput) => Effect.Effect<void, ComputerActFailed | ComputerLost>;
 }
 ```
@@ -344,7 +422,10 @@ reaches when it does not, until network limits (E5-3). These hold locally as muc
   browser's destinations, and private hosts stay refused to it even where `COMPUTER_ALLOW_PRIVATE_HOSTS`
   opens them to the browser. A command can still unset them and connect directly; network limits close
   that (E5-3). `bash -c`, never a login shell, so a `.bash_profile` the Bot wrote cannot run first.
-- **`/act`, `/input` and `/stream` refuse callers on the computer itself.** A request from a loopback address or from
+- **A Bot's files stay in `/workspace`.** The gateway denies a path that is absolute or goes up with `..`,
+  and the computer refuses one that leads out once links are followed. A command can still read anything
+  its user can, which is the shell's reach, not the file tools'.
+- **`/act`, `/files`, `/input` and `/stream` refuse callers on the computer itself.** A request from a loopback address or from
   one of the computer's own addresses gets 403 before its token is read, so a command that finds the token
   cannot drive the browser around the gateway or watch it through `/stream`. What remains: commands run as
   the same user as the computer's own process, so they can read its environment and memory

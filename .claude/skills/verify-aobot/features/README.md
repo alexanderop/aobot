@@ -44,6 +44,7 @@ Each file: H1 title, one paragraph of user-visible behavior, then exactly `Sub-f
 - [Shell](./shell.md): the Bot runs bash in its own `/workspace`; the server stays out of reach. E1-3.
 - [Live screen](./live-screen.md): the side panel shows the Bot's browser while it works, folds after. E1-4.
 - [Take control](./take-control.md): a person takes the computer, clicks on it, hands back; the Bot is refused meanwhile. E1-5.
+- [Files](./files.md): a person uploads into the Bot's workspace and downloads what it saved; the Bot's file tools stay inside it. E1-6.
 
 Cross-cutting: every turn is one `Chat.turn` trace (E0-2). Check it with `$S trace` on any feature's audit
 row `trace_id`.
