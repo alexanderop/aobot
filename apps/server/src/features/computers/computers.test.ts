@@ -1,5 +1,5 @@
 import type { IncomingHttpHeaders } from "node:http";
-import { CommandEnd, Screen, ScreenFrame } from "@aobot/domain";
+import { CommandEnd, PersonInput, Screen, ScreenFrame } from "@aobot/domain";
 import { NodeWS } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -26,14 +26,16 @@ import {
 } from "./computers.ts";
 import { reply, serve, serveScreen } from "./testing/serve.ts";
 
-/** A computer that answers every `/act` with `status` and `json`, and keeps the headers it was sent. */
-function fakeComputer(status: number, json: Schema.Json) {
+/** A computer that answers every request with `status` and `json`, and keeps the headers and paths it was sent. */
+function fakeComputer(status: number, json?: Schema.Json) {
   const seen: Array<IncomingHttpHeaders> = [];
+  const paths: Array<string | undefined> = [];
 
   return serve((request, response) => {
     seen.push(request.headers);
+    paths.push(request.url);
     reply(response, status, json);
-  }).pipe(Effect.map(({ port }) => ({ url: `http://127.0.0.1:${port}`, seen })));
+  }).pipe(Effect.map(({ port }) => ({ url: `http://127.0.0.1:${port}`, seen, paths })));
 }
 
 const token = Redacted.make("computer-token");
@@ -51,6 +53,16 @@ function runCommand(url: string) {
     const client = yield* HttpClient.HttpClient;
 
     return yield* computerAt({ url, token }, client).run({ action: "run", command: "ls" });
+  }).pipe(Effect.provide(FetchHttpClient.layer));
+}
+
+function click(url: string) {
+  return Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+
+    return yield* computerAt({ url, token }, client).input(
+      PersonInput.cases.Click.make({ at: { x: 0.5, y: 0.5 } }),
+    );
   }).pipe(Effect.provide(FetchHttpClient.layer));
 }
 
@@ -106,6 +118,29 @@ describe("computerAt", () => {
 
       expect(yield* Effect.flip(act(crashed.url))).toBeInstanceOf(ComputerLost);
       expect(yield* Effect.flip(act(garbled.url))).toBeInstanceOf(ComputerLost);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("sends a person's input to /input with the token, and reads 204 as done", () =>
+    Effect.gen(function* () {
+      const computer = yield* fakeComputer(204);
+
+      yield* click(computer.url);
+
+      expect(computer.paths).toEqual(["/input"]);
+      expect(computer.seen[0]?.authorization).toBe("Bearer computer-token");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reads an input the browser failed as failed, and any other answer as unknown", () =>
+    Effect.gen(function* () {
+      const failed = yield* fakeComputer(502, { reason: "failed", message: "no page" });
+      const page = yield* fakeComputer(200, { action: "snapshot" });
+
+      expect(yield* Effect.flip(click(failed.url))).toEqual(
+        new ComputerActFailed({ reason: "failed", message: "no page" }),
+      );
+      expect(yield* Effect.flip(click(page.url))).toBeInstanceOf(ComputerLost);
     }).pipe(Effect.scoped),
   );
 

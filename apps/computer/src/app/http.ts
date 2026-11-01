@@ -3,6 +3,7 @@ import {
   ComputerAction,
   type ComputerActError,
   ComputerActResult,
+  PersonInput,
   ScreenFrame,
   tokensMatch,
 } from "@aobot/domain";
@@ -88,8 +89,6 @@ const sendFrames = (socket: Socket.Socket, connection: Writable) =>
     );
   }).pipe(Effect.ignore, Effect.scoped);
 
-const decodeAction = Schema.decodeUnknownEffect(ComputerAction);
-
 const act = Effect.fn("Computer.act")(function* (action: ComputerAction) {
   yield* Effect.annotateCurrentSpan("computer.action", action.action);
 
@@ -98,11 +97,49 @@ const act = Effect.fn("Computer.act")(function* (action: ComputerAction) {
   return yield* Browser.use((browser) => browser.act(action));
 });
 
+const input = Effect.fn("Computer.input")(function* (given: PersonInput) {
+  yield* Browser.use((browser) => browser.input(given));
+});
+
+/** `handle` of the body decoded as `schema`, or 400 saying the body is not `what`. */
+function withBody<A, I, E, R>(
+  request: HttpServerRequest.HttpServerRequest,
+  schema: Schema.Codec<A, I>,
+  what: string,
+  handle: (body: A) => Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
+) {
+  return request.json.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(schema)),
+    Effect.option,
+    Effect.flatMap(
+      Option.match({
+        onNone: () =>
+          Effect.succeed(
+            HttpServerResponse.jsonUnsafe({ error: `The body is not ${what}.` }, { status: 400 }),
+          ),
+        onSome: handle,
+      }),
+    ),
+  );
+}
+
+/** `effect` inside the caller's span, so the computer's work shows up inside the gateway call that asked for it. */
+function withCallerSpan<A, E, R>(
+  request: HttpServerRequest.HttpServerRequest,
+  effect: Effect.Effect<A, E, R>,
+) {
+  return Option.match(HttpTraceContext.fromHeaders(request.headers), {
+    onNone: () => effect,
+    onSome: (span) => Effect.withParentSpan(effect, span),
+  });
+}
+
 /**
 `GET /health`, open so Docker and the server can see the computer is up. `POST /act`, the only way to drive
-the browser and the shell, and `GET /stream`, the screen as a WebSocket of frames, both behind the bearer
-token. Both refuse a caller on the computer itself, so a command that reads the token out of `/proc` can
-neither drive the browser around the gateway nor watch what it shows.
+the browser and the shell, `POST /input`, what a person in control did on the screen, and `GET /stream`, the
+screen as a WebSocket of frames, all behind the bearer token. They refuse a caller on the computer itself,
+so a command that reads the token out of `/proc` can neither drive the browser around the gateway nor watch
+what it shows.
 */
 export const routesLayer = (token: Redacted.Redacted<string>) =>
   Layer.mergeAll(
@@ -111,24 +148,8 @@ export const routesLayer = (token: Redacted.Redacted<string>) =>
       "POST",
       "/act",
       guarded(token, (request) =>
-        Effect.gen(function* () {
-          const action = yield* request.json.pipe(Effect.flatMap(decodeAction), Effect.option);
-
-          if (Option.isNone(action)) {
-            return HttpServerResponse.jsonUnsafe(
-              { error: "The body is not a computer action." },
-              { status: 400 },
-            );
-          }
-
-          // The caller's span, so the computer's work shows up inside the gateway call that asked for it.
-          const parent = HttpTraceContext.fromHeaders(request.headers);
-          const run = act(action.value);
-
-          return yield* Option.match(parent, {
-            onNone: () => run,
-            onSome: (span) => Effect.withParentSpan(run, span),
-          }).pipe(
+        withBody(request, ComputerAction, "a computer action", (action) =>
+          withCallerSpan(request, act(action)).pipe(
             Effect.flatMap(encodeResult),
             Effect.catchTags({
               ActionRefused: ({ message }) =>
@@ -138,8 +159,22 @@ export const routesLayer = (token: Redacted.Redacted<string>) =>
               CommandFailed: ({ message }) =>
                 Effect.succeed(errorReply({ reason: "failed", message }, 502)),
             }),
-          );
-        }),
+          ),
+        ),
+      ),
+    ),
+    HttpRouter.add(
+      "POST",
+      "/input",
+      guarded(token, (request) =>
+        withBody(request, PersonInput, "a person's input", (given) =>
+          withCallerSpan(request, input(given)).pipe(
+            Effect.as(HttpServerResponse.empty({ status: 204 })),
+            Effect.catchTag("ActionFailed", ({ message }) =>
+              Effect.succeed(errorReply({ reason: "failed", message }, 502)),
+            ),
+          ),
+        ),
       ),
     ),
     HttpRouter.add(

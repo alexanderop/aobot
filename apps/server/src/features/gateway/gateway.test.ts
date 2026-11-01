@@ -48,6 +48,7 @@ function fakeComputers(answers: Partial<Computer>) {
   const {
     browse = () => Effect.die("this computer has no browser"),
     run = () => Effect.die("this computer has no shell"),
+    input = () => Effect.die("this computer takes no input"),
   } = answers;
 
   const computer: Computer = {
@@ -61,6 +62,7 @@ function fakeComputers(answers: Partial<Computer>) {
         Effect.sync(() => actions.push(command)),
         run(command),
       ),
+    input,
   };
 
   const layer = Layer.succeed(
