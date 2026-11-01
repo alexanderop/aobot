@@ -27,6 +27,8 @@ export {
   snapshotLimit,
 } from "./computer.ts";
 
+export { keepFirst, keepLast } from "./text.ts";
+
 export { tokensMatch } from "./token.ts";
 
 export { findRef, snapshotRefs } from "./aria-snapshot.ts";

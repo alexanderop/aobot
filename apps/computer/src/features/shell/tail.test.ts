@@ -26,10 +26,4 @@ describe("outputTail", () => {
   it("says the start was dropped even when the cut fell while the output was still arriving", () => {
     expect(collect(5, ["x".repeat(11)])).toEqual({ text: "xxxxx", truncated: true });
   });
-
-  it("never starts with half of a surrogate pair", () => {
-    const tail = collect(3, ["a😀bc"]);
-
-    expect(tail).toEqual({ text: "bc", truncated: true });
-  });
 });

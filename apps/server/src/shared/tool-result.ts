@@ -1,3 +1,4 @@
+import { keepFirst } from "@aobot/domain";
 import { Duration, Effect, Schema } from "effect";
 import { markUntrusted } from "./untrusted.ts";
 
@@ -18,10 +19,9 @@ export class ToolTimedOut extends Schema.TaggedError<ToolTimedOut>()("ToolTimedO
 export function capText(text: string, limit: number = toolResultLimit): string {
   if (text.length <= limit) return text;
 
-  const lastKept = text.charCodeAt(limit - 1);
-  const end = lastKept >= 0xd800 && lastKept <= 0xdbff ? limit - 1 : limit;
+  const kept = keepFirst(text, limit);
 
-  return `${text.slice(0, end)}\n[truncated: ${text.length - end} characters]`;
+  return `${kept}\n[truncated: ${text.length - kept.length} characters]`;
 }
 
 /** Text from outside, as the model is shown it: capped, then marked untrusted. */
