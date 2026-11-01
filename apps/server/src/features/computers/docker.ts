@@ -22,7 +22,7 @@ import {
 import type { DockerSettings } from "./settings.ts";
 
 /** The one shared computer's container. */
-export const containerName = "aobot-computer";
+const containerName = "aobot-computer";
 
 /** The port the computer listens on inside its container. */
 const computerPort = 4100;
