@@ -21,9 +21,6 @@ import {
 } from "./computers.ts";
 import type { DockerSettings } from "./settings.ts";
 
-/** The one shared computer's container. */
-const containerName = "aobot-computer";
-
 /** The port the computer listens on inside its container. */
 const computerPort = 4100;
 
@@ -109,7 +106,7 @@ export function computerUrl(
   inspect: ContainerInspect,
 ): Option.Option<string> {
   return Option.isSome(options.docker.network)
-    ? Option.some(`http://${containerName}:${computerPort}`)
+    ? Option.some(`http://${options.docker.name}:${computerPort}`)
     : Option.map(publishedPort(inspect), (port) => `http://127.0.0.1:${port}`);
 }
 
@@ -134,7 +131,7 @@ function dockerRefused(what: string) {
 }
 
 /** The few Docker Engine API calls the provider makes, over the socket. Nothing else is reachable. */
-function dockerEngine(client: HttpClient.HttpClient) {
+function dockerEngine(client: HttpClient.HttpClient, containerName: string) {
   const path = `/containers/${containerName}`;
 
   const send = (request: HttpClientRequest.HttpClientRequest) =>
@@ -215,10 +212,13 @@ const untraced = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.provideService(effect, HttpClient.TracerDisabledWhen, () => true);
 
 /**
-{@link Computers} on this machine's Docker Engine: one container, `aobot-computer`. A container this
-process did not start is replaced, because only the process that started it knows its token.
+{@link Computers} on this machine's Docker Engine: one container, named by `COMPUTER_NAME`. A container
+this process did not start is replaced, because only the process that started it knows its token. For the
+same reason the container is removed when the server stops: no later process could use it.
 */
 export function dockerComputers(options: DockerOptions) {
+  const containerName = options.docker.name;
+
   return Layer.effect(
     Computers,
     Effect.gen(function* () {
@@ -230,6 +230,7 @@ export function dockerComputers(options: DockerOptions) {
           NodeHttpClient.HttpAgent,
           agent,
         )).pipe(HttpClient.mapRequest(HttpClientRequest.prependUrl("http://docker"))),
+        containerName,
       );
 
       const client = yield* HttpClient.HttpClient;
@@ -322,6 +323,17 @@ export function dockerComputers(options: DockerOptions) {
             : [],
         ),
         untraced,
+      );
+
+      yield* Effect.addFinalizer(() =>
+        Ref.get(token).pipe(
+          Effect.flatMap((known) => (Option.isSome(known) ? whenOurs(engine.remove) : Effect.void)),
+          Effect.catchTag("ComputerUnavailable", ({ message }) =>
+            Effect.logWarning("The computer could not be removed on shutdown").pipe(
+              Effect.annotateLogs({ computer: containerName, reason: message }),
+            ),
+          ),
+        ),
       );
 
       return Computers.of({

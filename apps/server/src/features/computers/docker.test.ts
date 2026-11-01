@@ -15,14 +15,23 @@ import {
 import { bodyOf, reply, serve } from "./testing/serve.ts";
 
 const hostOptions: DockerOptions = {
-  docker: { socketPath: "/unused", image: "aobot-computer:dev", network: Option.none() },
+  docker: {
+    socketPath: "/unused",
+    image: "aobot-computer:dev",
+    name: "aobot-computer",
+    network: Option.none(),
+  },
   allowPrivateHosts: false,
   otlpEndpoint: Option.none(),
 };
 
 const networkOptions: DockerOptions = {
   ...hostOptions,
-  docker: { ...hostOptions.docker, network: Option.some("aobot_computer") },
+  docker: {
+    ...hostOptions.docker,
+    name: "aobot-verify-computer",
+    network: Option.some("aobot_computer"),
+  },
   allowPrivateHosts: true,
   otlpEndpoint: Option.some("http://otel-lgtm:4318"),
 };
@@ -84,12 +93,14 @@ describe("publishedPort", () => {
 });
 
 describe("computerUrl", () => {
-  it("reaches the computer by name on its network, and on loopback from the host", () => {
+  it("reaches the computer by its configured name on its network, and on loopback from the host", () => {
     const inspect = inspectWithPorts({
       "4100/tcp": [{ HostIp: "127.0.0.1", HostPort: "55123" }],
     });
 
-    expect(computerUrl(networkOptions, inspect)).toEqual(Option.some("http://aobot-computer:4100"));
+    expect(computerUrl(networkOptions, inspect)).toEqual(
+      Option.some("http://aobot-verify-computer:4100"),
+    );
     expect(computerUrl(hostOptions, inspect)).toEqual(Option.some("http://127.0.0.1:55123"));
   });
 });
@@ -214,6 +225,33 @@ describe("dockerComputers", () => {
         expect(docker.state.calls).toContain("DELETE /containers/aobot-computer");
         expect(tokenOf(docker.state.container)).not.toBe("old");
       }).pipe(Effect.scoped),
+  );
+
+  it.effect("removes the computer it started when the server stops", () =>
+    Effect.gen(function* () {
+      const docker = yield* fakeDocker;
+
+      yield* Computers.use((computers) => computers.ensure).pipe(Effect.provide(docker.layer));
+
+      expect(docker.state.calls.at(-1)).toBe("DELETE /containers/aobot-computer");
+      expect(docker.state.container).toBeUndefined();
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("leaves a computer it did not start when the server stops", () =>
+    Effect.gen(function* () {
+      const docker = yield* fakeDocker;
+      docker.state.container = {
+        env: ["COMPUTER_TOKEN=other"],
+        labels: { "aobot.computer": "shared" },
+        running: true,
+      };
+
+      yield* Computers.use((computers) => computers.list).pipe(Effect.provide(docker.layer));
+
+      expect(docker.state.calls).not.toContain("DELETE /containers/aobot-computer");
+      expect(docker.state.container).toBeDefined();
+    }).pipe(Effect.scoped),
   );
 
   it.effect("never takes over a container with the name that aobot did not create", () =>

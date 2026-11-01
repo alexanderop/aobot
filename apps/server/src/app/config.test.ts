@@ -120,6 +120,7 @@ describe("serverConfig", () => {
         ComputerProvider.Docker({
           socketPath: "/var/run/docker.sock",
           image: "aobot-computer:dev",
+          name: "aobot-computer",
           network: Option.none(),
         }),
       );

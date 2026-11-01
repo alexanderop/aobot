@@ -7,6 +7,8 @@ network and publishes nothing; without it, its port is published on loopback for
 export interface DockerSettings {
   readonly socketPath: string;
   readonly image: string;
+  /** The shared computer's container name, so two stacks on one Docker Engine do not take each other's. */
+  readonly name: string;
   readonly network: Option.Option<string>;
 }
 
@@ -30,6 +32,7 @@ const providers = {
     Config.all({
       socketPath: Config.String("DOCKER_SOCKET").pipe(Config.withDefault("/var/run/docker.sock")),
       image: Config.String("COMPUTER_IMAGE").pipe(Config.withDefault("aobot-computer:dev")),
+      name: Config.String("COMPUTER_NAME").pipe(Config.withDefault("aobot-computer")),
       network: Config.option(Config.String("COMPUTER_NETWORK")),
     }),
     (docker) => ComputerProvider.Docker(docker),
