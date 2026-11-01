@@ -56,9 +56,12 @@ export default async function scenario(baseUrl: string, grafanaUrl: string): Pro
   await waitFor("the click and type cards to be done", 10_000, () => doneCards("type") === 1);
   assert(doneCards("click") === 1, "the click card is done");
 
-  const typedCard = browser(
-    "eval",
-    `document.querySelector('.tool-call[data-tool="type"] .tool-call__result')?.textContent ?? ""`,
+  // agent-browser prints what eval answers as JSON.
+  const typedCard = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.String))(
+    browser(
+      "eval",
+      `document.querySelector('.tool-call[data-tool="type"] .tool-call__result')?.textContent ?? ""`,
+    ),
   );
 
   assert(holdsQuery.test(typedCard), `the transcript shows the search box holding "${query}"`);
@@ -87,7 +90,10 @@ export default async function scenario(baseUrl: string, grafanaUrl: string): Pro
     "all three calls are recorded as succeeded",
   );
 
-  const [, click, type] = allowed.map((row) => Schema.decodeUnknownSync(RefDetail)(row.detail));
+  const [click, type] = allowed
+    .slice(1)
+    .map((row) => Schema.decodeUnknownSync(RefDetail)(row.detail));
+
   assert(
     click?.role === "searchbox" && click.name === "Search Wikipedia",
     `click · allow names the element it clicked (${JSON.stringify(click)})`,
