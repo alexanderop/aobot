@@ -1,0 +1,17 @@
+{
+  "name": "@aobot/computer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/app/main.ts"
+  },
+  "dependencies": {
+    "@aobot/domain": "workspace:*",
+    "@effect/platform-node": "4.1.0",
+    "effect": "4.1.0",
+    "playwright": "1.64.1"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.1.0"
+  }
+}
