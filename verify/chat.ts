@@ -56,9 +56,28 @@ export function answers(): ReadonlyArray<string> {
   ).filter((text) => text !== "");
 }
 
+function cards(tool: string, status: "done" | "failed"): number {
+  return Number(
+    browser("get", "count", `.tool-call[data-tool="${tool}"][data-status="${status}"]`),
+  );
+}
+
 /** How many cards for `tool` the transcript draws as done. */
 export function doneCards(tool: string): number {
-  return Number(browser("get", "count", `.tool-call[data-tool="${tool}"][data-status="done"]`));
+  return cards(tool, "done");
+}
+
+/** How many cards for `tool` the transcript draws as failed. */
+export function failedCards(tool: string): number {
+  return cards(tool, "failed");
+}
+
+/** The result the first card for `tool` shows, or nothing before it has one. */
+export function cardResult(tool: string): string {
+  return evaluate(
+    Schema.String,
+    `document.querySelector('.tool-call[data-tool="${tool}"] .tool-call__result')?.textContent ?? ""`,
+  );
 }
 
 /** Send `text` from the composer, without waiting for the answer. */

@@ -4,7 +4,7 @@ import {
   ModelStep,
 } from "../../apps/server/src/features/agent/testing/model-script.ts";
 import { assert, browser, waitFor } from "../browser.ts";
-import { answers, ask, auditRows, doneCards, modelRequests, script } from "../chat.ts";
+import { answers, ask, auditRows, cardResult, doneCards, modelRequests, script } from "../chat.ts";
 import { ancestry, traceSpans } from "../tempo.ts";
 
 /** The page that tells its reader to go to evil.test, served on the computers network. */
@@ -57,10 +57,7 @@ export default async function scenario(baseUrl: string, grafanaUrl: string): Pro
   assert(doneCards("navigate") === 1, "the navigate card is done");
   assert(doneCards("snapshot") === 1, "the snapshot card is done");
 
-  const read = browser(
-    "eval",
-    `document.querySelector('.tool-call[data-tool="snapshot"] .tool-call__result')?.textContent ?? ""`,
-  );
+  const read = cardResult("snapshot");
 
   assert(read.includes("Title: Example Domain"), "the computer really read example.com's title");
 

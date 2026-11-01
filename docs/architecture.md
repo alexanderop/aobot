@@ -102,8 +102,9 @@ waiting.
 
 ## Watching the screen
 
-While a turn the page started is running and has called a tool, the page opens the Bot's screen as a side
-panel and watches it. A page that joins a running turn keeps the panel folded, because it cannot see when
+While a turn the page started is running and has called a tool, or while the person holds the Bot's
+computer, the page opens the Bot's screen as a side panel and watches it. Folded, the panel is a rail
+with one button, Take control. A page that joins a running turn keeps the panel folded, because it cannot see when
 that turn ends. The screen goes through the gateway feature but not its audited tools: watching asks the
 computer to do nothing, so it is not audited, and it never starts a computer.
 
@@ -121,6 +122,54 @@ computer to do nothing, so it is not audited, and it never starts a computer.
 The page never learns the computer's address or token. A frame shows whatever the Bot typed, so it never
 goes into a log, a span or an audit row.
 
+## Taking control
+
+A person takes the mouse when their Bot reaches a login or a CAPTCHA, clicks on the live screen
+themselves, and hands it back. While the person holds the computer, the panel stays open, and every Bot
+action is refused. `ComputerControl` does it, from the same layer as `Gateway`, so a person's take and the
+Bot's actions meet at one door per Bot.
+
+1. Each Bot has one door in the gateway, and every Bot action goes through it before anything else, in
+   `Gateway.act`, whatever its tool. The door is `Open` while the Bot holds its computer, `Closing` while a
+   take waits, and `Held` while the person holds it. Only an open door lets an action in. A Bot's
+   commands wait for each other outside the door, so a command whose turn comes while the person holds
+   the computer is refused, and a take never waits for one.
+2. `Control.take` writes `control_taken · allow`, closes the door, stores a row for the Bot in
+   `bot_control`, then waits for the actions the door already let in to finish. The page shows `Taking`
+   meanwhile. Once the person holds the computer, the take starts it if none runs, and answers. A
+   computer that does not start leaves the person holding it, and the page says why. Taking again while
+   holding it changes nothing but starts the computer again.
+3. `bot_control` is read at start-up, so a restart, even one in the middle of a take, leaves the person in
+   control. No computer runs then: the panel says the computer is not showing a page and offers to start
+   it, which takes control again.
+4. While the door is not open, a Bot call is a `deny` row with `{ reason: "a person has control" }`, the
+   computer never hears of it, and the model reads:
+
+   > navigate did not run: a person has control of your computer. Wait until they hand it back, then take
+   > a snapshot.
+
+5. `Control.click` sends a click to the computer's `POST /input` as fractions of the screen, only while
+   the person holds it and only to a computer already running, within 15 seconds. The page reads the
+   fractions off the frame it draws; only the computer knows its viewport, so only the computer turns
+   them into pixels. The computer clicks only once the browser's last action has settled, even one whose
+   caller stopped waiting for it, so a Bot action from a stopped turn never lands beside the person's
+   click. A click the page holds up past 5 seconds fails, and the browser is free for the next action.
+   A person's clicks are not audited: the rows around them say who held the computer.
+6. `Control.handBack` writes `control_released · allow`, and in one transaction deletes the Bot's
+   `bot_control` row, forgets its latest snapshot and writes `succeeded`. The Bot's old refs are then
+   refused like any ref without a snapshot, so it reads the page again before it acts on an element.
+
+`/rpc` refuses a WebSocket upgrade from a page with 403, before any RPC, unless its `Origin` names the host
+the request was sent to and that host is `localhost`, `127.0.0.1`, `[::1]` or the server's `PUBLIC_HOST`. A
+browser lets any page open a socket to any address, so without the first check any site the person visits
+could take control; without the second, a site that points its own name at this machine (DNS rebinding)
+could. A client that is no page sends no `Origin` and is let through.
+
+`control_taken` and `control_released` are `allow` rows with an outcome, so a crash in the middle of
+either is swept to `unknown` at start-up like any other call. Their spans, `ComputerControl.take` and
+`ComputerControl.handBack`, carry the events `control.door_closed` (with `control.in_flight`),
+`control.taken` and `control.released`; a refused call adds `control.refused` to its `Gateway.act` span.
+
 ## Gateway tools
 
 Every tool a Bot has, in either runtime. The tool map test (`apps/server/src/features/gateway/tool-map.test.ts`)
@@ -135,6 +184,9 @@ copies the action, and its `detail` says why for `failed` and `unknown`.
 | `click`    | `ref`         | `POST /act {"action":"click","target":{ref,role,name}}`       | `click · allow` with `{ ref, role, name }`, then `succeeded`, `failed` or `unknown`; `click · deny` with `{ ref, reason }`                  |
 | `type`     | `ref`, `text` | `POST /act {"action":"type","target":{ref,role,name},"text"}` | `type · allow` with `{ ref, role, name, text: "[N chars]" }`, then `succeeded`, `failed` or `unknown`; `type · deny` with `{ ref, reason }` |
 | `run`      | `command`     | `POST /act {"action":"run","command"}`                        | `run · allow` with `{ command }` (capped at 2,000 characters), then `succeeded`, `failed` or `unknown`                                      |
+
+While a person holds the Bot's computer, every tool is refused before its ref is resolved: `<tool> · deny`
+with `{ reason: "a person has control" }` (see [Taking control](#taking-control)).
 
 Every browser action answers with the page read afresh: its URL, title and snapshot, capped at 12,000
 characters. `type` replaces what the field holds and never presses Enter.
@@ -210,11 +262,12 @@ class ChatClient extends AtomRpc.Service<ChatClient>()("ChatClient", { group: Ch
 const conversation = Atom.family((id: ConversationId) => /* fold ChatEvents into one ordered transcript and a status */)
 ```
 
-| Hook                    | Shaped like CopilotKit's             | What it gives a component                                                                     | From |
-| ----------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------- | ---- |
-| `useConversation(id)`   | `useAgent`                           | `transcript` (messages and tool calls in order), `isRunning`, `showsScreen`, `send`, `stop`   | E0-1 |
-| `useToolCallRenderer()` | `useRenderTool`, `useRenderToolCall` | A registry from tool name to a component that draws one tool call in each of its states       | E1-1 |
-| `useLiveScreen()`       | (none)                               | The latest screen frame, none while the screen is blank; `takeControl` and `handBack` in E1-5 | E1-4 |
+| Hook                    | Shaped like CopilotKit's             | What it gives a component                                                                                      | From |
+| ----------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------- | ---- |
+| `useConversation(id)`   | `useAgent`                           | `transcript` (messages and tool calls in order), `isRunning`, `usesComputer`, `send`, `stop`                   | E0-1 |
+| `useToolCallRenderer()` | `useRenderTool`, `useRenderToolCall` | A registry from tool name to a component that draws one tool call in each of its states                        | E1-1 |
+| `useLiveScreen()`       | (none)                               | The latest screen frame, none while the screen is blank                                                        | E1-4 |
+| `useControl()`          | (none)                               | Who holds the Bot's computer, why the last take, click or hand back failed, `takeControl`, `handBack`, `click` | E1-5 |
 
 Not copied: `useFrontendTool` (it runs a Bot's tool in the open tab, which breaks routines, the Mac and
 closed tabs) and CopilotKit's provider. The wire format stays AG-UI, so a CopilotKit or other AG-UI client
@@ -247,6 +300,7 @@ computer until E3-3 adds a `person` argument:
 ```ts
 export interface Interface {
   readonly ensure: Effect.Effect<Computer, ComputerUnavailable>; // start if needed, wait until healthy
+  readonly running: Effect.Effect<Computer, ComputerUnavailable>; // the one running, never starting one
   readonly stop: Effect.Effect<void, ComputerUnavailable>;
   readonly reset: Effect.Effect<void, ComputerUnavailable>;
   readonly list: Effect.Effect<ReadonlyArray<ComputerStatus>, ComputerUnavailable>;
@@ -254,8 +308,9 @@ export interface Interface {
   readonly screen: Stream.Stream<Screen>;
 }
 
-// A running computer: a URL and a token, whichever provider started it. Both methods are `POST /act`,
-// and each reads only the answer its action promises, so a page answering a command is ComputerLost.
+// A running computer: a URL and a token, whichever provider started it. `browse` and `run` are
+// `POST /act`, and each reads only the answer its action promises, so a page answering a command is
+// ComputerLost. `input` is `POST /input`, what a person in control did on the screen.
 export interface Computer {
   readonly browse: (
     action: PageAction,
@@ -263,6 +318,7 @@ export interface Computer {
   readonly run: (
     command: RunCommand,
   ) => Effect.Effect<CommandRan, ComputerActFailed | ComputerLost>;
+  readonly input: (input: PersonInput) => Effect.Effect<void, ComputerActFailed | ComputerLost>;
 }
 ```
 
@@ -285,7 +341,7 @@ reaches when it does not, until network limits (E5-3). These hold locally as muc
   browser's destinations, and private hosts stay refused to it even where `COMPUTER_ALLOW_PRIVATE_HOSTS`
   opens them to the browser. A command can still unset them and connect directly; network limits close
   that (E5-3). `bash -c`, never a login shell, so a `.bash_profile` the Bot wrote cannot run first.
-- **`/act` and `/stream` refuse callers on the computer itself.** A request from a loopback address or from
+- **`/act`, `/input` and `/stream` refuse callers on the computer itself.** A request from a loopback address or from
   one of the computer's own addresses gets 403 before its token is read, so a command that finds the token
   cannot drive the browser around the gateway or watch it through `/stream`. What remains: commands run as
   the same user as the computer's own process, so they can read its environment and memory

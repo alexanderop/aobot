@@ -28,6 +28,11 @@ OpenTelemetry for traces, logs and metrics, from the first ticket.
   the web app's files, the health check and the RPC socket. Logs written inside a span carry its
   `trace_id`.
 
+  Taking control and handing it back are traces of their own, `ComputerControl.take` and
+  `ComputerControl.handBack`, with span events for each step (`control.door_closed`, `control.taken`,
+  `control.released`). A Bot call refused while a person holds the computer adds `control.refused` to its
+  `Gateway.act` span.
+
 - **Computer.** The server sends a `traceparent` header with every request, so browser actions appear
   inside the same trace.
 - **Agent.** With `api`, `effect/ai` writes a span per model call with the GenAI attributes (model,
