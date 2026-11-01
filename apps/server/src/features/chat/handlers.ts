@@ -11,6 +11,7 @@ import {
 import { Deferred, Effect, MutableHashMap, Option, Ref, Stream } from "effect";
 import { AgentEvent, AgentRuntime } from "../agent/public.ts";
 import { assistant, botSummary } from "../bots/public.ts";
+import { randomUuid } from "../../shared/random-id.ts";
 import { ConversationStore } from "./conversation-store.ts";
 import { TurnStopped, isTerminal, turnEvents } from "./turn.ts";
 
@@ -42,8 +43,8 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
 
       const ids = {
         conversationId,
-        runId: RunId.make(crypto.randomUUID()),
-        messageId: MessageId.make(crypto.randomUUID()),
+        runId: RunId.make(yield* randomUuid),
+        messageId: MessageId.make(yield* randomUuid),
       };
 
       const stopped = yield* Deferred.make<void>();

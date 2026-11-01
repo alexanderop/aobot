@@ -1,5 +1,6 @@
 import { Context, Effect, Layer, Option, type Schema } from "effect";
 import { SqlClient } from "effect/sql";
+import { randomUuid } from "../../shared/random-id.ts";
 
 /** Who an action was done for: a person who was watching, or the deployment itself. */
 type InitiatorKind = "person" | "deployment";
@@ -33,10 +34,12 @@ export const auditLogLayer = Layer.effect(
 
     // A row that cannot be written stops whatever asked for it, so no action happens unrecorded.
     const record = Effect.fn("AuditLog.record")(function* (entry: AuditEntry) {
+      const id = yield* randomUuid;
+
       yield* sql`
         INSERT INTO audit_rows (id, trace_id, initiator_kind, actor_id, decision, action, detail)
         VALUES (
-          ${crypto.randomUUID()},
+          ${id},
           ${Option.getOrNull(entry.traceId)},
           ${entry.initiatorKind},
           ${entry.actorId},
