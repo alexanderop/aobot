@@ -1,19 +1,5 @@
 import { assert, browser, waitFor } from "../browser.ts";
-
-/** One span as Tempo returns it from `/api/v2/traces/<id>` (OTLP JSON, ids in base64). */
-interface TempoSpan {
-  readonly spanId: string;
-  readonly parentSpanId?: string;
-  readonly name: string;
-}
-
-interface TempoTrace {
-  readonly trace: {
-    readonly resourceSpans: ReadonlyArray<{
-      readonly scopeSpans: ReadonlyArray<{ readonly spans: ReadonlyArray<TempoSpan> }>;
-    }>;
-  };
-}
+import { ancestry, tempo, traceSpans } from "../tempo.ts";
 
 interface TempoSearch {
   readonly traces?: ReadonlyArray<{
@@ -21,23 +7,6 @@ interface TempoSearch {
     readonly rootTraceName?: string;
     readonly startTimeUnixNano: string;
   }>;
-}
-
-async function tempo<A>(grafanaUrl: string, path: string): Promise<A> {
-  const response = await fetch(`${grafanaUrl}/api/datasources/proxy/uid/tempo${path}`);
-
-  if (!response.ok) throw new Error(`Tempo answered ${response.status} for ${path}`);
-
-  // SAFETY: the caller names the shape Tempo's API documents. A wrong guess fails the scenario's
-  // assertions, which print what came back.
-  return (await response.json()) as A;
-}
-
-/** The names from the root down to `span`. */
-function ancestry(spans: ReadonlyArray<TempoSpan>, span: TempoSpan): ReadonlyArray<string> {
-  const parent = spans.find((candidate) => candidate.spanId === span.parentSpanId);
-
-  return parent === undefined ? [span.name] : [...ancestry(spans, parent), span.name];
 }
 
 /** E0-2: send a message, then find that turn in Tempo as one trace rooted at `Chat.turn`. */
@@ -75,11 +44,7 @@ export default async function scenario(baseUrl: string, grafanaUrl: string): Pro
 
   assert(traceId !== undefined, `the newest trace is named Chat.turn (${traceId})`);
 
-  const { trace } = await tempo<TempoTrace>(grafanaUrl, `/api/v2/traces/${traceId}`);
-
-  const spans = trace.resourceSpans.flatMap(({ scopeSpans }) =>
-    scopeSpans.flatMap(({ spans }) => spans),
-  );
+  const spans = await traceSpans(grafanaUrl, traceId);
 
   const roots = spans.filter((span) => span.parentSpanId === undefined);
   assert(

@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { browser } from "./browser.ts";
+import { compose, computerContainer } from "./stack.ts";
 
 const ticket = process.argv[2];
 
@@ -9,21 +10,21 @@ const baseUrl = "http://localhost:3100";
 
 const grafanaUrl = "http://localhost:3400";
 
-function compose(...args: string[]): void {
-  execFileSync(
-    "docker",
-    [
-      "compose",
-      "--project-name",
-      "aobot-verify",
-      "--file",
-      "docker-compose.yml",
-      "--file",
-      "verify/compose.yml",
-      ...args,
-    ],
-    { stdio: "inherit" },
-  );
+/**
+The server removes its computer when it stops, but not when it crashed. A computer left behind holds the
+stack's network, and `compose down` cannot remove a network a container still uses.
+*/
+function removeComputer(): void {
+  try {
+    execFileSync("docker", ["rm", "--force", computerContainer], { stdio: "ignore" });
+  } catch {
+    // Most runs have none to remove.
+  }
+}
+
+function down(): void {
+  removeComputer();
+  compose("down", "--volumes");
 }
 
 const { default: scenario, stack } = await import(`./scenarios/${ticket}.ts`);
@@ -42,7 +43,7 @@ if (stack === false) {
   console.log(`verify ${ticket}: passed`);
 } else {
   try {
-    compose("down", "--volumes");
+    down();
     compose("up", "--build", "--detach", "--wait");
     await scenario(baseUrl, grafanaUrl);
     console.log(`verify ${ticket}: passed`);
@@ -51,7 +52,7 @@ if (stack === false) {
       bestEffort("close the browser", () => browser("close"));
       bestEffort("collect the server log", () => compose("logs", "server", "--tail", "40"));
     } finally {
-      compose("down", "--volumes");
+      down();
     }
   }
 }
