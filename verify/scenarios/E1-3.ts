@@ -78,10 +78,11 @@ export default async function scenario(baseUrl: string, grafanaUrl: string): Pro
 
   let spans: Awaited<ReturnType<typeof traceSpans>> = [];
 
-  await waitFor("the turn's Gateway.act span in Tempo", 60_000, async () => {
+  // The turn's span ends, and is exported, after the Gateway.act span inside it.
+  await waitFor("the turn's Chat.turn and Gateway.act spans in Tempo", 60_000, async () => {
     spans = await traceSpans(grafanaUrl, traceId).catch(() => []);
 
-    return spans.some((span) => span.name === "Gateway.act");
+    return ["Chat.turn", "Gateway.act"].every((name) => spans.some((span) => span.name === name));
   });
 
   const gatewayCall = spans.find((span) => span.name === "Gateway.act");
