@@ -1,18 +1,31 @@
 import {
+  type ChatEvent,
   ChatRpcs,
   ConversationBusy,
   type ConversationId,
   type ConversationRef,
+  type Message,
   MessageAlreadySent,
   MessageId,
   RunId,
   type SendMessage,
 } from "@aobot/domain";
 import { Deferred, Effect, MutableHashMap, Option, Ref, Stream } from "effect";
-import { AgentEvent, AgentRuntime } from "../agent/public.ts";
+import { AgentRuntime } from "../agent/public.ts";
 import { assistant, botSummary } from "../bots/public.ts";
 import { ConversationStore } from "./conversation-store.ts";
 import { TurnStopped, isTerminal, turnEvents } from "./turn.ts";
+
+/** The Bot's messages so far with one more streamed event folded in: text grows the message it names. */
+function recordText(messages: ReadonlyArray<Message>, event: ChatEvent): ReadonlyArray<Message> {
+  if (event.type !== "TEXT_MESSAGE_CONTENT") return messages;
+
+  const last = messages.at(-1);
+
+  return last?.id === event.messageId
+    ? [...messages.slice(0, -1), { ...last, text: last.text + event.delta }]
+    : [...messages, { id: event.messageId, role: "assistant", text: event.delta }];
+}
 
 /** The chat API: open a conversation, send a message and watch the answer stream, stop a turn. */
 export const chatHandlersLayer = ChatRpcs.toLayer(
@@ -82,18 +95,20 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
 
       const history = yield* store.messages(conversationId);
 
-      const written = yield* Ref.make("");
+      const written = yield* Ref.make<ReadonlyArray<Message>>([]);
 
-      // Store the reply, then free the conversation. It runs just before the terminal event, so a
-      // client that sees the run end can reload or send again at once. The finalizer covers a turn
-      // cut off without one, such as a client that disconnected. `cached` makes the two share a
-      // single run.
+      // Store the Bot's messages, then free the conversation. It runs just before the terminal
+      // event, so a client that sees the run end can reload or send again at once. The finalizer
+      // covers a turn cut off without one, such as a client that disconnected. `cached` makes the
+      // two share a single run.
       const settle = yield* Effect.cached(
         Ref.get(written).pipe(
-          Effect.flatMap((text) =>
-            text.length === 0
-              ? Effect.void
-              : store.append(conversationId, { id: ids.messageId, role: "assistant", text }),
+          Effect.flatMap((messages) =>
+            Effect.forEach(
+              messages.filter((reply) => reply.text.length > 0),
+              (reply) => store.append(conversationId, reply),
+              { discard: true },
+            ),
           ),
           Effect.andThen(release),
         ),
@@ -109,21 +124,19 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
           Effect.map((isStopped) =>
             isStopped
               ? Stream.fail(new TurnStopped())
-              : agent.run({ instructions: assistant.instructions, history }).pipe(
-                  Stream.tap((event) =>
-                    AgentEvent.$is("TextDelta")(event)
-                      ? Ref.update(written, (text) => text + event.text)
-                      : Effect.void,
+              : agent
+                  .run({ instructions: assistant.instructions, history })
+                  .pipe(
+                    Stream.interruptWhen(
+                      Effect.andThen(Deferred.await(stopped), Effect.fail(new TurnStopped())),
+                    ),
                   ),
-                  Stream.interruptWhen(
-                    Effect.andThen(Deferred.await(stopped), Effect.fail(new TurnStopped())),
-                  ),
-                ),
           ),
         ),
       );
 
       return turnEvents(ids, answer).pipe(
+        Stream.tap((event) => Ref.update(written, (messages) => recordText(messages, event))),
         Stream.mapEffect((event) =>
           isTerminal(event) ? Effect.as(settle, event) : Effect.succeed(event),
         ),

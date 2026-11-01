@@ -1,6 +1,14 @@
-import type { Message } from "@aobot/domain";
-import { Duration, Effect, Layer, Ref, Result, Stream } from "effect";
-import { AiError, Chat, LanguageModel, type Prompt, type Tool, type Toolkit } from "effect/ai";
+import { type Message, ToolCallId } from "@aobot/domain";
+import { Duration, Effect, Layer, Ref, Result, Schema, Stream } from "effect";
+import {
+  AiError,
+  Chat,
+  LanguageModel,
+  Prompt,
+  type Response,
+  type Tool,
+  type Toolkit,
+} from "effect/ai";
 import {
   AgentEvent,
   type AgentError,
@@ -29,6 +37,40 @@ type ToolServices<Tools extends Record<string, Tool.Any>> =
   | Tool.HandlerServices<Tools[keyof Tools]>
   | Tool.ResultDecodingServices<Tools[keyof Tools]>
   | Tool.ParametersEncodingServices<Tools[keyof Tools]>;
+
+const isString = Schema.is(Schema.String);
+
+/** The text the model reads for a tool result: its model output if the tool gave one, else the result itself. */
+function resultText(part: Response.ToolResultPart<string, unknown, unknown>): string {
+  if (part.modelOutput !== undefined) return Prompt.toolModelOutputToText(part.modelOutput);
+
+  return isString(part.encodedResult) ? part.encodedResult : JSON.stringify(part.encodedResult);
+}
+
+/** What one streamed part adds to the turn: answer text, a tool call, or a tool's final result. */
+function agentEvent<Part extends Response.AnyPart>(part: Part): Result.Result<AgentEvent, Part> {
+  if (part.type === "text-delta" && part.delta.length > 0) {
+    return Result.succeed(AgentEvent.TextDelta({ text: part.delta }));
+  }
+
+  if (part.type === "tool-call") {
+    return Result.succeed(
+      AgentEvent.ToolCallStarted({
+        id: ToolCallId.make(part.id),
+        name: part.name,
+        params: part.params,
+      }),
+    );
+  }
+
+  if (part.type === "tool-result" && !part.preliminary) {
+    return Result.succeed(
+      AgentEvent.ToolCallFinished({ id: ToolCallId.make(part.id), result: resultText(part) }),
+    );
+  }
+
+  return Result.fail(part);
+}
 
 function modelFailed<E>(error: E): ModelFailed {
   return new ModelFailed({
@@ -70,11 +112,7 @@ export function layerApi<Tools extends Record<string, Tool.Any>>(
               Stream.tap((part) =>
                 part.type === "tool-call" ? Ref.set(calledTools, true) : Effect.void,
               ),
-              Stream.filterMap((part) =>
-                part.type === "text-delta" && part.delta.length > 0
-                  ? Result.succeed(AgentEvent.TextDelta({ text: part.delta }))
-                  : Result.fail(part),
-              ),
+              Stream.filterMap(agentEvent),
             );
 
             const next = Stream.unwrap(

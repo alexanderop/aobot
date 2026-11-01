@@ -5,6 +5,7 @@ import {
   ConversationId,
   MessageAlreadySent,
   MessageId,
+  ToolCallId,
 } from "@aobot/domain";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Layer, Queue, Stream } from "effect";
@@ -92,6 +93,81 @@ describe("Chat RPCs", () => {
         ),
       ),
     ),
+  );
+
+  it.effect(
+    "streams a tool call between the text before and after it, stored as two messages",
+    () =>
+      Effect.gen(function* () {
+        const client = yield* RpcTest.makeClient(ChatRpcs);
+
+        const events = yield* client["Chat.send"](send("Open example.com", "user-1")).pipe(
+          Stream.runCollect,
+        );
+
+        const [, before, , , start, args, end, result, after] = events;
+
+        expect(types(events)).toEqual([
+          "RUN_STARTED",
+          "TEXT_MESSAGE_START",
+          "TEXT_MESSAGE_CONTENT",
+          "TEXT_MESSAGE_END",
+          "TOOL_CALL_START",
+          "TOOL_CALL_ARGS",
+          "TOOL_CALL_END",
+          "TOOL_CALL_RESULT",
+          "TEXT_MESSAGE_START",
+          "TEXT_MESSAGE_CONTENT",
+          "TEXT_MESSAGE_END",
+          "RUN_FINISHED",
+        ]);
+
+        expect([start, args, end, result]).toEqual([
+          {
+            type: "TOOL_CALL_START",
+            toolCallId: "call-1",
+            toolCallName: "navigate",
+            parentMessageId: before?.type === "TEXT_MESSAGE_START" ? before.messageId : undefined,
+          },
+          { type: "TOOL_CALL_ARGS", toolCallId: "call-1", delta: '{"url":"https://example.com"}' },
+          { type: "TOOL_CALL_END", toolCallId: "call-1" },
+          expect.objectContaining({
+            type: "TOOL_CALL_RESULT",
+            toolCallId: "call-1",
+            content: "Opened https://example.com",
+            role: "tool",
+          }),
+        ]);
+
+        expect(after).toMatchObject({ type: "TEXT_MESSAGE_START" });
+        expect(after).not.toEqual(before);
+
+        const snapshot = yield* client["Chat.open"]({ conversationId });
+        expect(snapshot.messages.map(({ role, text }) => ({ role, text }))).toEqual([
+          { role: "user", text: "Open example.com" },
+          { role: "assistant", text: "Opening it." },
+          { role: "assistant", text: "The title is Example Domain." },
+        ]);
+      }).pipe(
+        Effect.provide(
+          chatWith(
+            Stream.make(
+              AgentEvent.TextDelta({ text: "Opening it." }),
+              AgentEvent.ToolCallStarted({
+                id: ToolCallId.make("call-1"),
+                name: "navigate",
+                params: { url: "https://example.com" },
+              }),
+              AgentEvent.ToolCallFinished({
+                id: ToolCallId.make("call-1"),
+                result: "Opened https://example.com",
+              }),
+              AgentEvent.TextDelta({ text: "The title is Example Domain." }),
+              AgentEvent.Done(),
+            ),
+          ),
+        ),
+      ),
   );
 
   it.effect("refuses a second turn while the first runs, and stop ends the first", () =>
