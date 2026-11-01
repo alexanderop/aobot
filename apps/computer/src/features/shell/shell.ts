@@ -91,7 +91,7 @@ export const shellLayer = (inherited: InheritedEnvironment) =>
               }),
             );
 
-            const end = yield* child.exitCode.pipe(
+            const ended = yield* child.exitCode.pipe(
               Effect.map((code): CommandEnd => CommandEnd.cases.Exited.make({ code })),
               Effect.catch((error) =>
                 Option.match(signalled(error), {
@@ -99,15 +99,16 @@ export const shellLayer = (inherited: InheritedEnvironment) =>
                   onSome: Effect.succeed,
                 }),
               ),
+              Effect.timeoutOption(commandTimeLimit),
             );
+
+            if (Option.isNone(ended)) return CommandEnd.cases.TimedOut.make({});
 
             yield* Effect.timeoutOption(Fiber.join(output), outputGrace);
 
-            return end;
+            return ended.value;
           }),
         ).pipe(
-          Effect.timeoutOption(commandTimeLimit),
-          Effect.map(Option.getOrElse((): CommandEnd => CommandEnd.cases.TimedOut.make({}))),
           // Not the error's own message: it carries the command line, which a span would then record.
           Effect.mapError(
             ({ reason }) =>

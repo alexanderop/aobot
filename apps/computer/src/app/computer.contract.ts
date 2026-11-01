@@ -412,6 +412,14 @@ describe("the docker computer", () => {
       expect(await processes(local)).not.toContain("sleep 602");
     });
 
+    it("answers a command that exits just inside 30 seconds as exited, though a background job holds its output", async () => {
+      const finished = await ran(await runCommand(local, "sleep 603 & sleep 29.7; echo finished"));
+
+      expect(finished.end).toEqual(Exited.make({ code: 0 }));
+      expect(finished.stdout.text).toBe("finished\n");
+      expect(await processes(local)).not.toContain("sleep 603");
+    });
+
     it("stops a command that runs past 30 seconds, and everything in its process group", async () => {
       const started = Date.now();
       const stopped = await ran(await runCommand(local, "echo started; sleep 600 | cat"));
