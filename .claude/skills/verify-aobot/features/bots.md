@@ -14,7 +14,8 @@ granted, the gateway refuses it before anything runs, and the transcript, the mo
   the composer name it, picking another Bot then this one again returns to the same conversation, and
   Back returns to the Bot before.
 - `bots-refuse` Researcher (granted snapshot, navigate, click) asked to run a command: one `run · deny`
-  with `{ "reason": "not granted to researcher" }`, no allow row, the computer never starts.
+  with `{ "bot": "researcher", "reason": "not granted to researcher" }`, no allow row, the computer never
+  starts.
 - `bots-invalid` a `bots.yaml` that is not valid stops the server with the reason.
 
 ## How to get to it (user POV)

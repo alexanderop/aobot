@@ -33,7 +33,7 @@ describe("docs/architecture.md § Gateway tools", () => {
   it.each(Object.keys(botToolkit.tools))("gives %s its audit rows", (tool) => {
     const auditRows = rows.find(([name]) => name === `\`${tool}\``)?.at(-1) ?? "";
 
-    expect(auditRows).toContain(`\`${tool} · allow\``);
+    expect(auditRows).toContain(`\`${tool} · allow\` with \`{ bot`);
     expect(auditRows).toContain("`succeeded`, `failed` or `unknown`");
   });
 });

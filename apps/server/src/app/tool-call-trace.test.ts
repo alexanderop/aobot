@@ -258,6 +258,7 @@ describe("a tool call in an api turn", () => {
         decision: "allow",
         action: "type",
         detail: JSON.stringify({
+          bot: "assistant",
           ref: "e1",
           role: "searchbox",
           name: "Search",
@@ -325,7 +326,7 @@ describe("a tool call in an api turn", () => {
           {
             decision: "deny",
             action: "run",
-            detail: JSON.stringify({ reason: "not granted to researcher" }),
+            detail: JSON.stringify({ bot: "researcher", reason: "not granted to researcher" }),
           },
         ]);
         expect(JSON.stringify(model.prompts[1]?.content)).toContain(

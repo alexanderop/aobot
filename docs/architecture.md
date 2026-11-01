@@ -116,7 +116,7 @@ the server reads `ActingBot` from that header on every call.
 `Gateway.act` checks the grant before anything else the gateway does: before the door, before a ref is
 resolved or a path judged, and before any rule. Only the toolkit comes first, decoding the call's
 parameters. A tool the Bot was not granted, a Bot the file does not name, and a call that names no Bot
-are each a `deny` row with `{ reason: "not granted to <bot id>" }` (`an unnamed Bot` when it names
+are each a `deny` row with `{ bot, reason: "not granted to <bot id>" }` (`an unnamed Bot` when it names
 none, and the header quoted as written when an `acp` CLI's `aobot-bot` header is no Bot id), the
 computer never hears of it, and the model reads:
 
@@ -182,7 +182,7 @@ so there is one door for all of them, and a person who holds the computer holds 
 3. `computer_control` is read at start-up, so a restart, even one in the middle of a take, leaves the
    person in control. No computer runs then: the panel says the computer is not showing a page and offers
    to start it, which takes control again.
-4. While the door is not open, a Bot call is a `deny` row with `{ reason: "a person has control" }`, the
+4. While the door is not open, a Bot call is a `deny` row with `{ bot, reason: "a person has control" }`, the
    computer never hears of it, and the model reads:
 
    > navigate did not run: a person has control of your computer. Wait until they hand it back, then take
@@ -251,21 +251,23 @@ ends. The HTTP client's spans of the server's requests to the computer's `/files
 Every tool a Bot can be granted, in either runtime. The tool map test (`apps/server/src/features/gateway/tool-map.test.ts`)
 fails when a tool in `botToolkit` is missing here or a row here names no tool. Each call writes the `allow`
 row first, then one outcome row linked to it by `outcome_of`. Both carry the turn's `trace_id`; the outcome row
-copies the action, and its `detail` says why for `failed` and `unknown`.
+copies the action, and its `detail` says why for `failed` and `unknown`. Every row's `detail`, `deny` rows
+included, starts with `bot`: the id of the Bot the call was made for, or `null` when it named none by its
+id. The `Gateway.act` span records it as `gateway.bot`.
 
-| Tool         | Parameters         | Computer action                                               | Audit rows                                                                                                                                                          |
-| ------------ | ------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `navigate`   | `url`              | `POST /act {"action":"navigate","url"}`                       | `navigate · allow` with `{ url }`, then `succeeded`, `failed` or `unknown`                                                                                          |
-| `snapshot`   | none               | `POST /act {"action":"snapshot"}`                             | `snapshot · allow` with `{}`, then `succeeded`, `failed` or `unknown`                                                                                               |
-| `click`      | `ref`              | `POST /act {"action":"click","target":{ref,role,name}}`       | `click · allow` with `{ ref, role, name }`, then `succeeded`, `failed` or `unknown`; `click · deny` with `{ ref, reason }`                                          |
-| `type`       | `ref`, `text`      | `POST /act {"action":"type","target":{ref,role,name},"text"}` | `type · allow` with `{ ref, role, name, text: "[N chars]" }`, then `succeeded`, `failed` or `unknown`; `type · deny` with `{ ref, reason }`                         |
-| `run`        | `command`          | `POST /act {"action":"run","command"}`                        | `run · allow` with `{ command }` (capped at 2,000 characters), then `succeeded`, `failed` or `unknown`                                                              |
-| `read_file`  | `path`             | `POST /act {"action":"read_file","path"}`                     | `read_file · allow` with `{ path, name, extension }`, then `succeeded`, `failed` or `unknown`; `read_file · deny` with `{ path, name, extension, reason }`          |
-| `write_file` | `path`, `contents` | `POST /act {"action":"write_file","path","contents"}`         | `write_file · allow` with `{ path, name, extension, bytes }`, then `succeeded`, `failed` or `unknown`; `write_file · deny` with `{ path, name, extension, reason }` |
-| `list_files` | `path`             | `POST /act {"action":"list_files","path"}`                    | `list_files · allow` with `{ path, name, extension }`, then `succeeded`, `failed` or `unknown`; `list_files · deny` with `{ path, name, extension, reason }`        |
+| Tool         | Parameters         | Computer action                                               | Audit rows                                                                                                                                                                    |
+| ------------ | ------------------ | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `navigate`   | `url`              | `POST /act {"action":"navigate","url"}`                       | `navigate · allow` with `{ bot, url }`, then `succeeded`, `failed` or `unknown`                                                                                               |
+| `snapshot`   | none               | `POST /act {"action":"snapshot"}`                             | `snapshot · allow` with `{ bot }`, then `succeeded`, `failed` or `unknown`                                                                                                    |
+| `click`      | `ref`              | `POST /act {"action":"click","target":{ref,role,name}}`       | `click · allow` with `{ bot, ref, role, name }`, then `succeeded`, `failed` or `unknown`; `click · deny` with `{ bot, ref, reason }`                                          |
+| `type`       | `ref`, `text`      | `POST /act {"action":"type","target":{ref,role,name},"text"}` | `type · allow` with `{ bot, ref, role, name, text: "[N chars]" }`, then `succeeded`, `failed` or `unknown`; `type · deny` with `{ bot, ref, reason }`                         |
+| `run`        | `command`          | `POST /act {"action":"run","command"}`                        | `run · allow` with `{ bot, command }` (capped at 2,000 characters), then `succeeded`, `failed` or `unknown`                                                                   |
+| `read_file`  | `path`             | `POST /act {"action":"read_file","path"}`                     | `read_file · allow` with `{ bot, path, name, extension }`, then `succeeded`, `failed` or `unknown`; `read_file · deny` with `{ bot, path, name, extension, reason }`          |
+| `write_file` | `path`, `contents` | `POST /act {"action":"write_file","path","contents"}`         | `write_file · allow` with `{ bot, path, name, extension, bytes }`, then `succeeded`, `failed` or `unknown`; `write_file · deny` with `{ bot, path, name, extension, reason }` |
+| `list_files` | `path`             | `POST /act {"action":"list_files","path"}`                    | `list_files · allow` with `{ bot, path, name, extension }`, then `succeeded`, `failed` or `unknown`; `list_files · deny` with `{ bot, path, name, extension, reason }`        |
 
 While a person holds the computer, every granted tool of every Bot is refused before its ref is resolved: `<tool> · deny`
-with `{ reason: "a person has control" }` (see [Taking control](#taking-control)).
+with `{ bot, reason: "a person has control" }` (see [Taking control](#taking-control)).
 
 Every browser action answers with the page read afresh: its URL, title and snapshot, capped at 12,000
 characters. `type` replaces what the field holds and never presses Enter.

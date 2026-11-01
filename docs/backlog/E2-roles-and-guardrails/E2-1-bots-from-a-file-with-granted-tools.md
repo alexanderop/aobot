@@ -39,7 +39,8 @@ web · server · gateway
 
 ## Telemetry
 
-None new.
+`Chat.turn` records the turn's Bot as `chat.bot`, and each `Gateway.act` span the Bot the call was made
+for as `gateway.bot`, so a trace and its audit rows name the same Bot.
 
 ## Tests
 

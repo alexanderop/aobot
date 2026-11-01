@@ -204,7 +204,7 @@ describe("Gateway", () => {
           initiator_kind: "person",
           decision: "allow",
           action: "navigate",
-          detail: JSON.stringify({ url: "https://example.com" }),
+          detail: JSON.stringify({ bot: "assistant", url: "https://example.com" }),
           outcome_of: null,
         });
         expect(outcome).toMatchObject({
@@ -422,6 +422,10 @@ describe("Gateway grants", () => {
         ["navigate · deny", "not granted to intruder"],
         ["navigate · deny", "not granted to an unnamed Bot"],
       ]);
+      expect((yield* auditRows).map((row) => JSON.parse(String(row["detail"])).bot)).toEqual([
+        "intruder",
+        null,
+      ]);
     }).pipe(Effect.provide(database)),
   );
 
@@ -462,7 +466,11 @@ describe("Gateway refs", () => {
         expect(deny).toMatchObject({
           decision: "deny",
           action: "click",
-          detail: JSON.stringify({ ref: "e9", reason: "not in the latest snapshot" }),
+          detail: JSON.stringify({
+            bot: "assistant",
+            ref: "e9",
+            reason: "not in the latest snapshot",
+          }),
           outcome_of: null,
         });
       }).pipe(Effect.provide(database)),
@@ -482,7 +490,11 @@ describe("Gateway refs", () => {
         {
           decision: "deny",
           action: "type",
-          detail: JSON.stringify({ ref: "e2", reason: "there is no snapshot yet" }),
+          detail: JSON.stringify({
+            bot: "assistant",
+            ref: "e2",
+            reason: "there is no snapshot yet",
+          }),
         },
       ]);
     }).pipe(Effect.provide(database)),
@@ -515,12 +527,18 @@ describe("Gateway refs", () => {
         const allowed = rows.filter((row) => row["decision"] === "allow");
 
         expect(allowed.map((row) => [row["action"], row["detail"]])).toEqual([
-          ["snapshot", "{}"],
+          ["snapshot", JSON.stringify({ bot: "assistant" })],
           [
             "type",
-            JSON.stringify({ ref: "e2", role: "textbox", name: "Name", text: "[22 chars]" }),
+            JSON.stringify({
+              bot: "assistant",
+              ref: "e2",
+              role: "textbox",
+              name: "Name",
+              text: "[22 chars]",
+            }),
           ],
-          ["click", JSON.stringify({ ref: "e3", role: "button", name: "Send" })],
+          ["click", JSON.stringify({ bot: "assistant", ref: "e3", role: "button", name: "Send" })],
         ]);
         expect(JSON.stringify(rows)).not.toContain("hunter2");
       }).pipe(Effect.provide(database)),
@@ -584,7 +602,11 @@ describe("Gateway refs", () => {
       });
       expect((yield* auditRows).find((row) => row["decision"] === "deny")).toMatchObject({
         action: "click",
-        detail: JSON.stringify({ ref: "e1", reason: "another Bot read the page since" }),
+        detail: JSON.stringify({
+          bot: "assistant",
+          ref: "e1",
+          reason: "another Bot read the page since",
+        }),
       });
     }).pipe(Effect.provide(database)),
   );
@@ -726,13 +748,14 @@ describe("Gateway run", () => {
         expect(
           (yield* auditRows).map((row) => [row["decision"], row["action"], row["detail"]]),
         ).toEqual([
-          ["allow", "run", JSON.stringify({ command: makeNotes.command })],
-          ["succeeded", "run", "{}"],
+          ["allow", "run", JSON.stringify({ bot: "assistant", command: makeNotes.command })],
+          ["succeeded", "run", JSON.stringify({ bot: "assistant" })],
         ]);
 
         const span = tracing.spans.find((candidate) => candidate.name === "Gateway.act");
         expect(span?.attributes.get("gateway.command_end")).toBe("exited");
         expect(span?.attributes.get("gateway.exit_code")).toBe(0);
+        expect(span?.attributes.get("gateway.bot")).toBe("assistant");
         expect(JSON.stringify([...(span?.attributes ?? [])])).not.toContain("notes.txt");
       }).pipe(Effect.provide(database)),
   );
@@ -968,7 +991,7 @@ describe("Gateway run", () => {
         ["deny", "click"],
       ]);
       expect((yield* auditRows).at(-1)?.["detail"]).toBe(
-        JSON.stringify({ ref: "e9", reason: "not in the latest snapshot" }),
+        JSON.stringify({ bot: "assistant", ref: "e9", reason: "not in the latest snapshot" }),
       );
     }).pipe(Effect.provide(database)),
   );
@@ -1413,6 +1436,7 @@ describe("Gateway control", () => {
         "click · succeeded",
       ]);
       expect(JSON.parse(String((yield* auditRows)[6]?.["detail"]))).toEqual({
+        bot: "assistant",
         ref: "e1",
         reason: "there is no snapshot yet",
       });
@@ -1668,13 +1692,14 @@ describe("Gateway files", () => {
           "allow",
           "write_file",
           JSON.stringify({
+            bot: "assistant",
             path: "expenses-total.csv",
             name: "expenses-total.csv",
             extension: "csv",
             bytes: totalledBytes,
           }),
         ],
-        ["succeeded", "write_file", "{}"],
+        ["succeeded", "write_file", JSON.stringify({ bot: "assistant" })],
       ]);
       expect(JSON.stringify(rows)).not.toContain("total,20.00");
 
@@ -1718,7 +1743,13 @@ describe("Gateway files", () => {
           [
             "deny",
             "read_file",
-            JSON.stringify({ path, name: "passwd", extension: "", reason: "outside workspace" }),
+            JSON.stringify({
+              bot: "assistant",
+              path,
+              name: "passwd",
+              extension: "",
+              reason: "outside workspace",
+            }),
           ],
         ]);
       }).pipe(Effect.provide(database)),

@@ -101,6 +101,13 @@ class NotGranted extends Schema.TaggedError<NotGranted>()("NotGranted", { claim:
 
 const claimedHeaderLimit = 100;
 
+/** The Bot a call named by its id, which its audit rows and span record. */
+const namedBot = Claim.match({
+  Named: ({ bot }) => Option.some(bot),
+  Unreadable: () => Option.none<BotId>(),
+  Unnamed: () => Option.none<BotId>(),
+});
+
 /** How a refusal names the Bot a call claimed: its id, the header as written, or none. */
 const claimedName = Claim.match({
   Named: ({ bot }): string => bot,
@@ -188,17 +195,17 @@ and the command is what the audit row exists to show. A file is its path, name a
 write its size: never what it holds.
 */
 const auditDetail = ComputerAction.match({
-  navigate: ({ url }): Schema.JsonObject => ({ url }),
-  snapshot: (): Schema.JsonObject => ({}),
-  click: ({ target }): Schema.JsonObject => ({ ...target }),
-  type: ({ target, text }): Schema.JsonObject => ({ ...target, text: redact(text) }),
-  run: ({ command }): Schema.JsonObject => ({ command: capText(command, auditCommandLimit) }),
-  read_file: ({ path }): Schema.JsonObject => ({ ...fileTarget(path) }),
-  write_file: ({ path, contents }): Schema.JsonObject => ({
+  navigate: ({ url }) => ({ url }),
+  snapshot: () => ({}),
+  click: ({ target }) => ({ ...target }),
+  type: ({ target, text }) => ({ ...target, text: redact(text) }),
+  run: ({ command }) => ({ command: capText(command, auditCommandLimit) }),
+  read_file: ({ path }) => ({ ...fileTarget(path) }),
+  write_file: ({ path, contents }) => ({
     ...fileTarget(path),
     bytes: new TextEncoder().encode(contents).length,
   }),
-  list_files: ({ path }): Schema.JsonObject => ({ ...fileTarget(path) }),
+  list_files: ({ path }) => ({ ...fileTarget(path) }),
 });
 
 /** Why a forwarded call did not come back with a result. */
@@ -207,7 +214,7 @@ type ForwardFailure = ComputerFailure | ToolTimedOut;
 /** What a forwarded call became: its outcome row, and what the model is told. */
 interface Settled {
   readonly outcome: Outcome;
-  readonly detail: Schema.JsonObject;
+  readonly detail: Readonly<Record<string, Schema.Json>>;
   readonly answer: Result.Result<string, ToolFailed>;
 }
 
@@ -390,19 +397,21 @@ export const gatewayLayer = Layer.effectContext(
 
       // The grant was checked before the door. Rules arrive with E2-2; until then a granted call is
       // allowed, and still recorded first.
-      const allowRow = yield* rows.decide("allow", action.action, auditDetail(action)).pipe(
-        Effect.tapError((error) =>
-          Effect.logError(
-            "An audit row could not be written, so the action was not forwarded",
-          ).pipe(Effect.annotateLogs({ action: action.action, reason: error.message })),
-        ),
-        Effect.mapError(
-          () =>
-            new ToolFailed({
-              message: `${action.action} did not run: it could not be recorded, and nothing runs unrecorded.`,
-            }),
-        ),
-      );
+      const allowRow = yield* rows
+        .decide("allow", action.action, { bot, ...auditDetail(action) })
+        .pipe(
+          Effect.tapError((error) =>
+            Effect.logError(
+              "An audit row could not be written, so the action was not forwarded",
+            ).pipe(Effect.annotateLogs({ action: action.action, reason: error.message })),
+          ),
+          Effect.mapError(
+            () =>
+              new ToolFailed({
+                message: `${action.action} did not run: it could not be recorded, and nothing runs unrecorded.`,
+              }),
+          ),
+        );
 
       const forwarded = yield* Effect.gen(function* () {
         const computer = yield* computers.ensure;
@@ -411,13 +420,13 @@ export const gatewayLayer = Layer.effectContext(
       }).pipe(
         Effect.result,
         Effect.onInterrupt(() =>
-          rows.settle(allowRow, "unknown", { reason: "the turn was stopped" }),
+          rows.settle(allowRow, "unknown", { bot, reason: "the turn was stopped" }),
         ),
       );
 
       const settled = settle(action.action, forwarded);
       yield* Effect.annotateCurrentSpan({ "gateway.outcome": settled.outcome });
-      yield* rows.settle(allowRow, settled.outcome, settled.detail);
+      yield* rows.settle(allowRow, settled.outcome, { bot, ...settled.detail });
 
       return yield* Effect.fromResult(settled.answer);
     });
@@ -436,7 +445,15 @@ export const gatewayLayer = Layer.effectContext(
     };
 
     const act = Effect.fn("Gateway.act")(function* (claim: Claim, request: BotRequest) {
+      const named = namedBot(claim);
       yield* Effect.annotateCurrentSpan({ "gateway.action": request.action });
+
+      if (Option.isSome(named)) {
+        yield* Effect.annotateCurrentSpan({ "gateway.bot": named.value });
+      }
+
+      // A row's JSON says null for a call that named no Bot by its id.
+      const bot = Option.getOrNull(named);
 
       // Commands run one at a time, in the order they were asked for.
       const queued = request.action === "run";
@@ -447,7 +464,7 @@ export const gatewayLayer = Layer.effectContext(
           NotGranted: (refused) =>
             deny(
               request.action,
-              { reason: `not granted to ${claimedName(refused.claim)}` },
+              { bot, reason: `not granted to ${claimedName(refused.claim)}` },
               notGrantedAnswer(request.action, refused.claim),
             ),
           PersonHasControl: () =>
@@ -455,7 +472,7 @@ export const gatewayLayer = Layer.effectContext(
               Effect.andThen(
                 deny(
                   request.action,
-                  { reason: "a person has control" },
+                  { bot, reason: "a person has control" },
                   personHasControlAnswer(request.action),
                 ),
               ),
@@ -463,13 +480,13 @@ export const gatewayLayer = Layer.effectContext(
           UnknownRef: (unknown) =>
             deny(
               request.action,
-              { ref: unknown.ref, reason: unknown.reason },
+              { bot, ref: unknown.ref, reason: unknown.reason },
               unknownRefAnswer(request.action, unknown),
             ),
           OutsideWorkspace: ({ action }) =>
             deny(
               action.action,
-              { ...fileTarget(action.path), reason: "outside workspace" },
+              { bot, ...fileTarget(action.path), reason: "outside workspace" },
               outsideWorkspaceAnswer(action),
             ),
         }),

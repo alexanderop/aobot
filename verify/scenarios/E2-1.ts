@@ -11,7 +11,9 @@ import {
   script,
 } from "../chat.ts";
 
-const ReasonDetail = Schema.fromJsonString(Schema.Struct({ reason: Schema.String }));
+const DenyDetail = Schema.fromJsonString(
+  Schema.Struct({ bot: Schema.String, reason: Schema.String }),
+);
 
 const refusal = "run did not run: it is not granted to researcher";
 
@@ -26,7 +28,9 @@ function sidebar() {
 /**
 E2-1: Bots come from bots.yaml. Picked in the sidebar, Researcher (granted snapshot, navigate and click) is
 asked to run ls. The gateway refuses it before anything runs, the transcript and the model both read the
-refusal, and the audit has one `run · deny` saying `not granted to researcher` and no allow row.
+refusal, and the audit has one `run · deny` naming researcher and saying `not granted to researcher`, and
+no allow row. Back then returns to Assistant, and a URL naming Assistant with Researcher's conversation
+follows that conversation to Researcher.
 */
 export default async function scenario(baseUrl: string): Promise<void> {
   await script([
@@ -75,9 +79,10 @@ export default async function scenario(baseUrl: string): Promise<void> {
     rows.length === 1 && rows[0]?.action === "run" && rows[0].decision === "deny",
     `the audit has one run · deny and no allow row (${JSON.stringify(rows)})`,
   );
+  const denied = Schema.decodeUnknownSync(DenyDetail)(rows[0].detail);
   assert(
-    Schema.decodeUnknownSync(ReasonDetail)(rows[0].detail).reason === "not granted to researcher",
-    `run · deny says not granted to researcher (${rows[0].detail})`,
+    denied.bot === "researcher" && denied.reason === "not granted to researcher",
+    `run · deny names researcher and says it was not granted (${rows[0].detail})`,
   );
 
   assert(answers()[0] === "I may not run commands.", "Researcher reported the refusal");

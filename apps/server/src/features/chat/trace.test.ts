@@ -78,6 +78,7 @@ describe("Chat tracing", () => {
 
       const turns = named("Chat.turn");
       expect(turns.map((span) => Option.isNone(span.parent))).toEqual([true]);
+      expect(turns[0]?.attributes.get("chat.bot")).toBe(assistant.id);
       const traceId = turns[0]?.traceId;
 
       const setup = named("Chat.send").filter((span) => span.traceId === traceId);
