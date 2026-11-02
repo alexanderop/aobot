@@ -2248,6 +2248,38 @@ allow:
       }).pipe(Effect.provide(database)),
   );
 
+  it.effect("judges a click on a blob: page by the host of the origin it is on", () =>
+    Effect.gen(function* () {
+      const computer = fakeComputers({
+        browse: (action) =>
+          Effect.succeed({
+            action: action.action,
+            url: "blob:https://shop.example/0b9c6f1e-4c1f-4c3e-9f3a-2f1d5f6e7a8b",
+            title: "Receipt",
+            snapshot: form,
+            truncated: false,
+          }),
+      });
+
+      const policy = policyFrom(`deny:
+  - name: not-on-the-shop
+    when: tool.name == "click" && page.host == "shop.example"
+allow:
+  - name: granted-tools
+    when: "true"
+`);
+
+      const refused = yield* Gateway.use((gateway) =>
+        gateway
+          .act(bot, { action: "snapshot" })
+          .pipe(Effect.andThen(Effect.flip(gateway.act(bot, { action: "click", ref: "e3" })))),
+      ).pipe(Effect.provide(startGateway(computer.layer, policy)));
+
+      expect(refused.message).toContain("the rule not-on-the-shop refuses it");
+      expect(computer.actions.map((action) => action.action)).toEqual(["snapshot"]);
+    }).pipe(Effect.provide(database)),
+  );
+
   it.effect.each([
     "https://Shop.Example:8443/cart",
     "https://shop.example./cart",

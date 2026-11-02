@@ -156,8 +156,10 @@ CEL environment is built from the same declaration so the two cannot drift:
 Every field is bound on every action, `""` where the action has none, so a rule naming `element.name`
 answers false for `run` instead of failing. `page.host` is the host in the one spelling the computer's
 egress checks it in (`canonicalHost` in `@aobot/domain`): lower-cased, without its port, brackets or a
-trailing dot, so `SHOP.example.` and `shop.example%2e` are `shop.example` and `[::1]` is `::1`; `""` for
-an address that does not parse. The latest snapshot keeps the address it was read at for this. A snapshot
+trailing dot, so `SHOP.example.` and `shop.example%2e` are `shop.example` and `[::1]` is `::1`. It is the
+host of the page's origin, so `blob:https://shop.example/…` is `shop.example`, the site the computer's
+`sameOrigin` counts it on, and `""` for an address that does not parse or whose origin is opaque, such as
+`about:blank` or a `data:` page. The latest snapshot keeps the address it was read at for this. A snapshot
 stored before E2-2 has none, so the migration that adds the address forgets it rather than let a ref be
 judged on the host `""`: no ref resolves until a Bot reads the page again.
 

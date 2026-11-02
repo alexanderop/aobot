@@ -10,11 +10,15 @@ import { fileTarget } from "./file-target.ts";
 import { singleUser } from "./person-audit.ts";
 
 /**
-The host of `url` in the one spelling the computer's egress checks it in, without its port: `SHOP.example.`
-and `shop.example%2e` are `shop.example`, `[::1]` is `::1`. `""` for an address that does not parse.
+The host of the origin `url` is on, in the one spelling the computer's egress checks it in, without its
+port: `SHOP.example.` and `shop.example%2e` are `shop.example`, `[::1]` is `::1`, and
+`blob:https://shop.example/…` is `shop.example`, the site the computer's `sameOrigin` counts it on. `""`
+for an address that does not parse or whose origin is opaque, such as `about:blank` or a `data:` page.
 */
 export function hostOf(url: string): string {
-  return URL.canParse(url) ? canonicalHost(new URL(url).hostname) : "";
+  const origin = URL.parse(url)?.origin ?? "null";
+
+  return origin === "null" ? "" : canonicalHost(new URL(origin).hostname);
 }
 
 /** The facts only some actions have, each as {@link Facts} names it, so a misspelt one does not compile. */
