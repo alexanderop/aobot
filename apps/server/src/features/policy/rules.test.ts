@@ -146,7 +146,7 @@ allow:
 describe("a rule against submitting the shop's form", () => {
   const rules = rulesFrom(`deny:
   - name: no-submit
-    when: tool.name == "click" && element.name == "Submit"
+    when: tool.name in ["click", "press"] && element.name == "Submit"
   - name: no-enter-on-the-shop
     when: tool.name == "press" && key == "Enter" && page.host == "shop.example"
 allow:
@@ -163,6 +163,21 @@ allow:
       "refuses pressing Enter in the form's field, which would submit it as well",
       onTheShop("press", "textbox", "Name", "Enter"),
       Denied.make({ rule: RuleName.make("no-enter-on-the-shop") }),
+    ],
+    [
+      "refuses pressing Space on Submit, which clicks it",
+      onTheShop("press", "button", "Submit", "Space"),
+      Denied.make({ rule: RuleName.make("no-submit") }),
+    ],
+    [
+      "refuses pressing Enter on Submit on any host, not only the shop",
+      { ...onTheShop("press", "button", "Submit", "Enter"), page: { host: "elsewhere.example" } },
+      Denied.make({ rule: RuleName.make("no-submit") }),
+    ],
+    [
+      "allows pressing Enter in a field on another host",
+      { ...onTheShop("press", "textbox", "Name", "Enter"), page: { host: "elsewhere.example" } },
+      Allowed.make({ rule: RuleName.make("granted-tools"), broken: [] }),
     ],
     [
       "allows clicking Cancel",

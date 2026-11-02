@@ -192,10 +192,18 @@ when a rule decided. The model reads:
 
 > run did not run: the rule no-rm-rf refuses it. Tell your person what was refused; do not try another way around it.
 
-A form submits on a click and on Enter, so a rule that must stop a submission names both:
-`tool.name == "click" && element.name == "Submit"` and
+`press` activates the element it targets: Space or Enter on a button clicks it, and Enter in a field
+submits its form. So a rule that must stop a submission names `click` and `press` on the button, and
+Enter in the form's fields: `tool.name in ["click", "press"] && element.name == "Submit"` and
 `tool.name == "press" && key == "Enter" && page.host == "shop.example"`. Matching a command's text is a
 filter, not a boundary; the computer the command runs on is the boundary.
+
+Known gaps. `page.host` is the host of the page an action acts on, never of the page it lands on. So
+`snapshot` is judged on the page the last Bot action read, or on `""` after a hand-back, while the
+browser may show another page by then: one the person opened while they held the computer, or one the
+page moved to by itself. A click that follows a link, Enter that submits a form, and a redirect after
+`navigate` all reach a host no rule judged; the egress filter still decides whether the computer may go
+there at all. Judging the page an action lands on is a follow-up (`docs/backlog/later.md`).
 
 ## Life of one request
 
@@ -343,6 +351,9 @@ id. The `Gateway.act` span records it as `gateway.bot`.
 | `read_file`  | `path`             | `POST /act {"action":"read_file","path"}`                         | `read_file · allow` with `{ bot, path, name, extension }`, then `succeeded`, `failed` or `unknown`; `read_file · deny` with `{ bot, path, name, extension, reason }`          |
 | `write_file` | `path`, `contents` | `POST /act {"action":"write_file","path","contents"}`             | `write_file · allow` with `{ bot, path, name, extension, bytes }`, then `succeeded`, `failed` or `unknown`; `write_file · deny` with `{ bot, path, name, extension, reason }` |
 | `list_files` | `path`             | `POST /act {"action":"list_files","path"}`                        | `list_files · allow` with `{ bot, path, name, extension }`, then `succeeded`, `failed` or `unknown`; `list_files · deny` with `{ bot, path, name, extension, reason }`        |
+
+Any tool can also be refused by a rule, as `<tool> · deny` with its audit detail and the rule (see
+[Rules that fail closed](#rules-that-fail-closed)).
 
 While a person holds the computer, every granted tool of every Bot is refused before its ref is resolved: `<tool> · deny`
 with `{ bot, reason: "a person has control" }` (see [Taking control](#taking-control)).
