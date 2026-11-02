@@ -19,7 +19,7 @@ export function ConversationView(props: {
   readonly conversationId: ConversationId;
   readonly botId: BotId;
 }) {
-  const { bot, transcript, isRunning, error, unsent, send, stop } = useConversation(
+  const { bot, transcript, isRunning, turn, error, unsent, send, stop } = useConversation(
     props.conversationId,
     props.botId,
   );
@@ -63,7 +63,7 @@ export function ConversationView(props: {
             ),
           }),
         )}
-        <ApprovalCard conversationId={props.conversationId} isRunning={isRunning} />
+        <ApprovalCard conversationId={props.conversationId} turn={turn} />
         <div ref={bottom} />
       </div>
       {Option.match(error, {

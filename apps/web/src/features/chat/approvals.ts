@@ -1,12 +1,13 @@
-import type { ApprovalAnswer, ConversationId, PendingApproval } from "@aobot/domain";
-import { Effect, Schedule, Stream } from "effect";
+import type { ApprovalAnswer, ConversationId, MessageId, PendingApproval } from "@aobot/domain";
+import { Effect, type Option, Schedule, Stream } from "effect";
 import { Atom } from "effect/reactivity";
 import { ApprovalClient } from "./approval-client.ts";
 import { ApprovalReply } from "./approval-prompt.ts";
 
-/** A person's answer to the question they were shown in a conversation. */
+/** A person's answer to the question they were shown in a conversation, during the turn `turn`. */
 export interface Choice {
   readonly conversation: ConversationId;
+  readonly turn: Option.Option<MessageId>;
   readonly pending: PendingApproval;
   readonly answer: ApprovalAnswer;
 }
@@ -31,7 +32,7 @@ export function makeApprovals(runtime: Atom.AtomRuntime<ApprovalClient>) {
   const approvalAnswer = Atom.family((_conversation: ConversationId) =>
     Atom.keepAlive(
       runtime.fn(
-        Effect.fnUntraced(function* ({ conversation, pending, answer }: Choice) {
+        Effect.fnUntraced(function* ({ conversation, turn, pending, answer }: Choice) {
           const client = yield* ApprovalClient;
 
           return yield* client("Approval.answer", {
@@ -43,6 +44,7 @@ export function makeApprovals(runtime: Atom.AtomRuntime<ApprovalClient>) {
               onSuccess: () =>
                 ApprovalReply.Taken({
                   approval: pending.approval,
+                  turn,
                   question: pending.question,
                   answer,
                 }),

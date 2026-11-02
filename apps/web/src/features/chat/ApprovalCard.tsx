@@ -1,4 +1,4 @@
-import { answerLabels, ApprovalAnswer, type ConversationId } from "@aobot/domain";
+import { answerLabels, ApprovalAnswer, type ConversationId, type MessageId } from "@aobot/domain";
 import { Option } from "effect";
 import { useEffect, useRef } from "react";
 import { ApprovalPrompt } from "./approval-prompt.ts";
@@ -11,9 +11,9 @@ why the server refused one shows below them. Once answered, it says which, for t
 */
 export function ApprovalCard(props: {
   readonly conversationId: ConversationId;
-  readonly isRunning: boolean;
+  readonly turn: Option.Option<MessageId>;
 }) {
-  const { prompt, choose } = useApproval(props.conversationId, props.isRunning);
+  const { prompt, choose } = useApproval(props.conversationId, props.turn);
   const shown = useRef<HTMLElement>(null);
 
   const showing = Option.match(prompt, {

@@ -10,6 +10,7 @@ import {
   foldChatEvent,
   initialState,
   isRunning,
+  runningTurn,
   usesComputer,
   refuseForAnotherBot,
   refuseMessage,
@@ -296,6 +297,24 @@ describe("given a Bot that calls a tool mid-answer", () => {
       const next = appendUserMessage(finished, MessageId.make("u2"), "Thanks");
 
       expect(usesComputer(next)).toBe(false);
+    });
+  });
+
+  describe("which turn is running", () => {
+    const finished = fold(running, [{ type: "RUN_FINISHED", threadId: conversationId, runId }]);
+
+    it("names the turn by the person's message it answers, while it runs", () => {
+      expect(runningTurn(running)).toEqual(Option.some(userId));
+    });
+
+    it("names none once it ended", () => {
+      expect(runningTurn(finished)).toEqual(Option.none());
+    });
+
+    it("names the next turn by the person's next message", () => {
+      const next = MessageId.make("u2");
+
+      expect(runningTurn(appendUserMessage(finished, next, "Thanks"))).toEqual(Option.some(next));
     });
   });
 });

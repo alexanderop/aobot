@@ -2,6 +2,7 @@ import {
   ApprovalId,
   ApprovalRpcs,
   ConversationId,
+  MessageId,
   NoApprovalWaiting,
   type PendingApproval,
 } from "@aobot/domain";
@@ -10,7 +11,7 @@ import { Atom, AsyncResult, AtomRegistry } from "effect/reactivity";
 import { type Rpc, type RpcGroup, RpcTest } from "effect/rpc";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { ApprovalClient } from "./approval-client.ts";
-import { ApprovalReply } from "./approval-prompt.ts";
+import { approvalPrompt, ApprovalReply } from "./approval-prompt.ts";
 import { makeApprovals } from "./approvals.ts";
 
 type Answered = Rpc.Payload<Rpc.ExtractTag<RpcGroup.Rpcs<typeof ApprovalRpcs>, "Approval.answer">>;
@@ -45,6 +46,8 @@ const shown = {
   tool: "run",
   question: "Run `rm notes.txt`?",
 } as const;
+
+const turn = Option.some(MessageId.make("message-1"));
 
 /** A registry of its own, disposed after the test. */
 function registryFor() {
@@ -96,10 +99,20 @@ describe("given a Bot waiting for its person's answer", () => {
       const registry = registryFor();
       registry.mount(approvalAnswer(conversation));
 
-      registry.set(approvalAnswer(conversation), { conversation, pending: shown, answer: "yes" });
+      registry.set(approvalAnswer(conversation), {
+        conversation,
+        turn,
+        pending: shown,
+        answer: "yes",
+      });
 
       expect(await replyTo(registry, approvalAnswer)).toEqual(
-        ApprovalReply.Taken({ approval: shown.approval, question: shown.question, answer: "yes" }),
+        ApprovalReply.Taken({
+          approval: shown.approval,
+          turn,
+          question: shown.question,
+          answer: "yes",
+        }),
       );
       expect(received).toEqual([{ conversation, approval: shown.approval, answer: "yes" }]);
     });
@@ -115,7 +128,12 @@ describe("given a Bot waiting for its person's answer", () => {
       const registry = registryFor();
       registry.mount(approvalAnswer(conversation));
 
-      registry.set(approvalAnswer(conversation), { conversation, pending: shown, answer: "no" });
+      registry.set(approvalAnswer(conversation), {
+        conversation,
+        turn,
+        pending: shown,
+        answer: "no",
+      });
 
       expect(await replyTo(registry, approvalAnswer)).toEqual(
         ApprovalReply.Refused({
@@ -123,6 +141,29 @@ describe("given a Bot waiting for its person's answer", () => {
           message: "The Bot is not waiting for that answer.",
         }),
       );
+    });
+  });
+});
+
+describe("given the person answered a question in an earlier turn", () => {
+  describe("when they write again and the Bot asks nothing yet", () => {
+    it("shows no answer on the card", async () => {
+      const { approvalAnswer } = makeApprovals(serverAnswering(() => Effect.void));
+      const registry = registryFor();
+      registry.mount(approvalAnswer(conversation));
+
+      registry.set(approvalAnswer(conversation), {
+        conversation,
+        turn,
+        pending: shown,
+        answer: "no",
+      });
+      await replyTo(registry, approvalAnswer);
+
+      const last = registry.get(approvalAnswer(conversation));
+      const nextTurn = Option.some(MessageId.make("message-2"));
+
+      expect(approvalPrompt(Option.none(), last, nextTurn)).toEqual(Option.none());
     });
   });
 });

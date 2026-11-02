@@ -1,11 +1,12 @@
-import type { ApprovalAnswer, ApprovalId, PendingApproval } from "@aobot/domain";
+import type { ApprovalAnswer, ApprovalId, MessageId, PendingApproval } from "@aobot/domain";
 import { Data, Option } from "effect";
 import { AsyncResult } from "effect/reactivity";
 
-/** What the server said to the person's answer: taken, or refused and why. */
+/** What the server said to the person's answer, given in the turn `turn`: taken, or refused and why. */
 export type ApprovalReply = Data.TaggedEnum<{
   Taken: {
     readonly approval: ApprovalId;
+    readonly turn: Option.Option<MessageId>;
     readonly question: string;
     readonly answer: ApprovalAnswer;
   };
@@ -33,13 +34,14 @@ export type ApprovalPrompt = Data.TaggedEnum<{
 export const ApprovalPrompt = Data.taggedEnum<ApprovalPrompt>();
 
 /**
-The card of a conversation whose Bot waits on `pending`, whose person's last answer is `last`, while its
-turn is `running` or not. None while nothing is asked and nothing was answered in this turn.
+The card of a conversation whose Bot waits on `pending`, whose person's last answer is `last`, while the
+turn `turn` runs, none while none does. None while nothing is asked and nothing was answered in this turn,
+so an answer from an earlier turn never shows in a later one.
 */
 export function approvalPrompt(
   pending: Option.Option<PendingApproval>,
   last: AsyncResult.AsyncResult<ApprovalReply>,
-  running: boolean,
+  turn: Option.Option<MessageId>,
 ): Option.Option<ApprovalPrompt> {
   const reply = last.waiting ? Option.none() : AsyncResult.value(last);
   const taken = Option.filter(reply, ApprovalReply.$is("Taken"));
@@ -50,7 +52,12 @@ export function approvalPrompt(
   );
 
   return Option.match(pending, {
-    onNone: () => (running ? answered : Option.none()),
+    onNone: () =>
+      Option.exists(taken, (reply) =>
+        Option.exists(turn, (now) => Option.contains(reply.turn, now)),
+      )
+        ? answered
+        : Option.none(),
     onSome: (shown) =>
       Option.exists(taken, ({ approval }) => approval === shown.approval)
         ? answered
