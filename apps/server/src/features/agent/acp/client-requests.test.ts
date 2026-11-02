@@ -1,10 +1,11 @@
+import type { AcpClientMethod } from "@aobot/domain";
 import type { Schema } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import { ClientDecision, decideClientRequest } from "./client-requests.ts";
 import { methodNotFound, Reply } from "./wire.ts";
 
-const refusedWith = (detail: Schema.JsonObject, reply: Reply) =>
-  ClientDecision.Refuse({ detail, reply });
+const refusedWith = (method: AcpClientMethod, detail: Schema.JsonObject, reply: Reply) =>
+  ClientDecision.Refuse({ method, detail, reply });
 
 const notOffered = Reply.Error({ code: -32000, message: expect.stringContaining("gateway") });
 
@@ -16,22 +17,24 @@ describe("decideClientRequest", () => {
       args: ["-0"],
     });
 
-    expect(decision).toEqual(refusedWith({ command: "[6 chars]" }, notOffered));
+    expect(decision).toEqual(refusedWith("terminal/create", { command: "[6 chars]" }, notOffered));
   });
 
-  it.each(["terminal/output", "terminal/wait_for_exit", "terminal/kill", "terminal/release"])(
-    "refuses %s",
-    (method) => {
-      expect(decideClientRequest(method, { sessionId: "s", terminalId: "t" })).toEqual(
-        refusedWith({}, notOffered),
-      );
-    },
-  );
+  it.each([
+    "terminal/output",
+    "terminal/wait_for_exit",
+    "terminal/kill",
+    "terminal/release",
+  ] as const)("refuses %s", (method) => {
+    expect(decideClientRequest(method, { sessionId: "s", terminalId: "t" })).toEqual(
+      refusedWith(method, {}, notOffered),
+    );
+  });
 
   it("refuses reading a file and records only the length of its path", () => {
     expect(
       decideClientRequest("fs/read_text_file", { sessionId: "s", path: "/etc/passwd" }),
-    ).toEqual(refusedWith({ path: "[11 chars]" }, notOffered));
+    ).toEqual(refusedWith("fs/read_text_file", { path: "[11 chars]" }, notOffered));
   });
 
   it("refuses writing a file and records neither its path nor its content", () => {
@@ -41,7 +44,9 @@ describe("decideClientRequest", () => {
       content: "secret",
     });
 
-    expect(decision).toEqual(refusedWith({ path: "[6 chars]", content: "[6 chars]" }, notOffered));
+    expect(decision).toEqual(
+      refusedWith("fs/write_text_file", { path: "[6 chars]", content: "[6 chars]" }, notOffered),
+    );
   });
 
   it("refuses a permission with the agent's own reject choice, keeping the kind and the title's length", () => {
@@ -56,6 +61,7 @@ describe("decideClientRequest", () => {
 
     expect(decision).toEqual(
       refusedWith(
+        "session/request_permission",
         { kind: "execute", title: "[15 chars]" },
         Reply.Result({ result: { outcome: { outcome: "selected", optionId: "no" } } }),
       ),
@@ -71,6 +77,7 @@ describe("decideClientRequest", () => {
 
     expect(decision).toEqual(
       refusedWith(
+        "session/request_permission",
         { kind: null, title: null },
         Reply.Result({ result: { outcome: { outcome: "cancelled" } } }),
       ),
@@ -79,7 +86,7 @@ describe("decideClientRequest", () => {
 
   it("refuses a request whose params it cannot read, recording nothing about them", () => {
     expect(decideClientRequest("terminal/create", "not an object")).toEqual(
-      refusedWith({}, notOffered),
+      refusedWith("terminal/create", {}, notOffered),
     );
   });
 

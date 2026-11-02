@@ -1,4 +1,6 @@
 import {
+  type AcpClientMethod,
+  type AuditAction,
   BotId,
   ComputerAction,
   commandTimeLimit,
@@ -54,7 +56,7 @@ export interface Refusal {
   /** The CLI or runtime that asked, such as `claude-code`. */
   readonly agent: string;
   /** What it asked for, such as `terminal/create`. */
-  readonly action: string;
+  readonly action: AcpClientMethod;
   readonly detail: Schema.JsonObject;
 }
 
@@ -602,7 +604,7 @@ export const gatewayLayer = Layer.effectContext(
 
     /** Records a `deny` row as `audited` and tells the model `answer`. */
     const denyAs = Effect.fnUntraced(function* (
-      audited: string,
+      audited: AuditAction,
       detail: Schema.JsonObject,
       answer: string,
     ) {
@@ -619,7 +621,7 @@ export const gatewayLayer = Layer.effectContext(
     /** Writes the `allow` row for `action` as `audited`, or tells the model it did not run. */
     const recordAllowed = (
       tool: ToolName,
-      audited: string,
+      audited: AuditAction,
       detail: Schema.JsonObject,
     ): Effect.Effect<AuditRowId, ToolFailed> =>
       rows.decide("allow", audited, detail).pipe(

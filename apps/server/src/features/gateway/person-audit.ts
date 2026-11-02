@@ -1,5 +1,6 @@
+import type { AuditAction } from "@aobot/domain";
 import { Effect, Match, Option, type Schema } from "effect";
-import { AuditLog, type AuditRowId, type Outcome } from "../audit/public.ts";
+import { AuditLog, type AuditRowId, type Decision, type Outcome } from "../audit/public.ts";
 import type { ComputerActFailed, ComputerLost, ComputerUnavailable } from "../computers/public.ts";
 import { capText } from "../../shared/tool-result.ts";
 
@@ -40,7 +41,7 @@ export const personAudit = Effect.gen(function* () {
   const audit = yield* AuditLog;
 
   /** A decision about `action`, in the trace that asked for it. */
-  const decide = (decision: "allow" | "deny", action: string, detail: Schema.JsonObject) =>
+  const decide = (decision: Decision, action: AuditAction, detail: Schema.JsonObject) =>
     Effect.flatMap(Effect.option(Effect.currentSpan), (span) =>
       audit.record({
         traceId: Option.map(span, (current) => current.traceId),
@@ -56,7 +57,7 @@ export const personAudit = Effect.gen(function* () {
   A `deny` row for `action`, only logged when it cannot be written: what was denied did not happen either
   way, so the refusal still stands.
   */
-  const deny = (action: string, detail: Schema.JsonObject) =>
+  const deny = (action: AuditAction, detail: Schema.JsonObject) =>
     decide("deny", action, detail).pipe(
       Effect.asVoid,
       Effect.catchTag("AuditWriteFailed", (error) =>

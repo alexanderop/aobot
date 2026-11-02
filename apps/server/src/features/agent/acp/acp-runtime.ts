@@ -126,8 +126,8 @@ export function layerAcp(options: AcpRuntimeOptions) {
 
       const answerClientRequest = (method: string, params: Schema.Json) =>
         ClientDecision.$match(decideClientRequest(method, params), {
-          Refuse: ({ detail, reply }) =>
-            gateway.refuse({ agent, action: method, detail }).pipe(Effect.as(reply)),
+          Refuse: ({ method: refusedMethod, detail, reply }) =>
+            gateway.refuse({ agent, action: refusedMethod, detail }).pipe(Effect.as(reply)),
           Unknown: ({ reply }) => Effect.succeed(reply),
         });
 

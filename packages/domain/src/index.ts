@@ -12,6 +12,21 @@ export {
   SendMessage,
 } from "./chat-rpcs.ts";
 
+export {
+  AcpClientMethod,
+  actionLabel,
+  AuditAction,
+  AuditDecision,
+  type AuditFilters,
+  auditPageLimit,
+  AuditQuery,
+  AuditRow,
+  AuditRowsPage,
+  decisionLabel,
+  InitiatorKind,
+  isDecision,
+} from "./audit.ts";
+
 export { BotRpcs, BotSummary, ToolName, UnknownBot } from "./bot.ts";
 
 export { BotId, ConversationId, MessageId, RunId, ToolCallId } from "./ids.ts";
