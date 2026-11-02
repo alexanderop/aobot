@@ -78,7 +78,7 @@ const keepSnapshotUrl = Effect.gen(function* () {
 
 // The ledger of every question a rule put to a person. A row only moves forward, one compare-and-set
 // UPDATE at a time, so an approved action is spent once and a restart can tell it was started:
-// asked -> yes | no, yes -> spent | lapsed, spent -> finished | told. No action, digest or typed text is
+// asked -> yes | no | lapsed, yes -> spent | lapsed, spent -> finished | told. No action, digest or typed text is
 // kept: only the Bot, the tool and the ask rule, so a question a stopped server left open can be closed
 // in the audit trail at the next start-up.
 const createApprovals = Effect.gen(function* () {
@@ -109,7 +109,7 @@ const createApprovals = Effect.gen(function* () {
       OR NEW.tool IS NOT OLD.tool
       OR NEW.rule IS NOT OLD.rule
       OR NOT (
-        (OLD.state = 'asked' AND NEW.state IN ('yes', 'no'))
+        (OLD.state = 'asked' AND NEW.state IN ('yes', 'no', 'lapsed'))
         OR (OLD.state = 'yes' AND NEW.state IN ('spent', 'lapsed'))
         OR (OLD.state = 'spent' AND NEW.state IN ('finished', 'told'))
       )

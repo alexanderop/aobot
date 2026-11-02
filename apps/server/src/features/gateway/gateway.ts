@@ -1,6 +1,5 @@
 import {
   type AcpClientMethod,
-  type ApprovalAnswer,
   type ApprovalAnsweredBy,
   type AuditAction,
   BotId,
@@ -30,7 +29,13 @@ import {
   Result,
   Schema,
 } from "effect";
-import { AuditLog, type AuditRowId, type Decision, type Outcome } from "../audit/public.ts";
+import {
+  AuditLog,
+  type AuditRowId,
+  type AuditWriteFailed,
+  type Decision,
+  type Outcome,
+} from "../audit/public.ts";
 import { Bots, isGranted } from "../bots/public.ts";
 import { type Allowed, Policy, Refused, Verdict } from "../policy/public.ts";
 import {
@@ -52,6 +57,7 @@ import {
   type ActionChanged,
   type AlreadySpent,
   type AlreadyWaiting,
+  type Answered,
   ApprovalRequests,
   approvalRequests,
   type DeclinedEarlier,
@@ -228,6 +234,11 @@ class NeedsApproval extends Schema.TaggedError<NeedsApproval>()("NeedsApproval",
 /** An ask rule holds for an action from a call that names no turn, so there is no person to ask. */
 class NoOneToAsk extends Schema.TaggedError<NoOneToAsk>()("NoOneToAsk", {}) {}
 
+/** The person, or the time limit on their answer, said no to an asked action. */
+class Declined extends Schema.TaggedError<Declined>()("Declined", {
+  by: Schema.Literals(["person", "time limit"]),
+}) {}
+
 /** Why the gateway did not carry out a Bot's call: each is one `deny` row, and what the model reads. */
 type Denial =
   | NotGranted
@@ -241,11 +252,13 @@ type Denial =
   | NoSite
   | NoOneToAsk
   | AlreadyWaiting
+  | Declined
   | DeclinedEarlier
   | OutcomeUnknown
   | ActionChanged
   | AlreadySpent
-  | LedgerFailed;
+  | LedgerFailed
+  | AuditWriteFailed;
 
 /** How much of a failed rule's error a deny row keeps. */
 const ruleErrorLimit = 500;
@@ -336,6 +349,11 @@ function notGrantedAnswer(action: ToolName, claim: Claim): string {
   return `${action} did not run: it is not granted to ${claimedName(claim)}. Use only the tools your instructions name.`;
 }
 
+/** What the model reads when a row of what it asked for could not be written. */
+function unrecordedAnswer(action: ToolName): string {
+  return `${action} did not run: it could not be recorded, and nothing runs unrecorded.`;
+}
+
 /** What the model reads when it asks for a secret while its last request still waits. */
 const alreadyAskedAnswer =
   "request_secret did not run: you already asked your person for a secret, and they have not answered yet. Wait for that answer before asking again.";
@@ -347,7 +365,7 @@ export const secretWaitLimit = Duration.minutes(10);
 export const approvalWaitLimit = Duration.minutes(10);
 
 /** Why a call ended early: the person stopped the turn it was made in. */
-const turnStopped = "the turn was stopped" satisfies ApprovalAnsweredBy;
+const turnStopped = "the turn was stopped";
 
 /** Why a question an earlier run left open was answered no and refused at start-up. */
 const serverStopped = "the server stopped" satisfies ApprovalAnsweredBy;
@@ -356,44 +374,16 @@ const serverStopped = "the server stopped" satisfies ApprovalAnsweredBy;
 const holdOff =
   "Do not try it, or another way to do it, until they write to you; tell them it did not run.";
 
-/** Why an action a rule asks about did not run, as its deny row's reason and as the model reads it. */
-const notAsked = {
-  NoOneToAsk: {
-    reason: "no one to ask",
-    why: "a rule asks your person first, and this call came from no conversation they could answer in",
+/** Why an asked action did not run after a no, by who said it: its deny row's reason, and why the model reads. */
+const declined: Readonly<
+  Record<Answered["by"], { readonly reason: string; readonly why: string }>
+> = {
+  person: { reason: "declined", why: "your person said no" },
+  "time limit": {
+    reason: "no answer",
+    why: `your person did not answer within ${Duration.format(approvalWaitLimit)}, which counts as no`,
   },
-  AlreadyWaiting: {
-    reason: "already waiting",
-    why: "you already asked your person and they have not answered. Wait for that answer",
-  },
-  DeclinedEarlier: {
-    reason: "declined earlier",
-    why: "your person already said no to this in this conversation. Do not ask again until they write to you",
-  },
-  OutcomeUnknown: {
-    reason: "outcome unknown",
-    why: "an action like it that your person approved was started, and its turn ended before you were told what became of it, so whether it happened is unknown, and it was not run again. Check what became of it, for example with ls or a snapshot, before asking again",
-  },
-  ActionChanged: {
-    reason: "action changed",
-    why: "what it acts on changed after your person answered, so their answer does not cover it. Take a snapshot and ask again",
-  },
-  AlreadySpent: {
-    reason: "already spent",
-    why: "your person's yes was already used once. Ask again",
-  },
-  LedgerFailed: {
-    reason: "not recorded",
-    why: "asking your person could not be recorded, and nothing runs unrecorded",
-  },
-} as const;
-
-/** What the model reads when its person, or the time limit, said no to `tool`. */
-function declinedApprovalAnswer(tool: ToolName, by: ApprovalAnsweredBy): string {
-  return by === "person"
-    ? `${tool} did not run: your person said no. ${holdOff}`
-    : `${tool} did not run: your person did not answer within ${Duration.format(approvalWaitLimit)}, which counts as no. ${holdOff}`;
-}
+};
 
 /** How much of the field a Bot named for its secret its audit rows keep. */
 const fieldLimit = 200;
@@ -516,7 +506,10 @@ const questionOf = DirectAction.match({
   list_files: ({ path }) => `List the files in ${path}?`,
 });
 
-/** What an audit row's `detail` holds. */
+/**
+What an audit row's `detail` holds, as a record: lint refuses spreading `Schema.JsonObject`, an interface
+it cannot tell from a class instance.
+*/
 type Detail = Readonly<Record<string, Schema.Json>>;
 
 /** Why a forwarded call did not come back with a result. */
@@ -594,24 +587,16 @@ export const gatewayLayer = Layer.effectContext(
     const secrets = yield* secretRequests;
     const approvals = yield* approvalRequests;
 
-    /** A row the deployment writes at start-up for the person's question, only logged when it fails. */
-    const byDeployment = (decision: Decision, action: AuditAction, detail: Detail) =>
-      audit
-        .record({
-          traceId: Option.none(),
-          initiatorKind: "deployment",
-          actorId: singleUser,
-          decision,
-          action,
-          detail,
-        })
-        .pipe(
-          Effect.catchTag("AuditWriteFailed", (error) =>
-            Effect.logError("A row closing a question left open could not be written").pipe(
-              Effect.annotateLogs({ action, decision, reason: error.message }),
-            ),
-          ),
-        );
+    /** A row the deployment writes at start-up to close a question an earlier run left open. */
+    const byDeployment = (decision: Decision, action: AuditAction, detail: Schema.JsonObject) =>
+      audit.record({
+        traceId: Option.none(),
+        initiatorKind: "deployment",
+        actorId: singleUser,
+        decision,
+        action,
+        detail,
+      });
 
     const closeInTrail = ({ approval, bot, tool, rule, answered }: LeftOpen) =>
       Effect.andThen(
@@ -638,8 +623,7 @@ export const gatewayLayer = Layer.effectContext(
 
     // Before any question is asked: one an earlier run left open, still waiting for the person or with
     // its yes never spent, is answered no and refused, so every ask row in the trail is closed.
-    const leftOpen = yield* approvals.closeLeftOpen;
-    yield* Effect.forEach(leftOpen, closeInTrail, { discard: true });
+    const leftOpen = yield* approvals.closeLeftOpen(closeInTrail);
 
     if (leftOpen.length > 0) {
       yield* Effect.logWarning(
@@ -814,63 +798,58 @@ export const gatewayLayer = Layer.effectContext(
       });
     };
 
-    /** Records a `deny` row as `audited` and tells the model `answer`. */
+    /** Writes a refusal's `deny` row, and only logs it when it cannot be written: the refusal stands. */
+    type DenyRow = (audited: AuditAction, detail: Schema.JsonObject) => Effect.Effect<void>;
+
+    /** Records a `deny` row as `audited` with `write` and tells the model `answer`. */
     const denyAs = Effect.fnUntraced(function* (
       audited: AuditAction,
       detail: Schema.JsonObject,
       answer: string,
+      write: DenyRow = rows.deny,
     ) {
       yield* Effect.annotateCurrentSpan({ "gateway.decision": "deny", "gateway.outcome": "deny" });
-      yield* rows.deny(audited, detail);
+      yield* write(audited, detail);
 
       return yield* new ToolFailed({ message: answer });
     });
 
-    /** Records a `deny` row for the tool `action` and tells the model `answer`. */
-    const deny = (action: ToolName, detail: Schema.JsonObject, answer: string) =>
-      denyAs(auditAction(action), detail, answer);
+    /**
+    Writes the `decision` row as `audited`; the action does not go ahead when it fails. Once the person is
+    asked, that is refused like any refusal after asking, so a `deny` row closes the question.
+    */
+    const record = (decision: Decision, audited: AuditAction, detail: Schema.JsonObject) =>
+      rows
+        .decide(decision, audited, detail)
+        .pipe(
+          Effect.tapError((error) =>
+            Effect.logError(
+              "An audit row could not be written, so the action was not forwarded",
+            ).pipe(Effect.annotateLogs({ action: audited, decision, reason: error.message })),
+          ),
+        );
 
-    /** Writes the `decision` row for `tool` as `audited`, or tells the model it did not run. */
-    const record = (
-      tool: ToolName,
-      decision: Decision,
-      audited: AuditAction,
-      detail: Schema.JsonObject,
-    ): Effect.Effect<AuditRowId, ToolFailed> =>
-      rows.decide(decision, audited, detail).pipe(
-        Effect.tapError((error) =>
-          Effect.logError(
-            "An audit row could not be written, so the action was not forwarded",
-          ).pipe(Effect.annotateLogs({ action: audited, decision, reason: error.message })),
-        ),
-        Effect.mapError(
-          () =>
-            new ToolFailed({
-              message: `${tool} did not run: it could not be recorded, and nothing runs unrecorded.`,
-            }),
-        ),
-      );
-
-    /** Writes the `allow` row of `action`, allowed by the allow rule `allowRule`, with `more` in its detail. */
-    const allow = Effect.fnUntraced(function* (
-      bot: BotId,
-      action: ToolAction,
-      allowRule: string,
-      more: Detail,
-    ) {
-      const tool = action.action;
-
-      const allowRow = yield* record(tool, "allow", auditAction(tool), {
+    /** The `allow` row of `action`, allowed by the allow rule `allowRule`, with `more` in its detail. */
+    const allowRow = (bot: BotId, action: ToolAction, allowRule: string, more: Detail) =>
+      record("allow", auditAction(action.action), {
         bot,
         ...auditDetail(action),
         rule: allowRule,
         ...more,
       });
 
-      yield* Effect.annotateCurrentSpan({ "gateway.decision": "allow", "gateway.rule": allowRule });
+    const allowedByRule = (allowRule: string) =>
+      Effect.annotateCurrentSpan({ "gateway.decision": "allow", "gateway.rule": allowRule });
 
-      return allowRow;
-    });
+    /**
+    Writes the `allow` row of `action`, allowed by the allow rule `allowRule`, with `more` in its detail.
+    When it fails, the model is told, and the call has no decision.
+    */
+    const allow = (bot: BotId, action: ToolAction, allowRule: string, more: Detail) =>
+      allowRow(bot, action, allowRule, more).pipe(
+        Effect.mapError(() => new ToolFailed({ message: unrecordedAnswer(action.action) })),
+        Effect.tap(allowedByRule(allowRule)),
+      );
 
     /** Forwards `action` for `tool`, writes its outcome row on `allowRow`, and answers what the model reads. */
     const forwardAndSettle = Effect.fnUntraced(function* (
@@ -922,44 +901,34 @@ export const gatewayLayer = Layer.effectContext(
     });
 
     /**
-    Writes the deny row of each refusal `self` fails with, `base` first in its detail, and tells the model
-    why `tool` did not run. A `ToolFailed` is already what the model reads, so it passes on.
+    Writes the deny row of each refusal `self` fails with, `base` first in its detail, with `write`, and
+    tells the model why `tool` did not run. A `ToolFailed` is already what the model reads, so it passes on.
     */
     const denyRefusals =
-      (tool: ToolName, base: Detail) =>
+      (tool: ToolName, base: Detail, write: DenyRow = rows.deny) =>
       <A, R>(self: Effect.Effect<A, ToolFailed | Denial, R>): Effect.Effect<A, ToolFailed, R> =>
-        Effect.catchTag(self, "ToolFailed", Effect.fail, refused(tool, base));
+        Effect.catchTag(self, "ToolFailed", Effect.fail, refused(tool, base, write));
 
-    /** The deny row of `refusal`, `base` first in its detail, and why `tool` did not run. */
-    const refused = (tool: ToolName, base: Detail) => {
-      const notRun = (tag: keyof typeof notAsked, more: Detail = {}) =>
-        deny(
-          tool,
-          { ...base, ...more, reason: notAsked[tag].reason },
-          `${tool} did not run: ${notAsked[tag].why}.`,
-        );
+    /** The deny row of `refusal`, `base` first in its detail, written with `write`, and why `tool` did not run. */
+    const refused = (tool: ToolName, base: Detail, write: DenyRow) => {
+      const deny = (detail: Detail, answer: string) =>
+        denyAs(auditAction(tool), { ...base, ...detail }, answer, write);
+
+      const notRun = (why: string) => `${tool} did not run: ${why}.`;
+
+      const unrecorded = () => deny({ reason: "not recorded" }, unrecordedAnswer(tool));
 
       return Match.typeTags<Denial, Effect.Effect<never, ToolFailed>>()({
-        AlreadyAsked: () => deny(tool, { ...base, reason: "already asked" }, alreadyAskedAnswer),
+        AlreadyAsked: () => deny({ reason: "already asked" }, alreadyAskedAnswer),
         NotGranted: ({ claim }) =>
-          deny(
-            tool,
-            { ...base, reason: `not granted to ${claimedName(claim)}` },
-            notGrantedAnswer(tool, claim),
-          ),
+          deny({ reason: `not granted to ${claimedName(claim)}` }, notGrantedAnswer(tool, claim)),
         PersonHasControl: () =>
           spanEvent("control.refused").pipe(
-            Effect.andThen(
-              deny(tool, { ...base, reason: "a person has control" }, personHasControlAnswer(tool)),
-            ),
+            Effect.andThen(deny({ reason: "a person has control" }, personHasControlAnswer(tool))),
           ),
         UnknownRef: (unknown) =>
-          deny(
-            tool,
-            { ...base, ref: unknown.ref, reason: unknown.reason },
-            unknownRefAnswer(tool, unknown),
-          ),
-        UnknownPage: () => deny(tool, { ...base, reason: unreadSnapshot }, unknownPageAnswer(tool)),
+          deny({ ref: unknown.ref, reason: unknown.reason }, unknownRefAnswer(tool, unknown)),
+        UnknownPage: () => deny({ reason: unreadSnapshot }, unknownPageAnswer(tool)),
         RuleRefused: ({ action, verdict }) => {
           const { detail, why } = ruleRefusal(verdict);
 
@@ -967,81 +936,103 @@ export const gatewayLayer = Layer.effectContext(
             Refused.guards.NoneAllowed(verdict)
               ? Effect.void
               : Effect.annotateCurrentSpan({ "gateway.rule": verdict.rule }),
-            deny(
-              tool,
-              { ...base, ...auditDetail(action), ...detail },
-              ruleRefusedAnswer(tool, why),
-            ),
+            deny({ ...auditDetail(action), ...detail }, ruleRefusedAnswer(tool, why)),
           );
         },
         OutsideWorkspace: ({ action }) =>
           deny(
-            tool,
-            { ...base, ...fileTarget(action.path), reason: "outside workspace" },
+            { ...fileTarget(action.path), reason: "outside workspace" },
             outsideWorkspaceAnswer(action),
           ),
         NoTextField: ({ action }) =>
-          deny(
-            tool,
-            { ...base, ...auditDetail(action), reason: "not a text field" },
-            noTextFieldAnswer(action),
-          ),
+          deny({ ...auditDetail(action), reason: "not a text field" }, noTextFieldAnswer(action)),
         NoSite: ({ action }) =>
-          deny(tool, { ...base, ...auditDetail(action), reason: "no site" }, noSiteAnswer(action)),
-        NoOneToAsk: () => notRun("NoOneToAsk"),
-        AlreadyWaiting: () => notRun("AlreadyWaiting"),
-        DeclinedEarlier: () => notRun("DeclinedEarlier"),
-        OutcomeUnknown: () => notRun("OutcomeUnknown"),
-        ActionChanged: ({ action }) => notRun("ActionChanged", auditDetail(action)),
-        AlreadySpent: () => notRun("AlreadySpent"),
-        LedgerFailed: () => notRun("LedgerFailed"),
+          deny({ ...auditDetail(action), reason: "no site" }, noSiteAnswer(action)),
+        NoOneToAsk: () =>
+          deny(
+            { reason: "no one to ask" },
+            notRun(
+              "a rule asks your person first, and this call came from no conversation they could answer in",
+            ),
+          ),
+        AlreadyWaiting: () =>
+          deny(
+            { reason: "already waiting" },
+            notRun(
+              "you already asked your person and they have not answered. Wait for that answer",
+            ),
+          ),
+        Declined: ({ by }) =>
+          deny({ reason: declined[by].reason }, `${notRun(declined[by].why)} ${holdOff}`),
+        DeclinedEarlier: () =>
+          deny(
+            { reason: "declined earlier" },
+            notRun(
+              "your person already said no to this in this conversation. Do not ask again until they write to you",
+            ),
+          ),
+        OutcomeUnknown: () =>
+          deny(
+            { reason: "outcome unknown" },
+            notRun(
+              "an action like it that your person approved was started, and its turn ended before you were told what became of it, so whether it happened is unknown, and it was not run again. Check what became of it, for example with ls or a snapshot, before asking again",
+            ),
+          ),
+        ActionChanged: ({ action }) =>
+          deny(
+            { ...auditDetail(action), reason: "action changed" },
+            notRun(
+              "what it acts on changed after your person answered, so their answer does not cover it. Take a snapshot and ask again",
+            ),
+          ),
+        AlreadySpent: () =>
+          deny(
+            { reason: "already spent" },
+            notRun("your person's yes was already used once. Ask again"),
+          ),
+        LedgerFailed: unrecorded,
+        AuditWriteFailed: unrecorded,
       });
     };
 
-    /** Writes who answered `approval`, and how. */
-    const recordAnswer = (
-      tool: ToolName,
-      bot: BotId,
-      approval: OpenApproval,
-      answer: ApprovalAnswer,
-      by: ApprovalAnsweredBy,
-    ) => record(tool, "answered", "approval.answered", { bot, approval: approval.id, answer, by });
+    /**
+    Writes the `deny` row that ends `approval` without its action, in one write with lapsing it. When that
+    fails, the question stays open in the ledger, and the next start-up closes it in the trail.
+    */
+    const closing =
+      (approval: OpenApproval): DenyRow =>
+      (audited, detail) =>
+        approval
+          .close(rows.decide("deny", audited, detail))
+          .pipe(
+            Effect.ignore({ log: "Error", message: "A refused question could not be closed" }),
+            Effect.annotateLogs({ action: audited, approval: approval.id }),
+          );
 
     /**
     Shows `question` to the person and takes their answer to `approval`, in a span of its own that names
-    the ask rule `askRule`, the answer and who gave it. Its `approval.answered` row is written however the
-    wait ends; a turn stopped meanwhile answers no.
+    the ask rule `askRule`, the answer and who gave it. A turn stopped meanwhile answers no.
     */
-    const askPerson = (
-      tool: ToolName,
-      bot: BotId,
-      askRule: string,
-      approval: OpenApproval,
-      question: string,
-    ) =>
-      approval.ask(question, approvalWaitLimit).pipe(
-        Effect.tap(({ answer, by }) =>
-          Effect.annotateCurrentSpan({ "approval.answer": answer, "approval.by": by }),
-        ),
-        Effect.onInterrupt(() =>
-          Effect.annotateCurrentSpan({
-            "approval.answer": "no",
-            "approval.by": turnStopped,
-          }).pipe(
-            Effect.andThen(recordAnswer(tool, bot, approval, "no", turnStopped)),
-            Effect.ignore,
+    const askPerson = (bot: BotId, askRule: string, approval: OpenApproval, question: string) =>
+      approval
+        .ask(question, approvalWaitLimit, ({ answer, by }) =>
+          record("answered", "approval.answered", { bot, approval: approval.id, answer, by }),
+        )
+        .pipe(
+          Effect.tap(({ answer, by }) =>
+            Effect.annotateCurrentSpan({ "approval.answer": answer, "approval.by": by }),
           ),
-        ),
-        Effect.withSpan("Gateway.awaitApproval", { attributes: { "gateway.rule": askRule } }),
-        Effect.tap(({ answer, by }) => recordAnswer(tool, bot, approval, answer, by)),
-      );
+          Effect.onInterrupt(() =>
+            Effect.annotateCurrentSpan({ "approval.answer": "no", "approval.by": turnStopped }),
+          ),
+          Effect.withSpan("Gateway.awaitApproval", { attributes: { "gateway.rule": askRule } }),
+        );
 
     /**
-    Carries out `request` once its person said yes to `approval`: resolved again, through the door, and
-    spent on the action only when it resolves to the action they were asked about. It then runs once,
-    its `allow` row naming the allow rule `allowRule`, the ask rule `askRule` and the approval. Whatever
-    became of it, the approval is finished once the Bot is told; a turn stopped meanwhile leaves it spent,
-    so the next run is told its outcome is unknown.
+    Carries out `request` once its person said yes to `approval`, only as the action they were asked
+    about, and once: its `allow` row names the allow rule `allowRule`, the ask rule `askRule` and the
+    approval. A turn stopped after the yes was spent leaves it spent, so the next run is told its outcome
+    is unknown.
     */
     const carryOutApproved = Effect.fnUntraced(function* (
       bot: BotId,
@@ -1052,31 +1043,22 @@ export const gatewayLayer = Layer.effectContext(
     ) {
       const { action, host } = yield* resolve(bot, request);
 
-      // Uninterruptible, so a stopped turn finds the yes unspent, and it lapses, or spent with its allow
-      // row written, which an outcome row then settles.
-      const allowRow = yield* Effect.uninterruptible(
-        approval
-          .spend({ bot, action, host })
-          .pipe(
-            Effect.andThen(
-              allow(bot, action, allowRule, { asked: askRule, approval: approval.id }),
-            ),
-          ),
+      const allowRowId = yield* approval.spend(
+        { bot, action, host },
+        allowRow(bot, action, allowRule, { asked: askRule, approval: approval.id }),
       );
 
-      return yield* forwardAndSettle(bot, action.action, action, allowRow).pipe(
+      yield* allowedByRule(allowRule);
+
+      return yield* forwardAndSettle(bot, action.action, action, allowRowId).pipe(
         Effect.onExit((exit) => (Exit.hasInterrupts(exit) ? Effect.void : approval.finish)),
       );
     });
 
     /**
-    An action the ask rule of `needs` holds for, put to the person in the conversation of `turn` before it
-    runs. It is held for that conversation first, and refused before anything is shown while another
-    question waits there, after a no to that rule in this run, or once after an earlier run spent a yes
-    on it and never said what became of it. Its `ask` row and its ledger row are written, then it is shown
-    and waits for the person outside the door, at most {@link approvalWaitLimit}. A no, or no answer,
-    refuses it; a yes carries it out. From its `ask` row on, every way it ends is a row that names the
-    approval: its `allow` row, or a `deny` row, also when the turn is stopped before it ran.
+    An action the ask rule of `needs` holds for, put to the person in the conversation of `turn`, outside
+    the door, before it runs once on their yes. From its `ask` row on, every way it ends is a row that
+    names the approval: its `allow` row, or a `deny` row, also when the turn is stopped before it ran.
     */
     const askThenCarryOut = (
       bot: BotId,
@@ -1090,15 +1072,9 @@ export const gatewayLayer = Layer.effectContext(
       const asked = { bot, ...auditDetail(action), rule: askRule };
 
       const answerThenCarryOut = Effect.fnUntraced(function* (approval: OpenApproval) {
-        const { answer, by } = yield* askPerson(tool, bot, askRule, approval, questionOf(action));
+        const { answer, by } = yield* askPerson(bot, askRule, approval, questionOf(action));
 
-        if (answer === "no") {
-          return yield* deny(
-            tool,
-            { ...asked, approval: approval.id, reason: by === "person" ? "declined" : "no answer" },
-            declinedApprovalAnswer(tool, by),
-          );
-        }
+        if (answer === "no") return yield* new Declined({ by });
 
         return yield* doors.admit(carryOutApproved(bot, request, approval, allowRule, askRule), {
           queued,
@@ -1109,24 +1085,25 @@ export const gatewayLayer = Layer.effectContext(
         Effect.gen(function* () {
           if (Option.isNone(turn)) return yield* new NoOneToAsk();
 
-          const approval = yield* approvals.open(turn.value, askRule, { bot, action, host });
-          const named = { ...asked, approval: approval.id };
+          const approval = yield* approvals.open(turn.value, askRule, { bot, action, host }, (id) =>
+            record("ask", auditAction(tool), { ...asked, approval: id, allowedBy: allowRule }),
+          );
 
-          yield* record(tool, "ask", auditAction(tool), { ...named, allowedBy: allowRule });
           yield* Effect.annotateCurrentSpan({
             "gateway.decision": "ask",
             "gateway.asked": askRule,
           });
 
+          const named = { ...asked, approval: approval.id };
+          const closed = closing(approval);
+
           return yield* answerThenCarryOut(approval).pipe(
             Effect.onInterrupt(() =>
               Effect.flatMap(approval.spent, (spent) =>
-                spent
-                  ? Effect.void
-                  : rows.deny(auditAction(tool), { ...named, reason: turnStopped }),
+                spent ? Effect.void : closed(auditAction(tool), { ...named, reason: turnStopped }),
               ),
             ),
-            denyRefusals(tool, named),
+            denyRefusals(tool, named, closed),
           );
         }),
       ).pipe(denyRefusals(tool, asked));
@@ -1140,12 +1117,16 @@ export const gatewayLayer = Layer.effectContext(
       doors
         .admit(
           Effect.gen(function* () {
-            const allowRow = yield* record("request_secret", "allow", "secret.supplied", {
+            const allowRow = yield* record("allow", "secret.supplied", {
               bot,
               ...auditDetail(request),
               chars: Redacted.value(secret).length,
               rule: allowRule,
-            });
+            }).pipe(
+              Effect.mapError(
+                () => new ToolFailed({ message: unrecordedAnswer("request_secret") }),
+              ),
+            );
 
             const page = yield* forwardAndSettle(
               bot,

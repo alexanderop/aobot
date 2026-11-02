@@ -13,6 +13,7 @@ import {
   digestOf,
   type OpenApproval,
   OutcomeUnknown,
+  type RecordedAnswer,
   type ResolvedAction,
 } from "./approvals.ts";
 import { database } from "./testing/test-gateway.ts";
@@ -56,9 +57,22 @@ const untilShown = (requests: ApprovalRequests["Service"], shownConversation = c
     Effect.map((shown) => Option.getOrThrow(Option.flatten(shown))),
   );
 
-/** Asks `approval` about removing notes.txt, in a fiber of its own. */
+/** A row of the audit trail that is written. */
+const written = () => Effect.void;
+
+/** A row of the audit trail whose write fails, as on a full disk. */
+const failing = Effect.fail("disk full");
+
+/** Opens a question about removing notes.txt in `turn` under `askRule`, its ask row written. */
+const opened = (
+  store: Effect.Success<typeof approvalRequests>,
+  turn: typeof firstRun,
+  askRule = rule,
+) => store.open(turn, askRule, removeNotes, written);
+
+/** Asks `approval` about removing notes.txt, in a fiber of its own, its answer row written. */
 const asking = (approval: OpenApproval) =>
-  Effect.forkChild(approval.ask("Run `rm notes.txt`?", "10 minutes"));
+  Effect.forkChild(approval.ask("Run `rm notes.txt`?", "10 minutes", written));
 
 /** Opens a question about removing notes.txt in `turn` and answers it `answer`, held until the scope closes. */
 const answered = (
@@ -67,7 +81,7 @@ const answered = (
   answer: "yes" | "no",
 ) =>
   Effect.gen(function* () {
-    const approval = yield* store.open(turn, rule, removeNotes);
+    const approval = yield* opened(store, turn);
     const waiting = yield* asking(approval);
     yield* untilShown(store.requests, turn.conversation);
     yield* store.requests.answer(turn.conversation, approval.id, answer);
@@ -110,13 +124,14 @@ describe("digestOf", () => {
 
 describe("approvalRequests", () => {
   it.effect(
-    "shows a question only once it is recorded, and hands the person's yes to the wait",
+    "records a question as asked, shows it only once asked, and hands the person's yes to the wait",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
           const store = yield* approvalRequests;
-          const approval = yield* store.open(firstRun, rule, removeNotes);
+          const approval = yield* opened(store, firstRun);
 
+          expect(yield* ledger).toEqual([["run-1", "asked"]]);
           expect(yield* shownIn(store.requests)).toEqual(Option.none());
           expect(
             yield* Effect.flip(store.requests.answer(conversation, approval.id, "yes")),
@@ -133,7 +148,6 @@ describe("approvalRequests", () => {
             tool: "run",
             question: "Run `rm notes.txt`?",
           });
-          expect(yield* ledger).toEqual([["run-1", "asked"]]);
 
           yield* store.requests.answer(conversation, approval.id, "yes");
 
@@ -148,9 +162,9 @@ describe("approvalRequests", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const store = yield* approvalRequests;
-        yield* store.open(firstRun, rule, removeNotes);
+        yield* opened(store, firstRun);
 
-        expect(yield* Effect.flip(store.open(firstRun, "another-rule", removeNotes))).toEqual(
+        expect(yield* Effect.flip(opened(store, firstRun, "another-rule"))).toEqual(
           new AlreadyWaiting(),
         );
 
@@ -159,7 +173,7 @@ describe("approvalRequests", () => {
           run: firstRun.run,
         };
 
-        yield* asking(yield* store.open(elsewhere, rule, removeNotes));
+        yield* asking(yield* opened(store, elsewhere));
 
         expect((yield* untilShown(store.requests, elsewhere.conversation)).tool).toBe("run");
       }),
@@ -170,7 +184,7 @@ describe("approvalRequests", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const store = yield* approvalRequests;
-        const approval = yield* store.open(firstRun, rule, removeNotes);
+        const approval = yield* opened(store, firstRun);
         const waiting = yield* asking(approval);
         yield* untilShown(store.requests);
         yield* TestClock.adjust("10 minutes");
@@ -184,18 +198,29 @@ describe("approvalRequests", () => {
     ).pipe(Effect.provide(database)),
   );
 
-  it.effect("records no for a question whose wait was stopped, and withdraws it", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const store = yield* approvalRequests;
-        const waiting = yield* asking(yield* store.open(firstRun, rule, removeNotes));
-        yield* untilShown(store.requests);
-        yield* Fiber.interrupt(waiting);
+  it.effect(
+    "records no for a question whose wait was stopped, with its row, and withdraws it",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const store = yield* approvalRequests;
+          const approval = yield* opened(store, firstRun);
+          const rows: Array<RecordedAnswer> = [];
 
-        expect(yield* ledger).toEqual([["run-1", "no"]]);
-        expect(yield* shownIn(store.requests)).toEqual(Option.none());
-      }),
-    ).pipe(Effect.provide(database)),
+          const waiting = yield* Effect.forkChild(
+            approval.ask("Run `rm notes.txt`?", "10 minutes", (given) =>
+              Effect.sync(() => rows.push(given)),
+            ),
+          );
+
+          yield* untilShown(store.requests);
+          yield* Fiber.interrupt(waiting);
+
+          expect(rows).toEqual([{ answer: "no", by: "the turn was stopped" }]);
+          expect(yield* ledger).toEqual([["run-1", "no"]]);
+          expect(yield* shownIn(store.requests)).toEqual(Option.none());
+        }),
+      ).pipe(Effect.provide(database)),
   );
 
   it.effect("spends a yes once, and only on the action it was given for", () =>
@@ -206,15 +231,17 @@ describe("approvalRequests", () => {
         const { approval } = yield* answered(store, firstRun, "yes");
         const otherCommand = otherThan({ action: { action: "run", command: "rm -r notes" } });
 
-        expect(yield* Effect.flip(approval.spend(otherCommand))).toEqual(
+        expect(yield* Effect.flip(approval.spend(otherCommand, Effect.void))).toEqual(
           new ActionChanged({ action: otherCommand.action }),
         );
         expect(yield* approval.spent).toBe(false);
 
-        yield* approval.spend(removeNotes);
+        expect(yield* approval.spend(removeNotes, Effect.succeed("allow row"))).toBe("allow row");
 
         expect(yield* approval.spent).toBe(true);
-        expect(yield* Effect.flip(approval.spend(removeNotes))).toEqual(new AlreadySpent());
+        expect(yield* Effect.flip(approval.spend(removeNotes, Effect.void))).toEqual(
+          new AlreadySpent(),
+        );
 
         yield* approval.finish;
 
@@ -223,13 +250,73 @@ describe("approvalRequests", () => {
     ).pipe(Effect.provide(database)),
   );
 
-  it.effect("lapses a yes it never spent once its question closes", () =>
+  it.effect("lapses a yes it never spent once it is closed with its row", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const store = yield* approvalRequests;
+        const { approval } = yield* answered(store, firstRun, "yes");
+        yield* approval.close(Effect.void);
+
+        expect(yield* ledger).toEqual([["run-1", "lapsed"]]);
+        expect(yield* Effect.flip(approval.spend(removeNotes, Effect.void))).toEqual(
+          new AlreadySpent(),
+        );
+      }),
+    ).pipe(Effect.provide(database)),
+  );
+
+  it.effect("keeps a no as it is when its question is closed with its row", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const store = yield* approvalRequests;
+        const { approval } = yield* answered(store, firstRun, "no");
+        yield* approval.close(Effect.void);
+
+        expect(yield* ledger).toEqual([["run-1", "no"]]);
+      }),
+    ).pipe(Effect.provide(database)),
+  );
+
+  it.effect("moves no row when the row that records the move cannot be written", () =>
     Effect.gen(function* () {
       const store = yield* approvalRequests;
-      const { approval } = yield* askAndAnswer(store, firstRun, "yes");
 
-      expect(yield* ledger).toEqual([["run-1", "lapsed"]]);
-      expect(yield* Effect.flip(approval.spend(removeNotes))).toEqual(new AlreadySpent());
+      expect(
+        yield* Effect.flip(Effect.scoped(store.open(firstRun, rule, removeNotes, () => failing))),
+      ).toBe("disk full");
+      expect(yield* ledger).toEqual([]);
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const approval = yield* opened(store, firstRun);
+
+          const waiting = yield* Effect.forkChild(
+            approval.ask("Run `rm notes.txt`?", "10 minutes", () => failing),
+          );
+
+          yield* untilShown(store.requests);
+          yield* store.requests.answer(conversation, approval.id, "yes");
+
+          expect(yield* Effect.flip(Fiber.join(waiting))).toBe("disk full");
+          expect(yield* ledger).toEqual([["run-1", "asked"]]);
+
+          expect(yield* Effect.flip(approval.close(failing))).toBe("disk full");
+          expect(yield* ledger).toEqual([["run-1", "asked"]]);
+        }),
+      );
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const { approval } = yield* answered(store, secondRun, "yes");
+
+          expect(yield* Effect.flip(approval.spend(removeNotes, failing))).toBe("disk full");
+          expect(yield* approval.spent).toBe(false);
+          expect(yield* ledger).toEqual([
+            ["run-1", "asked"],
+            ["run-2", "yes"],
+          ]);
+        }),
+      );
     }).pipe(Effect.provide(database)),
   );
 
@@ -242,7 +329,7 @@ describe("approvalRequests", () => {
         by: "person",
       });
 
-      expect(yield* Effect.flip(Effect.scoped(store.open(firstRun, rule, removeNotes)))).toEqual(
+      expect(yield* Effect.flip(Effect.scoped(opened(store, firstRun)))).toEqual(
         new DeclinedEarlier(),
       );
       expect(yield* shownIn(store.requests)).toEqual(Option.none());
@@ -259,7 +346,7 @@ describe("approvalRequests", () => {
 
       yield* Effect.scoped(
         Effect.gen(function* () {
-          yield* store.open(firstRun, rule, removeNotes);
+          yield* opened(store, firstRun);
 
           expect(yield* Effect.flip(store.mayAsk(firstRun, "another-rule"))).toEqual(
             new AlreadyWaiting(),
@@ -267,11 +354,11 @@ describe("approvalRequests", () => {
         }),
       );
 
-      yield* askAndAnswer(store, firstRun, "no");
+      yield* askAndAnswer(store, secondRun, "no");
 
-      expect(yield* Effect.flip(store.mayAsk(firstRun, rule))).toEqual(new DeclinedEarlier());
+      expect(yield* Effect.flip(store.mayAsk(secondRun, rule))).toEqual(new DeclinedEarlier());
 
-      yield* store.mayAsk(secondRun, rule);
+      yield* store.mayAsk(firstRun, rule);
     }).pipe(Effect.provide(database)),
   );
 
@@ -281,15 +368,15 @@ describe("approvalRequests", () => {
 
       yield* Effect.scoped(
         Effect.flatMap(answered(store, firstRun, "yes"), ({ approval }) =>
-          approval.spend(removeNotes),
+          approval.spend(removeNotes, Effect.void),
         ),
       );
 
       const restarted = yield* approvalRequests;
 
-      expect(
-        yield* Effect.flip(Effect.scoped(restarted.open(secondRun, rule, removeNotes))),
-      ).toEqual(new OutcomeUnknown());
+      expect(yield* Effect.flip(Effect.scoped(opened(restarted, secondRun)))).toEqual(
+        new OutcomeUnknown(),
+      );
       expect((yield* askAndAnswer(restarted, secondRun, "no")).answered.answer).toBe("no");
       expect(yield* ledger).toEqual([
         ["run-1", "told"],
@@ -311,18 +398,18 @@ describe("approvalRequests", () => {
           run: firstRun.run,
         };
 
-        const waiting = yield* store.open(elsewhere, rule, removeNotes);
+        const waiting = yield* opened(store, elsewhere);
         yield* asking(waiting);
         yield* untilShown(store.requests, elsewhere.conversation);
 
         const restarted = yield* approvalRequests;
         const closed = { bot, tool: "run", rule };
 
-        expect(yield* restarted.closeLeftOpen).toEqual([
+        expect(yield* restarted.closeLeftOpen(written)).toEqual([
           { approval: approved.id, ...closed, answered: true },
           { approval: waiting.id, ...closed, answered: false },
         ]);
-        expect(yield* restarted.closeLeftOpen).toEqual([]);
+        expect(yield* restarted.closeLeftOpen(written)).toEqual([]);
         expect(yield* ledger).toEqual([
           ["run-1", "no"],
           ["run-2", "lapsed"],
@@ -330,6 +417,23 @@ describe("approvalRequests", () => {
         ]);
       }),
     ).pipe(Effect.provide(database)),
+  );
+
+  it.effect("keeps a question left open whose rows cannot be written for the next start-up", () =>
+    Effect.gen(function* () {
+      const store = yield* approvalRequests;
+      const approval = yield* Effect.scoped(Effect.map(opened(store, firstRun), ({ id }) => id));
+
+      const restarted = yield* approvalRequests;
+
+      expect(yield* restarted.closeLeftOpen(() => failing)).toEqual([]);
+      expect(yield* ledger).toEqual([["run-1", "asked"]]);
+
+      expect(yield* restarted.closeLeftOpen(written)).toEqual([
+        { approval, bot, tool: "run", rule, answered: false },
+      ]);
+      expect(yield* ledger).toEqual([["run-1", "no"]]);
+    }).pipe(Effect.provide(database)),
   );
 
   it.effect("keeps every row moving forward only, and never deletes one", () =>
@@ -358,7 +462,7 @@ describe("approvalRequests", () => {
     Effect.gen(function* () {
       const store = yield* approvalRequests;
       const scope = yield* Scope.make();
-      yield* Scope.provide(store.open(firstRun, rule, removeNotes), scope);
+      yield* Scope.provide(opened(store, firstRun), scope);
       yield* Scope.close(scope, Exit.void);
 
       expect((yield* askAndAnswer(store, firstRun, "yes")).answered.answer).toBe("yes");

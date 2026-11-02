@@ -9,6 +9,7 @@ import {
 } from "@aobot/domain";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Option, Result, Stream } from "effect";
+import { SqlClient } from "effect/sql";
 import { TestClock } from "effect/testing";
 import { recordedSpans } from "../../shared/testing/recorded-spans.ts";
 import type { ToolFailed } from "../../shared/tool-result.ts";
@@ -97,6 +98,30 @@ const askAndAnswer = (
 
     return { shown, result: yield* Fiber.join(acting) };
   });
+
+/** Makes every audit row matching the SQL condition `when` fail to be written, as a full disk would. */
+const failAuditRowsWhere = (when: string) =>
+  SqlClient.SqlClient.use((sql) =>
+    sql.unsafe(`CREATE TRIGGER fail_audit BEFORE INSERT ON audit_rows WHEN ${when}
+      BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`),
+  );
+
+const healAuditRows = SqlClient.SqlClient.use((sql) => sql.unsafe("DROP TRIGGER fail_audit"));
+
+/** Each ledger row's state, oldest first. */
+const ledger = SqlClient.SqlClient.use((sql) =>
+  Effect.map(sql`SELECT state FROM approvals ORDER BY rowid`, (rows) =>
+    rows.map((row) => row["state"]),
+  ),
+);
+
+/** Each row of the trail that names `approval`, as `action · decision` and its reason. */
+const rowsOf = (approval: string) =>
+  Effect.map(decodedTrail, (trail) =>
+    trail
+      .filter(([, detail]) => detail.approval === approval)
+      .map(([row, detail]) => [row, detail.reason]),
+  );
 
 describe("Gateway asking the person", () => {
   it.effect("runs an action once its person says yes, once, with each step in the trail", () =>
@@ -650,6 +675,95 @@ ask:
       );
 
       expect((yield* decodedTrail).map(([row]) => row)).toEqual(["run · allow", "run · succeeded"]);
+    }).pipe(Effect.provide(database)),
+  );
+});
+
+describe("Gateway asking the person, when a row cannot be written", () => {
+  it.effect("keeps a question open in the ledger until a start-up can close it in the trail", () =>
+    Effect.gen(function* () {
+      const shown = yield* Effect.gen(function* () {
+        yield* Gateway.use((gateway) =>
+          Effect.forkDetach(Effect.result(gateway.act(firstRun, removeNotes))),
+        );
+
+        return yield* untilShown;
+      }).pipe(Effect.provide(startGateway(shell().layer, askBeforeRm)));
+
+      const restart = Effect.provide(Effect.void, startGateway(shell().layer, askBeforeRm));
+
+      yield* failAuditRowsWhere("NEW.initiator_kind = 'deployment'");
+      yield* restart;
+      yield* healAuditRows;
+
+      expect(yield* ledger).toEqual(["asked"]);
+
+      yield* restart;
+      yield* restart;
+
+      expect(yield* ledger).toEqual(["no"]);
+      expect(yield* rowsOf(shown.approval)).toEqual([
+        ["run · ask", undefined],
+        ["approval.answered · answered", undefined],
+        ["run · deny", "the server stopped"],
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("refuses a yes whose allow row cannot be written, and closes it in the trail", () =>
+    Effect.gen(function* () {
+      const computer = shell();
+
+      const { shown, result } = yield* Effect.gen(function* () {
+        yield* failAuditRowsWhere("NEW.decision = 'allow'");
+        const asked = yield* askAndAnswer(firstRun, removeNotes, "yes");
+        yield* healAuditRows;
+
+        return asked;
+      }).pipe(Effect.provide(startGateway(computer.layer, askBeforeRm)));
+
+      expect(refusalOf(result)).toBe(
+        "run did not run: it could not be recorded, and nothing runs unrecorded.",
+      );
+      expect(computer.actions).toEqual([]);
+      expect(yield* ledger).toEqual(["lapsed"]);
+      expect(yield* rowsOf(shown.approval)).toEqual([
+        ["run · ask", undefined],
+        ["approval.answered · answered", undefined],
+        ["run · deny", "not recorded"],
+      ]);
+
+      const next = yield* askAndAnswer(inRun("run-2"), removeNotes, "no").pipe(
+        Effect.provide(startGateway(computer.layer, askBeforeRm)),
+      );
+
+      expect(refusalOf(next.result)).toContain("run did not run: your person said no.");
+      expect(computer.actions).toEqual([]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("refuses an answer whose row cannot be written, and closes it in the trail", () =>
+    Effect.gen(function* () {
+      const computer = shell();
+
+      const { shown, result } = yield* Effect.gen(function* () {
+        yield* failAuditRowsWhere("NEW.action = 'approval.answered'");
+        const asked = yield* askAndAnswer(firstRun, removeNotes, "no");
+        yield* healAuditRows;
+
+        return asked;
+      }).pipe(Effect.provide(startGateway(computer.layer, askBeforeRm)));
+
+      yield* Effect.provide(Effect.void, startGateway(computer.layer, askBeforeRm));
+
+      expect(refusalOf(result)).toBe(
+        "run did not run: it could not be recorded, and nothing runs unrecorded.",
+      );
+      expect(yield* ledger).toEqual(["lapsed"]);
+      expect(yield* rowsOf(shown.approval)).toEqual([
+        ["run · ask", undefined],
+        ["run · deny", "not recorded"],
+      ]);
     }).pipe(Effect.provide(database)),
   );
 });
