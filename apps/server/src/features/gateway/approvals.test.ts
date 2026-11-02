@@ -371,6 +371,34 @@ describe("approvalRequests", () => {
     }).pipe(Effect.provide(database)),
   );
 
+  it.effect("records a no to another card's question, which refuses its rule for the run", () =>
+    Effect.gen(function* () {
+      const store = yield* approvalRequests;
+
+      yield* Effect.scoped(
+        Effect.flatMap(store.hold(firstRun, rule), (held) =>
+          held.declined(bot, "request_secret", Effect.void),
+        ),
+      );
+
+      expect(yield* ledger).toEqual([["run-1", "no"]]);
+      expect(yield* Effect.flip(Effect.scoped(opened(store, firstRun)))).toEqual(
+        new DeclinedEarlier(),
+      );
+
+      expect(
+        yield* Effect.flip(
+          Effect.scoped(
+            Effect.flatMap(store.hold(secondRun, rule), (held) =>
+              held.declined(bot, "request_secret", failing),
+            ),
+          ),
+        ),
+      ).toBe("disk full");
+      expect(yield* ledger).toEqual([["run-1", "no"]]);
+    }).pipe(Effect.provide(database)),
+  );
+
   it.effect("tells of a yes an earlier run spent and never finished once, then asks again", () =>
     Effect.gen(function* () {
       const store = yield* approvalRequests;

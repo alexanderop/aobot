@@ -307,6 +307,57 @@ ask:
     }).pipe(Effect.provide(database)),
   );
 
+  it.effect.each([
+    [
+      "declines it",
+      (shown: PendingSecret) => answerTo(shown, SecretAnswer.cases.Declined.make({})),
+    ],
+    ["does not answer it in time", () => TestClock.adjust("10 minutes")],
+  ] as const)(
+    "takes a person who %s under an ask rule as a no to that rule for the rest of the run",
+    ([, unanswered]) =>
+      Effect.gen(function* () {
+        const computer = signInComputer();
+
+        const [secretAgain, typing, shownAfter, nextRun] = yield* Effect.gen(function* () {
+          yield* Gateway.use((gateway) => gateway.act(inTurn, { action: "snapshot" }));
+
+          const asking = yield* Gateway.use((gateway) =>
+            Effect.forkChild(Effect.result(gateway.act(inTurn, askForPassword))),
+          );
+
+          yield* unanswered(yield* untilShown);
+          yield* Fiber.join(asking);
+
+          const secretAgain = yield* Gateway.use((gateway) =>
+            Effect.flip(gateway.act(inTurn, askForPassword)),
+          );
+
+          const typing = yield* Gateway.use((gateway) =>
+            Effect.flip(gateway.act(inTurn, { action: "type", ref: "e3", text: "guess" })),
+          );
+
+          const shownAfter = [yield* shownNow, yield* approvalShownNow];
+
+          const askingNextRun = yield* Gateway.use((gateway) =>
+            Effect.forkChild(Effect.result(gateway.act(inRun("run-2"), askForPassword))),
+          );
+
+          const nextRun = yield* untilShown;
+          yield* answerTo(nextRun, supplied);
+          yield* Fiber.join(askingNextRun);
+
+          return [secretAgain, typing, shownAfter, nextRun] as const;
+        }).pipe(Effect.provide(startGateway(computer.layer, askBeforePassword)));
+
+        expect(secretAgain.message).toBe(declinedEarlier("request_secret"));
+        expect(typing.message).toBe(declinedEarlier("type"));
+        expect(shownAfter).toEqual([Option.none(), Option.none()]);
+        expect(nextRun.field).toBe("the password for shop.example");
+        expect(computer.actions.map(({ action }) => action)).toEqual(["snapshot", "type_secret"]);
+      }).pipe(Effect.provide(database)),
+  );
+
   it.effect("takes no answer for another request than the one waiting", () =>
     Effect.gen(function* () {
       const computer = signInComputer();

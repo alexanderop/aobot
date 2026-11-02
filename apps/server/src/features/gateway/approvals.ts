@@ -146,6 +146,19 @@ export interface OpenApproval {
   readonly close: <E>(refused: Effect.Effect<unknown, E>) => Effect.Effect<void, E | LedgerFailed>;
 }
 
+/** A conversation held for a card that asks the person in place of an approval card, from `hold`. */
+export interface HeldQuestion {
+  /**
+  Records the person's no to that card, which `bot` put up with `tool`, with `recorded`, its row, so its
+  ask rule refuses for the rest of the run as after a no to an approval card.
+  */
+  readonly declined: <E>(
+    bot: BotId,
+    tool: ToolName,
+    recorded: Effect.Effect<unknown, E>,
+  ) => Effect.Effect<void, E | LedgerFailed>;
+}
+
 /**
 A question an earlier run left open, as when the server stopped while it waited for the person or before
 its yes was spent: the Bot it was asked for, the tool and the ask rule, and whether it was answered.
@@ -236,11 +249,11 @@ export const approvalRequests = Effect.gen(function* () {
       Effect.mapError(ledgerFailed),
     );
 
-  /** Writes the ledger row of `question`, as asked. */
-  const insert = ({ id, turn, bot, tool, rule }: Question) =>
+  /** Writes the ledger row of `question`, in `state`. */
+  const insert = ({ id, turn, bot, tool, rule }: Question, state: "asked" | "no") =>
     sql`
       INSERT INTO approvals (id, conversation_id, run_id, bot_id, tool, rule, state)
-      VALUES (${id}, ${turn.conversation}, ${turn.run}, ${bot}, ${tool}, ${rule}, 'asked')
+      VALUES (${id}, ${turn.conversation}, ${turn.run}, ${bot}, ${tool}, ${rule}, ${state})
     `.pipe(Effect.asVoid, Effect.mapError(ledgerFailed));
 
   /** Takes the question `id` out of `conversation`, when it is still there. */
@@ -336,8 +349,16 @@ export const approvalRequests = Effect.gen(function* () {
   const hold = (
     turn: TurnRef,
     rule: string,
-  ): Effect.Effect<void, AlreadyWaiting | DeclinedEarlier | LedgerFailed, Scope.Scope> =>
-    Effect.andThen(holdConversation(turn.conversation), notDeclined(turn, rule));
+  ): Effect.Effect<HeldQuestion, AlreadyWaiting | DeclinedEarlier | LedgerFailed, Scope.Scope> =>
+    Effect.gen(function* () {
+      const { id } = yield* holdConversation(turn.conversation);
+      yield* notDeclined(turn, rule);
+
+      return {
+        declined: (bot, tool, recorded) =>
+          inOneWrite(Effect.andThen(insert({ id, turn, bot, tool, rule }, "no"), recorded)),
+      };
+    });
 
   /**
   Holds a question about `asked`, which the ask rule `rule` asks about, for `turn`'s conversation until the
@@ -360,7 +381,7 @@ export const approvalRequests = Effect.gen(function* () {
 
       const tool = asked.action.action;
       const question: Question = { id, turn, bot: asked.bot, tool, rule };
-      yield* inOneWrite(Effect.andThen(insert(question), recorded(id)));
+      yield* inOneWrite(Effect.andThen(insert(question, "asked"), recorded(id)));
 
       const digest = digestOf(asked);
       const spent = yield* Ref.make(false);

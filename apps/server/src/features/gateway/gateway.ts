@@ -61,6 +61,7 @@ import {
   ApprovalRequests,
   approvalRequests,
   type DeclinedEarlier,
+  type HeldQuestion,
   type LeftOpen,
   type LedgerFailed,
   type OpenApproval,
@@ -1160,15 +1161,15 @@ export const gatewayLayer = Layer.effectContext(
     the host of its page, and it waits for their answer outside the door, so a person can take the
     computer meanwhile. Its row's outcome says how the person answered, and what they typed is forwarded
     as `type_secret`, through the door again. Under an ask rule, the secret card is the person's question
-    in the conversation of `turn`: it holds that conversation as an approval card would, and is refused
-    after a no to that rule earlier in its run.
+    in the conversation of `turn`: it holds that conversation as an approval card would, and their no to
+    it, or no answer, is a no to that rule for the rest of the run.
     */
     const askForSecret = (bot: BotId, turn: Option.Option<TurnRef>, ref: string, field: string) =>
       Effect.scoped(
         Effect.gen(function* () {
           const open = yield* secrets.open(bot);
 
-          const { action, host, allowRow, allowRule } = yield* doors.admit(
+          const { action, host, allowRow, allowRule, question } = yield* doors.admit(
             Effect.gen(function* () {
               const asked = yield* onElement(bot, ref, (target): SecretRequest => ({
                 action: "request_secret",
@@ -1185,15 +1186,18 @@ export const gatewayLayer = Layer.effectContext(
               const allowed = yield* allowedBy(bot, asked.action, asked.host);
               const askRule = Option.map(allowed.ask, ({ rule }) => rule);
 
-              if (Option.isSome(askRule) && Option.isSome(turn)) {
-                yield* approvals.hold(turn.value, askRule.value).pipe(
-                  denyRefusals("request_secret", {
-                    bot,
-                    ...auditDetail(asked.action),
-                    rule: askRule.value,
-                  }),
-                );
-              }
+              const question =
+                Option.isSome(askRule) && Option.isSome(turn)
+                  ? Option.some(
+                      yield* approvals.hold(turn.value, askRule.value).pipe(
+                        denyRefusals("request_secret", {
+                          bot,
+                          ...auditDetail(asked.action),
+                          rule: askRule.value,
+                        }),
+                      ),
+                    )
+                  : Option.none<HeldQuestion>();
 
               // The secret card already asks the person, so an ask rule only names itself in the row.
               const allowRow = yield* allow(
@@ -1206,7 +1210,7 @@ export const gatewayLayer = Layer.effectContext(
                 }),
               );
 
-              return { ...asked, allowRow, allowRule: allowed.rule };
+              return { ...asked, allowRow, allowRule: allowed.rule, question };
             }),
             { queued: false },
           );
@@ -1218,7 +1222,24 @@ export const gatewayLayer = Layer.effectContext(
 
           const unanswered = (reason: string, message: string) =>
             Effect.annotateCurrentSpan({ "gateway.outcome": "failed" }).pipe(
-              Effect.andThen(rows.settle(allowRow, "failed", { bot, reason })),
+              Effect.andThen(
+                Option.match(question, {
+                  onNone: () => rows.settle(allowRow, "failed", { bot, reason }),
+                  onSome: (held) =>
+                    held
+                      .declined(
+                        bot,
+                        "request_secret",
+                        rows.outcome(allowRow, "failed", { bot, reason }),
+                      )
+                      .pipe(
+                        Effect.ignore({
+                          log: "Warn",
+                          message: "A declined secret could not be recorded",
+                        }),
+                      ),
+                }),
+              ),
               Effect.andThen(Effect.fail(new ToolFailed({ message }))),
             );
 
