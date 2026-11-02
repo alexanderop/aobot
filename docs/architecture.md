@@ -497,15 +497,16 @@ class ChatClient extends AtomRpc.Service<ChatClient>()("ChatClient", { group: Ch
 const conversation = Atom.family((id: ConversationId) => /* fold ChatEvents into one ordered transcript and a status */)
 ```
 
-| Hook                       | Shaped like CopilotKit's             | What it gives a component                                                                                                                     | From |
-| -------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
-| `useConversation(id, bot)` | `useAgent`                           | The conversation's own `bot`, `transcript` (messages and tool calls in order), `isRunning`, `usesComputer`, `unsent`, `send`, `stop`          | E0-1 |
-| `useToolCallRenderer()`    | `useRenderTool`, `useRenderToolCall` | A registry from tool name to a component that draws one tool call in each of its states                                                       | E1-1 |
-| `useLiveScreen()`          | (none)                               | The latest screen frame, none while the screen is blank                                                                                       | E1-4 |
-| `useControl()`             | (none)                               | Who holds the computer every Bot shares, why the last take, click or hand back failed, `takeControl`, `handBack`, `click`                     | E1-5 |
-| `useAttachments(id, send)` | (none)                               | The files picked in the conversation's composer and how each upload went, `attach`, `dismiss`, and `send`, which names the files that arrived | E1-6 |
-| `useBots()`                | (none)                               | The Bots the server knows, as `bots.yaml` lists them, for the sidebar                                                                         | E2-1 |
-| `useSelection()`           | (none)                               | The Bot and conversation the page has open, as the server confirmed it, and `pick` to open another Bot                                        | E2-1 |
+| Hook                          | Shaped like CopilotKit's             | What it gives a component                                                                                                                                                                    | From |
+| ----------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| `useConversation(id, bot)`    | `useAgent`                           | The conversation's own `bot`, `transcript` (messages and tool calls in order), `isRunning`, `usesComputer`, `unsent`, `send`, `stop`                                                         | E0-1 |
+| `useToolCallRenderer()`       | `useRenderTool`, `useRenderToolCall` | A registry from tool name to a component that draws one tool call in each of its states                                                                                                      | E1-1 |
+| `useLiveScreen()`             | (none)                               | The latest screen frame, none while the screen is blank                                                                                                                                      | E1-4 |
+| `useControl()`                | (none)                               | Who holds the computer every Bot shares, why the last take, click or hand back failed, `takeControl`, `handBack`, `click`                                                                    | E1-5 |
+| `useAttachments(id, send)`    | (none)                               | The files picked in the conversation's composer and how each upload went, `attach`, `dismiss`, and `send`, which names the files that arrived                                                | E1-6 |
+| `useBots()`                   | (none)                               | The Bots the server knows, as `bots.yaml` lists them, for the sidebar                                                                                                                        | E2-1 |
+| `useSelection()`              | (none)                               | The Bot and conversation the page has open, as the server confirmed it, and `pick` to open another Bot                                                                                       | E2-1 |
+| `useSecretRequest(call, bot)` | `useHumanInTheLoop`                  | What a `request_secret` card shows, with the request `Secret.pending` streams for the Bot, `supply`, which sends the typed secret over `Secret.answer` with that request's id, and `decline` | E2-3 |
 
 The page opens the Bot and the conversation the URL names as `?bot=<id>&c=<id>`, or the first Bot in
 `bots.yaml`; a `bot` that is no Bot the server knows, or no Bot id at all, opens the first Bot and drops

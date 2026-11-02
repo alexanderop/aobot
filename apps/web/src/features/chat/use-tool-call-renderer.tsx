@@ -1,12 +1,16 @@
-import { WorkspacePath } from "@aobot/domain";
+import { type BotId, WorkspacePath } from "@aobot/domain";
 import { Option, Schema } from "effect";
 import type { ReactNode } from "react";
 import { ToolCallStatus } from "./conversation-state.ts";
 import type { ToolCall } from "./conversation-state.ts";
 import { FileChip } from "./FileChip.tsx";
+import { SecretRequestCall } from "./SecretRequestCall.tsx";
 
-/** Draws one tool call in each of its states. */
-export type ToolCallRenderer = (props: { readonly call: ToolCall }) => ReactNode;
+/** Draws one tool call of the conversation's `bot` in each of its states. */
+export type ToolCallRenderer = (props: {
+  readonly call: ToolCall;
+  readonly bot: BotId;
+}) => ReactNode;
 
 const decodeNavigateArgs = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ url: Schema.String })),
@@ -259,6 +263,7 @@ const renderers: ReadonlyMap<string, ToolCallRenderer> = new Map([
   ["read_file", ReadFileCall],
   ["write_file", WriteFileCall],
   ["list_files", ListFilesCall],
+  ["request_secret", SecretRequestCall],
 ]);
 
 function rendererFor(name: string): ToolCallRenderer {

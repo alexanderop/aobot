@@ -60,6 +60,15 @@ in the app, previews and unread dots for E3-2, and the bottom bar for people (E3
 - **Approval card:** a grey card with the question in muted bold text and one or more answer rows, each
   with a lettered key (`A`, `B`) in an accent square. Choosing one sends it as your reply and writes an
   audit row.
+- **Secret entry:** when a Bot asks for a password with `request_secret`, its card says what it asks for
+  in the Bot's words, on the host of the page the server read ("Asks for the password on
+  shop.example"), so a Bot cannot pass one site's field off as another's. Until the server shows the
+  request, the card says only what the Bot asked for, with nothing to type. Then it has a password input on
+  `--row-active`, a Supply pill in the accent colour and a Decline pill, and a muted line saying the
+  secret goes straight to the Bot's computer. The buttons are disabled while the answer is on its way,
+  and why the server refused it shows in `--danger`. Once answered the card says "Supplied …" or
+  "Declined to give …", and "Supplied …, not typed" when the computer then typed nothing, as when a
+  person took control; never the value.
 - **Composer:** a full-width rounded bar at the bottom: `＋` for attachments, placeholder
   "Message <Bot name>", a microphone button, and a round accent voice button.
 - **Attachments:** a file picked with `＋` uploads into the Bot's workspace at once and shows above the
@@ -119,5 +128,6 @@ Dark is the main theme. A light theme is a later ticket.
 | [E1-5](backlog/E1-a-computer/E1-5-take-control-and-hand-back.md)                    | Take control rail, control bar                  |
 | [E1-6](backlog/E1-a-computer/E1-6-files-in-and-out-of-the-workspace.md)             | Attachment chips, file chip                     |
 | [E2-1](backlog/E2-roles-and-guardrails/E2-1-bots-from-a-file-with-granted-tools.md) | Sidebar with groups, pinned Bots, avatars       |
+| [E2-3](backlog/E2-roles-and-guardrails/E2-3-never-record-secrets.md)                | Secret entry card                               |
 | [E2-5](backlog/E2-roles-and-guardrails/E2-5-ask-before-risky-actions.md)            | Approval card                                   |
 | [E3-2](backlog/E3-people/E3-2-my-conversations-only-mine.md)                        | Last-message previews and unread dots           |
