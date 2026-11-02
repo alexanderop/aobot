@@ -653,7 +653,10 @@ describe("Gateway refs", () => {
           )
         `;
         yield* sql`INSERT INTO computer_snapshot (id, snapshot, read_by) VALUES (1, ${form}, 'assistant')`;
-        yield* sql`DELETE FROM gateway_migrations WHERE name = 'keep_snapshot_url'`;
+        yield* sql`DROP TABLE approvals`;
+        yield* sql`
+          DELETE FROM gateway_migrations WHERE name IN ('keep_snapshot_url', 'create_approvals')
+        `;
 
         yield* migrateGateway;
 
@@ -1422,9 +1425,15 @@ describe("Gateway control", () => {
       yield* sql`
         CREATE TABLE bot_snapshots (bot_id text PRIMARY KEY, snapshot text NOT NULL, updated_at text NOT NULL)
       `;
+      yield* sql`DROP TABLE approvals`;
       yield* sql`
         DELETE FROM gateway_migrations
-        WHERE name IN ('share_computer_control', 'share_computer_snapshot', 'keep_snapshot_url')
+        WHERE name IN (
+          'share_computer_control',
+          'share_computer_snapshot',
+          'keep_snapshot_url',
+          'create_approvals'
+        )
       `;
 
       yield* migrateGateway;

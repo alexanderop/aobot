@@ -76,6 +76,45 @@ const keepSnapshotUrl = Effect.gen(function* () {
   yield* sql`ALTER TABLE computer_snapshot ADD COLUMN url text NOT NULL DEFAULT ''`;
 });
 
+// The ledger of every question a rule put to a person. A row only moves forward, one compare-and-set
+// UPDATE at a time, so an approved action is spent once and a restart can tell it was started:
+// asked -> yes | no, yes -> spent, spent -> finished | told. No action, digest or typed text is kept.
+const createApprovals = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+
+  yield* sql`
+    CREATE TABLE approvals (
+      id text PRIMARY KEY,
+      conversation_id text NOT NULL,
+      run_id text NOT NULL,
+      rule text NOT NULL,
+      state text NOT NULL CHECK (state IN ('asked', 'yes', 'no', 'spent', 'finished', 'told')),
+      updated_at text NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    )
+  `;
+
+  yield* sql`CREATE INDEX approvals_by_rule ON approvals (conversation_id, rule, state)`;
+
+  yield* sql`
+    CREATE TRIGGER approvals_only_forward BEFORE UPDATE ON approvals
+    WHEN NEW.id IS NOT OLD.id
+      OR NEW.conversation_id IS NOT OLD.conversation_id
+      OR NEW.run_id IS NOT OLD.run_id
+      OR NEW.rule IS NOT OLD.rule
+      OR NOT (
+        (OLD.state = 'asked' AND NEW.state IN ('yes', 'no'))
+        OR (OLD.state = 'yes' AND NEW.state = 'spent')
+        OR (OLD.state = 'spent' AND NEW.state IN ('finished', 'told'))
+      )
+    BEGIN SELECT RAISE(ABORT, 'an approval only moves forward'); END
+  `;
+
+  yield* sql`
+    CREATE TRIGGER approvals_refuse_delete BEFORE DELETE ON approvals
+    BEGIN SELECT RAISE(ABORT, 'approvals cannot be deleted'); END
+  `;
+});
+
 /** Brings the gateway's tables up to date. Safe to run at every boot. */
 export const migrateGateway = SqliteMigrator.run({
   table: "gateway_migrations",
@@ -85,5 +124,6 @@ export const migrateGateway = SqliteMigrator.run({
     "0003_share_computer_control": shareComputerControl,
     "0004_share_computer_snapshot": shareComputerSnapshot,
     "0005_keep_snapshot_url": keepSnapshotUrl,
+    "0006_create_approvals": createApprovals,
   }),
 });
