@@ -384,7 +384,7 @@ const notAsked = {
   },
   OutcomeUnknown: {
     reason: "outcome unknown",
-    why: "an action like it that your person approved was started before the server stopped; whether it happened is unknown, and it was not run again. Check, for example with ls, before asking again",
+    why: "an action like it that your person approved was started, and its turn ended before you were told what became of it, so whether it happened is unknown, and it was not run again. Check what became of it, for example with ls or a snapshot, before asking again",
   },
   ActionChanged: {
     reason: "action changed",

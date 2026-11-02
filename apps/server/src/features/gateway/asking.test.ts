@@ -70,6 +70,10 @@ const shownNow = ApprovalRequests.use((requests) =>
 const answerTo = (shown: PendingApproval, answer: ApprovalAnswer) =>
   ApprovalRequests.use((requests) => requests.answer(conversation, shown.approval, answer));
 
+/** What the model reads of an action like one approved earlier whose outcome it was never told. */
+const outcomeUnknown =
+  "run did not run: an action like it that your person approved was started, and its turn ended before you were told what became of it, so whether it happened is unknown, and it was not run again. Check what became of it, for example with ls or a snapshot, before asking again.";
+
 /** What the model read of a call that was refused, or `""` for one that ran. */
 const refusalOf = Result.match({
   onSuccess: () => "",
@@ -527,9 +531,7 @@ ask:
         }).pipe(Effect.provide(startGateway(computer.layer, askBeforeRm)));
 
         expect(hanging.actions).toEqual([removeNotes]);
-        expect(told.message).toBe(
-          "run did not run: an action like it that your person approved was started before the server stopped; whether it happened is unknown, and it was not run again. Check, for example with ls, before asking again.",
-        );
+        expect(told.message).toBe(outcomeUnknown);
         expect(shownAfter).toEqual(Option.none());
         expect(refusalOf(asked.result)).toBe("");
         expect(computer.actions).toEqual([removeNotes]);
@@ -545,6 +547,30 @@ ask:
           ["run · succeeded", undefined],
         ]);
       }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("tells the next run an approved action's outcome is unknown after a stop", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+
+      const computer = fakeComputers({
+        run: () => Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+      });
+
+      const told = yield* Effect.gen(function* () {
+        const acting = yield* actInBackground(firstRun, removeNotes);
+        yield* answerTo(yield* untilShown, "yes");
+        yield* Deferred.await(started);
+        yield* Fiber.interrupt(acting);
+
+        return yield* Gateway.use((gateway) =>
+          Effect.flip(gateway.act(inRun("run-2"), { action: "run", command: "rm todo.txt" })),
+        );
+      }).pipe(Effect.provide(startGateway(computer.layer, askBeforeRm)));
+
+      expect(told.message).toBe(outcomeUnknown);
+      expect(computer.actions).toEqual([removeNotes]);
+    }).pipe(Effect.provide(database)),
   );
 
   it.effect("answers no to a question a stopped server left open, and refuses it, once", () =>
