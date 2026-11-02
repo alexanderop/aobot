@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
@@ -272,12 +273,18 @@ describe("Gateway", () => {
       const sql = yield* SqlClient.SqlClient;
       const computer = fakeComputers({ browse: exampleDomain });
 
+      const tracing = recordedSpans();
+
       const error = yield* Gateway.use((gateway) =>
         sql`DROP TABLE audit_rows`.pipe(Effect.andThen(Effect.flip(gateway.act(bot, navigate)))),
-      ).pipe(Effect.provide(startGateway(computer.layer)));
+      ).pipe(Effect.provide(startGateway(computer.layer)), Effect.provide(tracing.layer));
 
       expect(error).toBeInstanceOf(ToolFailed);
       expect(computer.actions).toEqual([]);
+
+      const span = tracing.spans.find((candidate) => candidate.name === "Gateway.act");
+      expect(span?.attributes.has("gateway.decision")).toBe(false);
+      expect(span?.attributes.has("gateway.rule")).toBe(false);
     }).pipe(Effect.provide(database)),
   );
 
@@ -668,36 +675,34 @@ describe("Gateway refs", () => {
   );
 
   it.effect(
-    "keeps the page a Bot read last, and that it read it, once every Bot shares the one snapshot",
+    'forgets a snapshot stored before it kept its address, so no ref is judged on the host ""',
     () =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         yield* sql`DROP TABLE computer_snapshot`;
         yield* sql`
-        CREATE TABLE bot_snapshots (bot_id text PRIMARY KEY, snapshot text NOT NULL, updated_at text NOT NULL)
-      `;
-        yield* sql`
-        INSERT INTO bot_snapshots VALUES
-          ('assistant', ${form}, '2026-10-01T09:00:00.000Z'),
-          ('researcher', ${sent}, '2026-10-01T09:05:00.000Z')
-      `;
-        yield* sql`
-          DELETE FROM gateway_migrations WHERE name IN ('share_computer_snapshot', 'keep_snapshot_url')
+          CREATE TABLE computer_snapshot (
+            id integer PRIMARY KEY CHECK (id = 1),
+            snapshot text NOT NULL,
+            read_by text NOT NULL,
+            updated_at text NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+          )
         `;
+        yield* sql`INSERT INTO computer_snapshot (id, snapshot, read_by) VALUES (1, ${form}, 'assistant')`;
+        yield* sql`DELETE FROM gateway_migrations WHERE name = 'keep_snapshot_url'`;
 
         yield* migrateGateway;
 
-        const computer = pages(sent);
+        expect(yield* sql`SELECT * FROM computer_snapshot`).toEqual([]);
 
-        const [clicked, refused] = yield* Gateway.use((gateway) =>
-          Effect.all([
-            gateway.act(otherBot, { action: "click", ref: "e4" }),
-            Effect.flip(gateway.act(bot, { action: "click", ref: "e1" })),
-          ]),
+        const computer = pages(form);
+
+        const refused = yield* Gateway.use((gateway) =>
+          Effect.flip(gateway.act(bot, { action: "click", ref: "e3" })),
         ).pipe(Effect.provide(startGateway(computer.layer)));
 
-        expect(clicked).toContain('heading "Thank you"');
-        expect(refused.message).toContain("the page changed since you last read it");
+        expect(refused.message).toContain("e3 is not a ref in the page's latest snapshot");
+        expect(computer.actions).toEqual([]);
       }).pipe(Effect.provide(database)),
   );
 });
@@ -2124,13 +2129,10 @@ describe("a person's file transfers", () => {
   );
 });
 
-const shippedRules = `deny:
-  - name: no-rm-rf
-    when: tool.name == "run" && command.contains("rm -rf")
-allow:
-  - name: granted-tools
-    when: "true"
-`;
+/** The policy the root `rules.yaml` holds, which the server starts with. */
+const shippedRules = policyFrom(
+  readFileSync(new URL("../../../../../rules.yaml", import.meta.url), "utf8"),
+);
 
 const removeX = { action: "run", command: "rm -rf /tmp/x" } as const;
 
@@ -2149,7 +2151,7 @@ describe("Gateway rules", () => {
       const tracing = recordedSpans();
 
       const error = yield* Gateway.use((gateway) => Effect.flip(gateway.act(bot, removeX))).pipe(
-        Effect.provide(startGateway(computer.layer, policyFrom(shippedRules))),
+        Effect.provide(startGateway(computer.layer, shippedRules)),
         Effect.provide(tracing.layer),
       );
 
@@ -2182,7 +2184,7 @@ describe("Gateway rules", () => {
       const tracing = recordedSpans();
 
       yield* Gateway.use((gateway) => gateway.act(bot, makeNotes)).pipe(
-        Effect.provide(startGateway(computer.layer, policyFrom(shippedRules))),
+        Effect.provide(startGateway(computer.layer, shippedRules)),
         Effect.provide(tracing.layer),
       );
 
@@ -2380,6 +2382,156 @@ allow:
         expect(span?.attributes.get("gateway.rule")).toBe("known-commands");
         expect(JSON.stringify([...(span?.attributes ?? [])])).not.toContain("s3cret");
       }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("keeps the error of each allow rule that failed in the deny row, never the span", () =>
+    Effect.gen(function* () {
+      const computer = shell({});
+      const tracing = recordedSpans();
+
+      const policy = policyFrom(`deny: []
+allow:
+  - name: known-commands
+    when: 'command == "" || {"ls": true}[command]'
+`);
+
+      const error = yield* Gateway.use((gateway) =>
+        Effect.flip(gateway.act(bot, { action: "run", command: "echo s3cret([" })),
+      ).pipe(Effect.provide(startGateway(computer.layer, policy)), Effect.provide(tracing.layer));
+
+      expect(error.message).toContain("run did not run: no rule allows it.");
+      expect(computer.actions).toEqual([]);
+      expect(yield* decodedTrail).toEqual([
+        [
+          "run · deny",
+          {
+            bot: "assistant",
+            command: "echo s3cret([",
+            rule: null,
+            reason: "no rule allows it",
+            failed: [
+              {
+                rule: "known-commands",
+                error: expect.stringContaining("No such key: echo s3cret(["),
+              },
+            ],
+          },
+        ],
+      ]);
+      expect(JSON.stringify(tracing.spans.map((span) => [...span.attributes]))).not.toContain(
+        "s3cret",
+      );
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect(
+    "denies a snapshot when the latest page cannot be read, since no rule could judge it",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const computer = pages(form);
+        const tracing = recordedSpans();
+
+        const error = yield* Gateway.use((gateway) =>
+          sql`DROP TABLE computer_snapshot`.pipe(
+            Effect.andThen(Effect.flip(gateway.act(bot, { action: "snapshot" }))),
+          ),
+        ).pipe(Effect.provide(startGateway(computer.layer)), Effect.provide(tracing.layer));
+
+        expect(error.message).toBe(
+          "snapshot did not run: the server could not tell which page it would read, so no rule could judge it. Try again.",
+        );
+        expect(computer.actions).toEqual([]);
+        expect(yield* decodedTrail).toEqual([
+          [
+            "snapshot · deny",
+            { bot: "assistant", reason: "the latest snapshot could not be read" },
+          ],
+        ]);
+
+        const span = tracing.spans.find((candidate) => candidate.name === "Gateway.act");
+        expect(span?.attributes.get("gateway.decision")).toBe("deny");
+      }).pipe(Effect.provide(database)),
+  );
+
+  it.effect.each([".env", "config/prod.env", "secrets/.ENV"])(
+    "refuses read_file %s by its file.extension",
+    (path) =>
+      Effect.gen(function* () {
+        const computer = shell({});
+
+        const policy = policyFrom(`deny:
+  - name: no-env-files
+    when: file.extension == "env"
+allow:
+  - name: granted-tools
+    when: "true"
+`);
+
+        const error = yield* Gateway.use((gateway) =>
+          Effect.flip(gateway.act(bot, { action: "read_file", path })),
+        ).pipe(Effect.provide(startGateway(computer.layer, policy)));
+
+        expect(error.message).toContain("the rule no-env-files refuses it");
+        expect(computer.actions).toEqual([]);
+      }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("judges press by its key and the host of the page the latest snapshot read", () =>
+    Effect.gen(function* () {
+      const computer = pages(form);
+
+      const policy = policyFrom(`deny:
+  - name: no-enter-on-example
+    when: tool.name == "press" && key == "Enter" && page.host == "example.com"
+allow:
+  - name: granted-tools
+    when: "true"
+`);
+
+      const [enter, tab] = yield* Gateway.use((gateway) =>
+        Effect.gen(function* () {
+          yield* gateway.act(bot, { action: "snapshot" });
+
+          return [
+            yield* Effect.flip(gateway.act(bot, { action: "press", ref: "e2", key: "Enter" })),
+            yield* gateway.act(bot, { action: "press", ref: "e2", key: "Tab" }),
+          ] as const;
+        }),
+      ).pipe(Effect.provide(startGateway(computer.layer, policy)));
+
+      expect(enter.message).toContain("the rule no-enter-on-example refuses it");
+      expect(tab).toContain('textbox "Name"');
+      expect(computer.actions.map((action) => action.action)).toEqual(["snapshot", "press"]);
+      expect(computer.actions.at(-1)).toMatchObject({ action: "press", key: "Tab" });
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("judges snapshot by the host of the page the latest action read", () =>
+    Effect.gen(function* () {
+      const computer = fakeComputers({ browse: exampleDomain });
+
+      const policy = policyFrom(`deny:
+  - name: no-reading-example
+    when: tool.name == "snapshot" && page.host == "example.com"
+allow:
+  - name: granted-tools
+    when: "true"
+`);
+
+      const [before, after] = yield* Gateway.use((gateway) =>
+        Effect.gen(function* () {
+          const first = yield* gateway.act(bot, { action: "snapshot" });
+          yield* gateway.act(bot, { action: "navigate", url: "https://example.com/" });
+
+          return [first, yield* Effect.flip(gateway.act(bot, { action: "snapshot" }))] as const;
+        }),
+      ).pipe(Effect.provide(startGateway(computer.layer, policy)));
+
+      expect(before).toContain("Example Domain");
+      expect(after.message).toContain("the rule no-reading-example refuses it");
+      expect(computer.actions.map((action) => action.action)).toEqual(["snapshot", "navigate"]);
+    }).pipe(Effect.provide(database)),
   );
 
   it.effect("refuses what no allow rule allows, naming no rule", () =>

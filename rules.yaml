@@ -26,9 +26,9 @@
 #   element.name
 #   key            the key press presses: Enter, Tab, Escape, Backspace, Space or an arrow key
 #   command        the command run runs, as the Bot wrote it
-#   file.path      the file a file action names, inside /workspace; file.name and file.extension
-#   file.name      (lower-case, without its dot) are split out of it
-#   file.extension
+#   file.path      the file a file action names, inside /workspace, as the Bot wrote it
+#   file.name      its last part, as written
+#   file.extension what follows the name's last dot, lower-cased: env for .env and for prod.env
 #
 # Every field is there on every action, "" where it has none, so `element.name == "Submit"` is simply
 # false for run. A form submits on a click and on Enter, so a rule that must stop one names both:

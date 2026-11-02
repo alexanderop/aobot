@@ -18,7 +18,7 @@ function running(command: string): Facts {
 /** A rule that passes the check on blank facts, then fails on any command but a number. */
 const numberOnly = 'command == "" || int(command) > 0';
 
-const { Allowed, Denied, Broke, NoneAllowed } = Verdict.cases;
+const { Allowed, Denied, DenyRuleFailed, NoneAllowed } = Verdict.cases;
 
 /** The facts of a browser action on an element of a page on shop.example, pressing `key` when it is `press`. */
 function onTheShop(tool: "click" | "press", role: string, name: string, key = ""): Facts {
@@ -32,11 +32,16 @@ function onTheShop(tool: "click" | "press", role: string, name: string, key = ""
 }
 
 /** A deny rule named `rule` failed, with an error that says `why`. */
-function brokeWith(rule: string, why: string) {
+function failedWith(rule: string, why: string) {
   return {
-    ...Broke.make({ rule: RuleName.make(rule), error: why }),
+    ...DenyRuleFailed.make({ rule: RuleName.make(rule), error: why }),
     error: expect.stringContaining(why),
   };
+}
+
+/** The allow rule named `rule` failed on the way, with an error that says `why`. */
+function brokenWith(rule: string, why: string) {
+  return { rule: RuleName.make(rule), error: expect.stringContaining(why) };
 }
 
 const allowAll = `
@@ -85,7 +90,7 @@ allow:
   - name: no-rm-rf
     when: command.contains("rm -rf")${allowAll}`,
       "ls",
-      brokeWith("number-only", "int()"),
+      failedWith("number-only", "int()"),
     ],
     [
       "a deny rule that fails on this action's value refuses",
@@ -93,7 +98,7 @@ allow:
   - name: third-argument
     when: command == "" || command.split(" ")[2] == "-rf"${allowAll}`,
       "ls -la",
-      brokeWith("third-argument", "index out of bounds"),
+      failedWith("third-argument", "index out of bounds"),
     ],
     [
       "an allow rule that fails allows nothing, and a later one still can",
@@ -104,10 +109,10 @@ allow:
   - name: granted-tools
     when: "true"`,
       "ls",
-      Allowed.make({
-        rule: RuleName.make("granted-tools"),
-        broken: [RuleName.make("number-only")],
-      }),
+      {
+        ...Allowed.make({ rule: RuleName.make("granted-tools"), broken: [] }),
+        broken: [brokenWith("number-only", "int()")],
+      },
     ],
     [
       "an allow rule that fails, with none after it, leaves the action refused",
@@ -116,7 +121,7 @@ allow:
   - name: number-only
     when: ${numberOnly}`,
       "ls",
-      NoneAllowed.make({ broken: [RuleName.make("number-only")] }),
+      { ...NoneAllowed.make({ broken: [] }), broken: [brokenWith("number-only", "int()")] },
     ],
     [
       "an action no allow rule holds for is refused",

@@ -41,4 +41,7 @@ Preconditions: baseline.
 - The server reads `rules.yaml` once at start-up. After editing it, restart the server
   (`docker compose restart server`); no rebuild.
 - In YAML, `when: "true"` is the CEL `true`. A CEL string literal needs both quotes: `when: '"x" == command'`.
-- A failed rule's error (which can echo the command) is only in the deny row's `error`, never in a log or span.
+- A failed rule's error (which can echo the command) is never in a log or span. A failed deny rule's is in
+  its deny row's `error`; when no allow rule allowed the action, each failed allow rule's is in the deny
+  row's `failed: [{ rule, error }]`. An allow rule that failed before another allowed the action leaves
+  only a warning naming it.

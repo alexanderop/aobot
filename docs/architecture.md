@@ -154,12 +154,12 @@ CEL environment is built from the same declaration so the two cannot drift:
 | `file.path`, `file.name`, `file.extension` | The file a file tool names, as its audit row records it                                                       |
 
 Every field is bound on every action, `""` where the action has none, so a rule naming `element.name`
-answers false for `run` instead of failing. `page.host` is the host in the one spelling the computer's egress
-checks it in (`canonicalHost` in `@aobot/domain`): lower-cased, without its port, brackets or a trailing
-dot, so `SHOP.example.` and `shop.example%2e` are `shop.example` and `[::1]` is `::1`; `""` for an
-address that does not parse. The latest
-snapshot keeps the address it was read at for this; a snapshot stored before E2-2 has none, so its host is
-`""` until a Bot reads the page again.
+answers false for `run` instead of failing. `page.host` is the host in the one spelling the computer's
+egress checks it in (`canonicalHost` in `@aobot/domain`): lower-cased, without its port, brackets or a
+trailing dot, so `SHOP.example.` and `shop.example%2e` are `shop.example` and `[::1]` is `::1`; `""` for
+an address that does not parse. The latest snapshot keeps the address it was read at for this. A snapshot
+stored before E2-2 has none, so the migration that adds the address forgets it rather than let a ref be
+judged on the host `""`: no ref resolves until a Bot reads the page again.
 
 The order in `Gateway.act` is grant, door, ref or path, rules, `allow` row, forward. A ref that does not
 resolve is refused for that and never judged on an empty element. Then every deny rule in the order the
@@ -169,23 +169,26 @@ warning at start-up when the allow list is empty.
 
 It fails closed. A deny rule that fails while it is evaluated, such as
 `command == "" || int(command) > 0` on `ls`, refuses. An allow rule that fails allows nothing, and a
-later allow rule still can. Either is logged by the rule's
-name and list only: CEL's error can echo what the action holds, so only the deny row keeps it, capped.
-A file that is missing, empty or not YAML, misses a list or misspells a key, gives a name that is not a
-slug or names two rules, or has a `when` that does not parse, names a field the facts do not have,
-does not answer `bool` (a `dyn` answer included), calls `matches`, or fails when every fact but
-`tool.name` is `""` (such as `int("ten")`, `1/0` or `command.split(" ")[1]`) stops the server with the path,
-every problem and where in the file each is. Each rule is tried once on those blank facts when the file is
-read, so a rule that breaks on an action without the fact it reads never ships. `matches` is refused because cel-js runs it as a
-backtracking JavaScript regular expression on the server's one thread, where `^(a+)+$` on a short command
-holds every turn for seconds; write the rule with `contains`, `startsWith`, `endsWith` and
-`lowerAscii()` instead.
+later allow rule still can. A failed rule is logged by its name and list only, never its error, which can
+echo what the action holds. The error goes into the action's deny row, capped: a failed deny rule's as
+`error`, and when nothing allowed the action, each failed allow rule's as `failed: [{ rule, error }]`.
+When a later allow rule allows the action anyway, the errors of the allow rules that failed before it are
+not kept; only their warnings are. A file that is missing, empty or not YAML, misses a list or misspells
+a key, gives a name that is not a slug or names two rules, or has a `when` that does not parse, names a
+field the facts do not have, does not answer `bool` (a `dyn` answer included), calls `matches`, or fails
+when every fact but `tool.name` is `""` (such as `int("ten")`, `1/0` or `command.split(" ")[1]`) stops
+the server with the path, every problem and where in the file each is. Each rule is tried once on those
+blank facts when the file is read, so a rule that breaks on an action without the fact it reads never
+ships. `matches` is refused because cel-js runs it as a backtracking JavaScript regular expression on the
+server's one thread, where `^(a+)+$` on a short command holds every turn for seconds; write the rule with
+`contains`, `startsWith`, `endsWith` and `lowerAscii()` instead.
 
 A refusal is a `deny` row with the action's audit detail and the rule: `run · deny · no-rm-rf` is
 `{ bot, command, rule: "no-rm-rf", reason: "denied by rule" }`, a failed deny rule adds `error` with
-`reason: "rule failed"`, and nothing allowed is `{ rule: null, reason: "no rule allows it" }`. An `allow`
-row names the allow rule that allowed it as `rule`. The `Gateway.act` span records `gateway.decision`
-(`allow` or `deny`, for every refusal) and `gateway.rule` when a rule decided. The model reads:
+`reason: "rule failed"`, and nothing allowed is `{ rule: null, reason: "no rule allows it" }`, with
+`failed` when an allow rule failed. An `allow` row names the allow rule that allowed it as `rule`. The
+`Gateway.act` span records `gateway.decision` (`allow` or `deny`, for every refusal) and `gateway.rule`
+when a rule decided. The model reads:
 
 > run did not run: the rule no-rm-rf refuses it. Tell your person what was refused; do not try another way around it.
 
@@ -365,13 +368,14 @@ The `Gateway.act` span records `gateway.command_end` (`exited`, `signalled` or `
 
 `read_file`, `write_file` and `list_files` name a file by its path inside `/workspace`, such as
 `reports/august.csv`; the audit row records that path with its `name` and `extension`, the three that
-rules see as `file.path`, `file.name` and `file.extension`. The path is a `WorkspacePath` from the domain,
-on the tools, on `/act` and on both `/files` routes: `""` is read as `.`, the workspace itself, and nothing
-is trimmed, so the gateway and the computer judge the very same name, and `a.txt ` is a file of its own.
-A path is judged as the computer, which runs Linux, reads it: only a leading `/` makes it absolute and
-only `/` separates, so `c:notes.txt` and `a\b.txt` are each one file's name. A path that is absolute,
-`/workspace/notes.txt` included, or that goes up with `..` is denied before anything is forwarded, the computer
-never hears of it, and the model reads:
+rules see as `file.path`, `file.name` and `file.extension`. The extension is what follows the name's last
+dot, lower-cased, for a name that starts with one too: `.env` and `prod.ENV` are both `env`. The path is
+a `WorkspacePath` from the domain, on the tools, on `/act` and on both `/files` routes: `""` is read as
+`.`, the workspace itself, and nothing is trimmed, so the gateway and the computer judge the very same
+name, and `a.txt ` is a file of its own. A path is judged as the computer, which runs Linux, reads it:
+only a leading `/` makes it absolute and only `/` separates, so `c:notes.txt` and `a\b.txt` are each one
+file's name. A path that is absolute, `/workspace/notes.txt` included, or that goes up with `..` is
+denied before anything is forwarded, the computer never hears of it, and the model reads:
 
 > read_file did not run: /etc/passwd is outside your workspace. Name a file by its path inside /workspace,
 > such as notes.txt, with no leading / and no "..".

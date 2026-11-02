@@ -70,7 +70,9 @@ const keepSnapshotUrl = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   // The rules judge a browser action by the host of the page its ref came from. A snapshot stored
-  // before this has no address, so its host is "" until a Bot reads the page again.
+  // before this has no address, and a rule must never judge a ref on the host "", so it is forgotten:
+  // no ref resolves until a Bot reads the page again.
+  yield* sql`DELETE FROM computer_snapshot`;
   yield* sql`ALTER TABLE computer_snapshot ADD COLUMN url text NOT NULL DEFAULT ''`;
 });
 

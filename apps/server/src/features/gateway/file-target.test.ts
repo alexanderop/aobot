@@ -10,7 +10,9 @@ describe("fileTarget", () => {
     ],
     ["archive.tar.gz", { path: "archive.tar.gz", name: "archive.tar.gz", extension: "gz" }],
     ["Makefile", { path: "Makefile", name: "Makefile", extension: "" }],
-    [".env", { path: ".env", name: ".env", extension: "" }],
+    [".env", { path: ".env", name: ".env", extension: "env" }],
+    ["config/.ENV", { path: "config/.ENV", name: ".ENV", extension: "env" }],
+    ["archive.", { path: "archive.", name: "archive.", extension: "" }],
     ["/etc/passwd", { path: "/etc/passwd", name: "passwd", extension: "" }],
     ["notes\\draft.txt", { path: "notes\\draft.txt", name: "notes\\draft.txt", extension: "txt" }],
   ])("names %j by its path, name and extension", (path, target) => {

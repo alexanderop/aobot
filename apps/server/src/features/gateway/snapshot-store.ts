@@ -8,8 +8,8 @@ const decodeSnapshots = Schema.decodeUnknownEffect(
 
 /**
 The latest snapshot of the page on the one computer every Bot shares, the address it was read at, and the
-Bot whose action read it, so a ref resolves only for the Bot that saw the page it names. In the database rather than in memory, so
-whichever replica handles the next call resolves it the same way.
+Bot whose action read it, so a ref resolves only for the Bot that saw the page it names. In the database
+rather than in memory, so whichever replica handles the next call resolves it the same way.
 */
 export const snapshotStore = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

@@ -14,7 +14,7 @@ import {
 import { Context, Duration, Effect, Layer, Match, Option, Result, Schema } from "effect";
 import { AuditLog, type Outcome } from "../audit/public.ts";
 import { Bots, isGranted } from "../bots/public.ts";
-import { Policy, Verdict } from "../policy/public.ts";
+import { Policy, Refused, Verdict } from "../policy/public.ts";
 import {
   type Computer,
   type ComputerActFailed,
@@ -31,12 +31,7 @@ import {
 import { redact } from "../../shared/redact.ts";
 import { actionFacts, hostOf } from "./action-facts.ts";
 import { ComputerControl, controlDoors } from "./control.ts";
-import {
-  type ComputerFailure,
-  computerMessageLimit,
-  failureOutcome,
-  personAudit,
-} from "./person-audit.ts";
+import { type ComputerFailure, failureOutcome, personAudit } from "./person-audit.ts";
 import { fileTarget } from "./file-target.ts";
 import {
   endAttributes,
@@ -96,9 +91,9 @@ export class Gateway extends Context.Service<
     /**
     Refuses the call when the Bot it claims was not granted its tool, or is no Bot the server knows,
     before anything else the gateway does. Then refuses it while a person holds the computer. Otherwise
-    resolves its ref against the latest snapshot, records the call, forwards it to the computer, records
-    what became of it, and answers what the model reads. A call that could not be carried out is a
-    `ToolFailed` the model reads, never a dead turn.
+    resolves its ref against the latest snapshot, judges it by the rules, records the call, forwards it
+    to the computer, records what became of it, and answers what the model reads. A call that could not
+    be carried out is a `ToolFailed` the model reads, never a dead turn.
     */
     readonly act: (claim: Claim, request: BotRequest) => Effect.Effect<string, ToolFailed>;
   }
@@ -128,10 +123,13 @@ const claimedName = Claim.match({
 /** Another Bot read the page after the Bot that sent the ref, so its refs name a page it has not seen. */
 const readByAnother = "another Bot read the page since";
 
+/** The database did not answer with the latest snapshot. */
+const unreadSnapshot = "the latest snapshot could not be read";
+
 /** Why a ref did not resolve, as its deny row says. */
 const RefMiss = Schema.Literals([
   "there is no snapshot yet",
-  "the latest snapshot could not be read",
+  unreadSnapshot,
   "not in the latest snapshot",
   readByAnother,
 ]);
@@ -142,49 +140,46 @@ class UnknownRef extends Schema.TaggedError<UnknownRef>()("UnknownRef", {
   reason: RefMiss,
 }) {}
 
-/** The latest snapshot could not be read, so no rule can tell which page a snapshot reads, and it is denied. */
+/**
+The latest snapshot could not be read, so no rule can tell which page a `snapshot` would read, and it is
+denied.
+*/
 class UnknownPage extends Schema.TaggedError<UnknownPage>()("UnknownPage", {}) {}
-
-/** A verdict that refuses: every one but `Allowed`. */
-const Refusing = Schema.Union([
-  Verdict.cases.Denied,
-  Verdict.cases.Broke,
-  Verdict.cases.NoneAllowed,
-]);
 
 /** The rules refused the action, as `verdict` says. */
 class RuleRefused extends Schema.TaggedError<RuleRefused>()("RuleRefused", {
   action: ComputerAction,
-  verdict: Refusing,
+  verdict: Refused,
 }) {}
 
+/** How much of a failed rule's error a deny row keeps. */
+const ruleErrorLimit = 500;
+
+/** The rules that failed on the way, each with its error, capped, for the deny row. */
+const failedRules = (broken: ReadonlyArray<{ readonly rule: string; readonly error: string }>) =>
+  broken.map(({ rule, error }) => ({ rule, error: capText(error, ruleErrorLimit) }));
+
 /**
-What a refusing verdict puts in the deny row and on the span, and why the model reads the action did not
-run. A failed rule's error stays in the row: it can echo what the action holds.
+What a refusing verdict puts in the deny row, and why the model reads the action did not run. A failed
+rule's error stays in the row: it can echo what the action holds, so no log or span gets it.
 */
-const ruleRefusal = Match.typeTags<
-  typeof Refusing.Type,
-  {
-    readonly detail: Readonly<Record<string, Schema.Json>>;
-    readonly attributes: Readonly<Record<string, string>>;
-    readonly why: string;
-  }
->()({
+const ruleRefusal = Refused.match({
   Denied: ({ rule }) => ({
     detail: { rule, reason: "denied by rule" },
-    attributes: { "gateway.rule": rule },
     why: `the rule ${rule} refuses it`,
   }),
-  Broke: ({ rule, error }) => ({
-    detail: { rule, reason: "rule failed", error: capText(error, computerMessageLimit) },
-    attributes: { "gateway.rule": rule },
+  DenyRuleFailed: ({ rule, error }) => ({
+    detail: { rule, reason: "rule failed", error: capText(error, ruleErrorLimit) },
     why: `the rule ${rule} could not be checked, so it refuses`,
   }),
-  NoneAllowed: () => ({
-    detail: { rule: null, reason: "no rule allows it" },
-    attributes: {},
-    why: "no rule allows it",
-  }),
+  NoneAllowed: ({ broken }) => {
+    const detail = { rule: null, reason: "no rule allows it" };
+
+    return {
+      detail: broken.length === 0 ? detail : { ...detail, failed: failedRules(broken) },
+      why: "no rule allows it",
+    };
+  },
 });
 
 /** A file action whose path leaves the workspace as it is written, so the call is denied. */
@@ -202,6 +197,11 @@ function unknownRefAnswer(action: ActionName, { ref, reason }: UnknownRef): stri
   return reason === readByAnother
     ? `${action} did not run: the page changed since you last read it. Take a snapshot and use a ref from it.`
     : `${action} did not run: ${ref} is not a ref in the page's latest snapshot. Take a snapshot and use a ref from it.`;
+}
+
+/** What the model reads when no rule can tell which page its `snapshot` would read. */
+function unknownPageAnswer(action: ActionName): string {
+  return `${action} did not run: the server could not tell which page it would read, so no rule could judge it. Try again.`;
 }
 
 /** What the model reads when the rules refuse what it asked for. */
@@ -352,9 +352,7 @@ export const gatewayLayer = Layer.effectContext(
 
     const targetOf = Effect.fn("Gateway.resolveRef")(function* (bot: BotId, ref: string) {
       const latest = yield* snapshots.latest.pipe(
-        Effect.mapError(
-          () => new UnknownRef({ ref, reason: "the latest snapshot could not be read" }),
-        ),
+        Effect.mapError(() => new UnknownRef({ ref, reason: unreadSnapshot })),
       );
 
       if (Option.isNone(latest)) {
@@ -462,30 +460,25 @@ export const gatewayLayer = Layer.effectContext(
 
     /**
     The allow rule that allows `action`, or a {@link RuleRefused}. A rule that failed is logged by its name
-    and list only: its error can echo what the action holds, so only the deny row keeps it.
+    and list only, never its error, which can echo what the action holds. A refusal's deny row keeps the
+    error of every rule that failed, capped; an allowed action's allow rules that failed are only logged.
     */
     const allowedBy = (action: ComputerAction, verdict: Verdict) => {
-      const failed = (rule: string, list: "deny" | "allow") =>
-        Effect.logWarning("A rule failed, so it counts against the action").pipe(
+      const failed = (list: "deny" | "allow") => (rule: string) =>
+        Effect.logWarning("A rule failed while it was checked").pipe(
           Effect.annotateLogs({ rule, list, action: action.action }),
         );
 
-      const refused = (refusing: typeof Refusing.Type) =>
-        Effect.fail(new RuleRefused({ action, verdict: refusing }));
+      const failedAllowRules = (broken: ReadonlyArray<{ readonly rule: string }>) =>
+        Effect.forEach(broken, ({ rule }) => failed("allow")(rule), { discard: true });
+
+      const refused = (verdict: Refused) => Effect.fail(new RuleRefused({ action, verdict }));
 
       return Verdict.match(verdict, {
-        Allowed: ({ rule, broken }) =>
-          Effect.as(
-            Effect.forEach(broken, (name) => failed(name, "allow")),
-            rule,
-          ),
+        Allowed: ({ rule, broken }) => Effect.as(failedAllowRules(broken), rule),
         Denied: refused,
-        Broke: (broke) => Effect.andThen(failed(broke.rule, "deny"), refused(broke)),
-        NoneAllowed: (none) =>
-          Effect.andThen(
-            Effect.forEach(none.broken, (name) => failed(name, "allow")),
-            refused(none),
-          ),
+        DenyRuleFailed: (failure) => Effect.andThen(failed("deny")(failure.rule), refused(failure)),
+        NoneAllowed: (none) => Effect.andThen(failedAllowRules(none.broken), refused(none)),
       });
     };
 
@@ -508,7 +501,6 @@ export const gatewayLayer = Layer.effectContext(
       const { action, host } = yield* resolve(bot, request);
 
       const rule = yield* allowedBy(action, policy.judge(actionFacts(bot, action, host)));
-      yield* Effect.annotateCurrentSpan({ "gateway.decision": "allow", "gateway.rule": rule });
 
       const allowRow = yield* rows
         .decide("allow", action.action, { bot, ...auditDetail(action), rule })
@@ -525,6 +517,8 @@ export const gatewayLayer = Layer.effectContext(
               }),
           ),
         );
+
+      yield* Effect.annotateCurrentSpan({ "gateway.decision": "allow", "gateway.rule": rule });
 
       const forwarded = yield* Effect.gen(function* () {
         const computer = yield* computers.ensure;
@@ -599,14 +593,16 @@ export const gatewayLayer = Layer.effectContext(
           UnknownPage: () =>
             deny(
               request.action,
-              { bot, reason: "the latest snapshot could not be read" },
-              `${request.action} did not run: the server could not tell which page it would read, so no rule could judge it. Try again.`,
+              { bot, reason: unreadSnapshot },
+              unknownPageAnswer(request.action),
             ),
           RuleRefused: ({ action, verdict }) => {
-            const { detail, attributes, why } = ruleRefusal(verdict);
+            const { detail, why } = ruleRefusal(verdict);
 
             return Effect.andThen(
-              Effect.annotateCurrentSpan(attributes),
+              Refused.guards.NoneAllowed(verdict)
+                ? Effect.void
+                : Effect.annotateCurrentSpan({ "gateway.rule": verdict.rule }),
               deny(
                 action.action,
                 { bot, ...auditDetail(action), ...detail },

@@ -2,4 +2,4 @@ export { blankFacts, type Facts } from "./facts.ts";
 
 export { Policy, policyFileLayer } from "./policy.ts";
 
-export { Verdict } from "./rules.ts";
+export { Refused, Verdict } from "./rules.ts";
