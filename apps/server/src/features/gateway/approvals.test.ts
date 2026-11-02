@@ -251,6 +251,30 @@ describe("approvalRequests", () => {
     }).pipe(Effect.provide(database)),
   );
 
+  it.effect("lets another card ask only while no question waits and no no holds", () =>
+    Effect.gen(function* () {
+      const store = yield* approvalRequests;
+
+      yield* store.mayAsk(firstRun, rule);
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* store.open(firstRun, rule, removeNotes);
+
+          expect(yield* Effect.flip(store.mayAsk(firstRun, "another-rule"))).toEqual(
+            new AlreadyWaiting(),
+          );
+        }),
+      );
+
+      yield* askAndAnswer(store, firstRun, "no");
+
+      expect(yield* Effect.flip(store.mayAsk(firstRun, rule))).toEqual(new DeclinedEarlier());
+
+      yield* store.mayAsk(secondRun, rule);
+    }).pipe(Effect.provide(database)),
+  );
+
   it.effect("tells of a yes an earlier run spent and never finished once, then asks again", () =>
     Effect.gen(function* () {
       const store = yield* approvalRequests;

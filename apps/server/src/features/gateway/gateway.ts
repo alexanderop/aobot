@@ -1175,9 +1175,11 @@ export const gatewayLayer = Layer.effectContext(
     action, and its `secret.requested` row written; only then is it shown to the person, as its field on
     the host of its page, and it waits for their answer outside the door, so a person can take the
     computer meanwhile. Its row's outcome says how the person answered, and what they typed is forwarded
-    as `type_secret`, through the door again.
+    as `type_secret`, through the door again. Under an ask rule, the secret card is the person's question,
+    so it is refused as an asked action would be while another question waits in the conversation of
+    `turn`, or after a no to that rule earlier in its run.
     */
-    const askForSecret = (bot: BotId, ref: string, field: string) =>
+    const askForSecret = (bot: BotId, turn: Option.Option<TurnRef>, ref: string, field: string) =>
       Effect.scoped(
         Effect.gen(function* () {
           const open = yield* secrets.open(bot);
@@ -1197,6 +1199,16 @@ export const gatewayLayer = Layer.effectContext(
               if (asked.host === "") return yield* new NoSite({ action: asked.action });
 
               const { allowRule, askRule } = yield* allowedBy(bot, asked.action, asked.host);
+
+              if (Option.isSome(askRule) && Option.isSome(turn)) {
+                yield* approvals.mayAsk(turn.value, askRule.value).pipe(
+                  denyRefusals("request_secret", {
+                    bot,
+                    ...auditDetail(asked.action),
+                    rule: askRule.value,
+                  }),
+                );
+              }
 
               // The secret card already asks the person, so an ask rule only names itself in the row.
               const allowRow = yield* allow(
@@ -1269,7 +1281,7 @@ export const gatewayLayer = Layer.effectContext(
         const granted = yield* grant(claim, request.action);
 
         return yield* BotRequest.guards.request_secret(request)
-          ? askForSecret(granted, request.ref, request.field)
+          ? askForSecret(granted, turnOf(claim), request.ref, request.field)
           : doors
               .admit(carryOut(granted, request), { queued })
               .pipe(

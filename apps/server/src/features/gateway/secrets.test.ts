@@ -1,8 +1,10 @@
 import {
+  ConversationId,
   NoSecretRequested,
   type PageAction,
   type PageRead,
   type PendingSecret,
+  RunId,
   SecretAnswer,
   SecretRequestId,
 } from "@aobot/domain";
@@ -25,6 +27,7 @@ import { TestClock } from "effect/testing";
 import { recordedSpans } from "../../shared/testing/recorded-spans.ts";
 import { assistant } from "../bots/testing/test-bots.ts";
 import { policyFrom } from "../policy/testing/test-policy.ts";
+import { ApprovalRequests } from "./approvals.ts";
 import { ComputerControl } from "./control.ts";
 import { Claim, Gateway } from "./gateway.ts";
 import { botHeader, gatewayMcpLayer } from "./mcp.ts";
@@ -188,6 +191,77 @@ ask:
         ],
       ]);
       expect(computer.actions.at(-1)?.action).toBe("type_secret");
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("refuses a secret for a field its person said no to typing into, in that run", () =>
+    Effect.gen(function* () {
+      const computer = signInComputer();
+      const conversation = ConversationId.make("conversation-1");
+
+      const inTurn = Claim.cases.Named.make({
+        bot: assistant.id,
+        turn: { conversation, run: RunId.make("run-1") },
+      });
+
+      const policy = policyFrom(`deny: []
+allow:
+  - name: granted-tools
+    when: "true"
+ask:
+  - name: ask-before-password
+    when: element.name == "Password"
+`);
+
+      const [refused, shownAfter] = yield* Effect.gen(function* () {
+        yield* Gateway.use((gateway) => gateway.act(inTurn, { action: "snapshot" }));
+
+        const typing = yield* Gateway.use((gateway) =>
+          Effect.forkChild(
+            Effect.result(gateway.act(inTurn, { action: "type", ref: "e3", text: "guess" })),
+          ),
+        );
+
+        yield* ApprovalRequests.use((approvals) =>
+          approvals.pending(conversation).pipe(
+            Stream.filter(Option.isSome),
+            Stream.runHead,
+            Effect.flatMap((shown) =>
+              approvals.answer(
+                conversation,
+                Option.getOrThrow(Option.flatten(shown)).approval,
+                "no",
+              ),
+            ),
+          ),
+        );
+        yield* Fiber.join(typing);
+
+        const refused = yield* Gateway.use((gateway) =>
+          Effect.flip(gateway.act(inTurn, askForPassword)),
+        );
+
+        return [refused, yield* shownNow] as const;
+      }).pipe(Effect.provide(startGateway(computer.layer, policy)));
+
+      expect(refused.message).toBe(
+        "request_secret did not run: your person already said no to this in this conversation. Do not ask again until they write to you.",
+      );
+      expect(shownAfter).toEqual(Option.none());
+      expect((yield* trail).at(-1)).toEqual([
+        "secret.requested · deny",
+        {
+          bot: "assistant",
+          ref: "e3",
+          role: "textbox",
+          name: "Password",
+          host: "shop.example",
+          field: "the password for shop.example",
+          rule: "ask-before-password",
+          reason: "declined earlier",
+        },
+      ]);
+      expect(computer.actions.map((action) => action.action)).toEqual(["snapshot"]);
     }).pipe(Effect.provide(database)),
   );
 

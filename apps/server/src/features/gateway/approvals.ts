@@ -231,11 +231,8 @@ export const approvalRequests = Effect.gen(function* () {
         ),
     );
 
-  /**
-  Refuses before anything is shown: a no to `rule` earlier in this run, or a yes to it an earlier run
-  spent and never finished, which the Bot is told of once.
-  */
-  const ledgerAllows = Effect.fnUntraced(function* (turn: TurnRef, rule: string) {
+  /** Refuses an action the ask rule `rule` holds for after the person said no to it earlier in `turn`'s run. */
+  const notDeclined = Effect.fnUntraced(function* (turn: TurnRef, rule: string) {
     const declined = yield* sql`
       SELECT id FROM approvals
       WHERE conversation_id = ${turn.conversation} AND run_id = ${turn.run}
@@ -244,6 +241,14 @@ export const approvalRequests = Effect.gen(function* () {
     `.pipe(Effect.mapError(ledgerFailed));
 
     if (declined.length > 0) return yield* new DeclinedEarlier();
+  });
+
+  /**
+  Refuses before anything is shown: a no to `rule` earlier in this run, or a yes to it an earlier run
+  spent and never finished, which the Bot is told of once.
+  */
+  const ledgerAllows = Effect.fnUntraced(function* (turn: TurnRef, rule: string) {
+    yield* notDeclined(turn, rule);
 
     const told = yield* sql`
       UPDATE approvals SET state = 'told', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
@@ -253,6 +258,19 @@ export const approvalRequests = Effect.gen(function* () {
     `.pipe(Effect.mapError(ledgerFailed));
 
     if (told.length > 0) return yield* new OutcomeUnknown();
+  });
+
+  /**
+  Whether the person may be asked, in `turn`'s conversation, about an action the ask rule `rule` holds for
+  that another card asks instead, as a secret's does: not while a question waits there, nor after a no to
+  that rule earlier in its run. Shows and records nothing.
+  */
+  const mayAsk = Effect.fnUntraced(function* (turn: TurnRef, rule: string) {
+    if (HashMap.has(yield* SubscriptionRef.get(questions), turn.conversation)) {
+      return yield* new AlreadyWaiting();
+    }
+
+    yield* notDeclined(turn, rule);
   });
 
   /**
@@ -438,5 +456,5 @@ export const approvalRequests = Effect.gen(function* () {
     return closed.flatMap(Option.toArray);
   });
 
-  return { open, closeLeftOpen, requests: ApprovalRequests.of({ pending, answer }) };
+  return { open, mayAsk, closeLeftOpen, requests: ApprovalRequests.of({ pending, answer }) };
 });
