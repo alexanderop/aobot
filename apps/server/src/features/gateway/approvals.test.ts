@@ -13,6 +13,7 @@ import {
   digestOf,
   type OpenApproval,
   OutcomeUnknown,
+  type ResolvedAction,
 } from "./approvals.ts";
 import { database } from "./testing/test-gateway.ts";
 
@@ -26,7 +27,14 @@ const secondRun = { conversation, run: RunId.make("run-2") };
 
 const rule = "ask-before-delete";
 
-const removeNotes = digestOf(bot, { action: "run", command: "rm notes.txt" }, "");
+const removeNotes: ResolvedAction = {
+  bot,
+  action: { action: "run", command: "rm notes.txt" },
+  host: "",
+};
+
+/** Removing notes.txt as `more` changes it. */
+const otherThan = (more: Partial<ResolvedAction>): ResolvedAction => ({ ...removeNotes, ...more });
 
 /** The question the person is shown in `conversation` now. */
 const shownIn = (requests: ApprovalRequests["Service"], shownConversation = conversation) =>
@@ -52,47 +60,49 @@ const untilShown = (requests: ApprovalRequests["Service"], shownConversation = c
 const asking = (approval: OpenApproval) =>
   Effect.forkChild(approval.ask("run", "Run `rm notes.txt`?", "10 minutes"));
 
-/** Opens a question about removing notes.txt in `turn` and answers it `answer`, in a scope of its own. */
-const askAndAnswer = (
+/** Opens a question about removing notes.txt in `turn` and answers it `answer`, held until the scope closes. */
+const answered = (
   store: Effect.Success<typeof approvalRequests>,
   turn: typeof firstRun,
   answer: "yes" | "no",
 ) =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const approval = yield* store.open(turn, rule, removeNotes);
-      const waiting = yield* asking(approval);
-      yield* untilShown(store.requests, turn.conversation);
-      yield* store.requests.answer(turn.conversation, approval.id, answer);
+  Effect.gen(function* () {
+    const approval = yield* store.open(turn, rule, removeNotes);
+    const waiting = yield* asking(approval);
+    yield* untilShown(store.requests, turn.conversation);
+    yield* store.requests.answer(turn.conversation, approval.id, answer);
 
-      return { approval, answered: yield* Fiber.join(waiting) };
-    }),
-  );
+    return { approval, answered: yield* Fiber.join(waiting) };
+  });
+
+/** {@link answered}, in a scope of its own. */
+const askAndAnswer = (
+  store: Effect.Success<typeof approvalRequests>,
+  turn: typeof firstRun,
+  answer: "yes" | "no",
+) => Effect.scoped(answered(store, turn, answer));
 
 describe("digestOf", () => {
   it("is the same for the same action, however its object was written", () => {
     const target = { ref: "e3", role: "button", name: "Delete", url: "https://shop.example" };
     const reordered = { url: target.url, name: target.name, role: target.role, ref: target.ref };
 
-    expect(digestOf(bot, { action: "click", target }, "shop.example")).toBe(
-      digestOf(bot, { target: reordered, action: "click" }, "shop.example"),
+    expect(digestOf({ bot, action: { action: "click", target }, host: "shop.example" })).toBe(
+      digestOf({ bot, action: { target: reordered, action: "click" }, host: "shop.example" }),
     );
   });
 
   it.each([
-    ["another command", digestOf(bot, { action: "run", command: "rm ./notes.txt" }, "")],
-    [
-      "another Bot",
-      digestOf(BotId.make("researcher"), { action: "run", command: "rm notes.txt" }, ""),
-    ],
-    ["another host", digestOf(bot, { action: "run", command: "rm notes.txt" }, "shop.example")],
+    ["another command", otherThan({ action: { action: "run", command: "rm ./notes.txt" } })],
+    ["another Bot", otherThan({ bot: BotId.make("researcher") })],
+    ["another host", otherThan({ host: "shop.example" })],
   ])("differs for %s", (_case, other) => {
-    expect(other).not.toBe(removeNotes);
+    expect(digestOf(other)).not.toBe(digestOf(removeNotes));
   });
 
   it("differs for a write of other contents to the same file", () => {
     const write = (contents: string) =>
-      digestOf(bot, { action: "write_file", path: "notes.txt", contents }, "");
+      digestOf(otherThan({ action: { action: "write_file", path: "notes.txt", contents } }));
 
     expect(write("a")).not.toBe(write("b"));
   });
@@ -189,21 +199,37 @@ describe("approvalRequests", () => {
   );
 
   it.effect("spends a yes once, and only on the action it was given for", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const store = yield* approvalRequests;
+
+        const { approval } = yield* answered(store, firstRun, "yes");
+        const otherCommand = otherThan({ action: { action: "run", command: "rm -r notes" } });
+
+        expect(yield* Effect.flip(approval.spend(otherCommand))).toEqual(
+          new ActionChanged({ action: otherCommand.action }),
+        );
+        expect(yield* approval.spent).toBe(false);
+
+        yield* approval.spend(removeNotes);
+
+        expect(yield* approval.spent).toBe(true);
+        expect(yield* Effect.flip(approval.spend(removeNotes))).toEqual(new AlreadySpent());
+
+        yield* approval.finish;
+
+        expect(yield* ledger).toEqual([["run-1", "finished"]]);
+      }),
+    ).pipe(Effect.provide(database)),
+  );
+
+  it.effect("lapses a yes it never spent once its question closes", () =>
     Effect.gen(function* () {
       const store = yield* approvalRequests;
+      const { approval } = yield* askAndAnswer(store, firstRun, "yes");
 
-      const asked = yield* askAndAnswer(store, firstRun, "yes");
-      const otherCommand = digestOf(bot, { action: "run", command: "rm -r notes" }, "");
-
-      expect(yield* Effect.flip(asked.approval.spend(otherCommand))).toEqual(new ActionChanged());
-
-      yield* asked.approval.spend(removeNotes);
-
-      expect(yield* Effect.flip(asked.approval.spend(removeNotes))).toEqual(new AlreadySpent());
-
-      yield* asked.approval.finish;
-
-      expect(yield* ledger).toEqual([["run-1", "finished"]]);
+      expect(yield* ledger).toEqual([["run-1", "lapsed"]]);
+      expect(yield* Effect.flip(approval.spend(removeNotes))).toEqual(new AlreadySpent());
     }).pipe(Effect.provide(database)),
   );
 
@@ -217,7 +243,7 @@ describe("approvalRequests", () => {
       });
 
       expect(yield* Effect.flip(Effect.scoped(store.open(firstRun, rule, removeNotes)))).toEqual(
-        new DeclinedEarlier({ rule }),
+        new DeclinedEarlier(),
       );
       expect(yield* shownIn(store.requests)).toEqual(Option.none());
 
@@ -229,18 +255,21 @@ describe("approvalRequests", () => {
     Effect.gen(function* () {
       const store = yield* approvalRequests;
 
-      const started = yield* askAndAnswer(store, firstRun, "yes");
-      yield* started.approval.spend(removeNotes);
+      yield* Effect.scoped(
+        Effect.flatMap(answered(store, firstRun, "yes"), ({ approval }) =>
+          approval.spend(removeNotes),
+        ),
+      );
 
       const restarted = yield* approvalRequests;
 
       expect(
         yield* Effect.flip(Effect.scoped(restarted.open(secondRun, rule, removeNotes))),
-      ).toEqual(new OutcomeUnknown({ rule }));
-      expect((yield* askAndAnswer(restarted, secondRun, "yes")).answered.answer).toBe("yes");
+      ).toEqual(new OutcomeUnknown());
+      expect((yield* askAndAnswer(restarted, secondRun, "no")).answered.answer).toBe("no");
       expect(yield* ledger).toEqual([
         ["run-1", "told"],
-        ["run-2", "yes"],
+        ["run-2", "no"],
       ]);
     }).pipe(Effect.provide(database)),
   );
@@ -249,7 +278,7 @@ describe("approvalRequests", () => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const store = yield* approvalRequests;
-      yield* askAndAnswer(store, firstRun, "yes");
+      yield* askAndAnswer(store, firstRun, "no");
 
       const back = yield* Effect.flip(sql`UPDATE approvals SET state = 'asked'`);
       expect(String(back.reason.cause)).toContain("an approval only moves forward");
@@ -263,7 +292,7 @@ describe("approvalRequests", () => {
       const remove = yield* Effect.flip(sql`DELETE FROM approvals`);
       expect(String(remove.reason.cause)).toContain("approvals cannot be deleted");
 
-      expect(yield* ledger).toEqual([["run-1", "yes"]]);
+      expect(yield* ledger).toEqual([["run-1", "no"]]);
     }).pipe(Effect.provide(database)),
   );
 

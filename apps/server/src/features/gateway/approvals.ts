@@ -15,6 +15,7 @@ import {
   Effect,
   HashMap,
   Option,
+  Ref,
   Schema,
   type Scope,
   Stream,
@@ -33,11 +34,18 @@ type ActionDigest = typeof ActionDigest.Type;
 // The schema writes each object's keys in its own order, so equal actions always read the same.
 const encodeAction = Schema.encodeSync(ToolAction);
 
+/** `bot` taking `action` on a page at `host`, as the gateway resolved it: what a rule judged. */
+export interface ResolvedAction {
+  readonly bot: BotId;
+  readonly action: ToolAction;
+  readonly host: string;
+}
+
 /**
-The digest of `bot` taking `action` on a page at `host`: everything a rule could have read of it, a file's
-contents and a page's element included. Kept in memory only.
+The digest of a resolved action: everything a rule could have read of it, a file's contents and a page's
+element included. Kept in memory only.
 */
-export function digestOf(bot: BotId, action: ToolAction, host: string): ActionDigest {
+export function digestOf({ bot, action, host }: ResolvedAction): ActionDigest {
   return ActionDigest.make(
     createHash("sha256")
       .update(JSON.stringify([bot, encodeAction(action), host]))
@@ -74,21 +82,22 @@ interface Answered {
 /** Another question waits for the person in this conversation. */
 export class AlreadyWaiting extends Schema.TaggedError<AlreadyWaiting>()("AlreadyWaiting", {}) {}
 
-/** The person said no to an action `rule` asked about earlier in this run. */
-export class DeclinedEarlier extends Schema.TaggedError<DeclinedEarlier>()("DeclinedEarlier", {
-  rule: Schema.String,
-}) {}
+/** The person said no to an action the same ask rule asked about earlier in this run. */
+export class DeclinedEarlier extends Schema.TaggedError<DeclinedEarlier>()("DeclinedEarlier", {}) {}
 
 /**
-An action `rule` asked about was approved and started in an earlier run, and that run never said what
-became of it, as when the server stopped. It is not run again.
+An action the same ask rule asked about was approved and started in an earlier run, and that run never
+said what became of it, as when the turn or the server stopped. It is not run again.
 */
-export class OutcomeUnknown extends Schema.TaggedError<OutcomeUnknown>()("OutcomeUnknown", {
-  rule: Schema.String,
-}) {}
+export class OutcomeUnknown extends Schema.TaggedError<OutcomeUnknown>()("OutcomeUnknown", {}) {}
 
-/** The action resolved differently after the person answered, so their answer does not cover it. */
-export class ActionChanged extends Schema.TaggedError<ActionChanged>()("ActionChanged", {}) {}
+/**
+The action resolved as `action` after the person answered, not as the one they were asked about, so their
+answer does not cover it.
+*/
+export class ActionChanged extends Schema.TaggedError<ActionChanged>()("ActionChanged", {
+  action: ToolAction,
+}) {}
 
 /** The approval was already spent on its action, which runs once only. */
 export class AlreadySpent extends Schema.TaggedError<AlreadySpent>()("AlreadySpent", {}) {}
@@ -113,10 +122,13 @@ export interface OpenApproval {
   ) => Effect.Effect<Answered, LedgerFailed>;
   /**
   Spends a yes on the action, once: `current`, the action as it resolves now, must be the one asked about.
+  A yes not spent by the time the question's scope closes lapses.
   */
   readonly spend: (
-    current: ActionDigest,
+    current: ResolvedAction,
   ) => Effect.Effect<void, ActionChanged | AlreadySpent | LedgerFailed>;
+  /** Whether {@link spend} spent the yes, so the action was carried out or started. */
+  readonly spent: Effect.Effect<boolean>;
   /** Records that the Bot was told what became of the action the yes was spent on. */
   readonly finish: Effect.Effect<void>;
 }
@@ -134,7 +146,7 @@ type Questions = HashMap.HashMap<ConversationId, Waiting>;
 /** One forward move of a ledger row. */
 type Move =
   | { readonly from: "asked"; readonly to: ApprovalAnswer }
-  | { readonly from: "yes"; readonly to: "spent" }
+  | { readonly from: "yes"; readonly to: "spent" | "lapsed" }
   | { readonly from: "spent"; readonly to: "finished" | "told" };
 
 const notWaiting = new NoApprovalWaiting({
@@ -150,8 +162,8 @@ function ledgerFailed(error: { readonly message: string }) {
 /**
 Where each conversation's question waits for the person, one at a time, and the ledger that keeps what
 became of every one across restarts. The question waits in memory, inside one turn; the ledger is in the
-database, so a yes is spent once, a no holds for the rest of its run, and an action approved before a
-restart is never run again.
+database, so a yes is spent once or lapses, a no holds for the rest of its run, and an action approved
+before a restart is never run again.
 */
 export const approvalRequests = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -211,7 +223,7 @@ export const approvalRequests = Effect.gen(function* () {
       LIMIT 1
     `.pipe(Effect.mapError(ledgerFailed));
 
-    if (declined.length > 0) return yield* new DeclinedEarlier({ rule });
+    if (declined.length > 0) return yield* new DeclinedEarlier();
 
     const told = yield* sql`
       UPDATE approvals SET state = 'told', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
@@ -220,23 +232,26 @@ export const approvalRequests = Effect.gen(function* () {
       RETURNING id
     `.pipe(Effect.mapError(ledgerFailed));
 
-    if (told.length > 0) return yield* new OutcomeUnknown({ rule });
+    if (told.length > 0) return yield* new OutcomeUnknown();
   });
 
   /**
-  Holds a question about the action `digest` names, which `rule` asks about, for `turn`'s conversation
-  until the scope closes. Fails while another question waits there, or when the ledger refuses it.
+  Holds a question about `asked`, which the ask rule `rule` asks about, for `turn`'s conversation until the
+  scope closes, and then lapses a yes it did not spend. Fails while another question waits there, or when
+  the ledger refuses it.
   */
   const open = (
     turn: TurnRef,
     rule: string,
-    digest: ActionDigest,
+    asked: ResolvedAction,
   ): Effect.Effect<
     OpenApproval,
     AlreadyWaiting | DeclinedEarlier | OutcomeUnknown | LedgerFailed,
     Scope.Scope
-  > =>
-    Effect.acquireRelease(
+  > => {
+    const digest = digestOf(asked);
+
+    return Effect.acquireRelease(
       Effect.gen(function* () {
         const waiting: Waiting = {
           id: ApprovalId.make(crypto.randomUUID()),
@@ -256,10 +271,19 @@ export const approvalRequests = Effect.gen(function* () {
 
         return waiting;
       }),
-      ({ id }) => withdraw(turn.conversation, id),
+      ({ id }) =>
+        withdraw(turn.conversation, id).pipe(
+          Effect.andThen(advance(id, { from: "yes", to: "lapsed" })),
+          Effect.catchTag("LedgerFailed", (error) =>
+            Effect.logWarning("An unspent yes could not be recorded as lapsed").pipe(
+              Effect.annotateLogs({ approval: id, reason: error.message }),
+            ),
+          ),
+        ),
     ).pipe(
       Effect.tap(() => ledgerAllows(turn, rule)),
-      Effect.map(({ id, answer }): OpenApproval => {
+      Effect.bind("spent", () => Ref.make(false)),
+      Effect.map(({ id, answer, spent }): OpenApproval => {
         const record = (given: ApprovalAnswer) =>
           advance(id, { from: "asked", to: given }).pipe(
             Effect.andThen(withdraw(turn.conversation, id)),
@@ -321,11 +345,12 @@ export const approvalRequests = Effect.gen(function* () {
               ),
             ),
           spend: (current) =>
-            current === digest
-              ? Effect.flatMap(advance(id, { from: "yes", to: "spent" }), (spent) =>
-                  spent ? Effect.void : Effect.fail(new AlreadySpent()),
+            digestOf(current) === digest
+              ? Effect.flatMap(advance(id, { from: "yes", to: "spent" }), (moved) =>
+                  moved ? Ref.set(spent, true) : Effect.fail(new AlreadySpent()),
                 )
-              : Effect.fail(new ActionChanged()),
+              : Effect.fail(new ActionChanged({ action: current.action })),
+          spent: Ref.get(spent),
           finish: advance(id, { from: "spent", to: "finished" }).pipe(
             Effect.asVoid,
             Effect.catchTag("LedgerFailed", (error) =>
@@ -337,6 +362,7 @@ export const approvalRequests = Effect.gen(function* () {
         };
       }),
     );
+  };
 
   const pending = (conversation: ConversationId) =>
     SubscriptionRef.changes(questions).pipe(

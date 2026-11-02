@@ -49,8 +49,18 @@ import {
 } from "../../shared/tool-result.ts";
 import { redact, redactCommand, redactUrl } from "../../shared/redact.ts";
 import { actionFacts, hostOf } from "./action-facts.ts";
-import { ApprovalRequests, approvalRequests, digestOf, type OpenApproval } from "./approvals.ts";
-import { ComputerControl, controlDoors } from "./control.ts";
+import {
+  type ActionChanged,
+  type AlreadySpent,
+  type AlreadyWaiting,
+  ApprovalRequests,
+  approvalRequests,
+  type DeclinedEarlier,
+  type LedgerFailed,
+  type OpenApproval,
+  type OutcomeUnknown,
+} from "./approvals.ts";
+import { ComputerControl, controlDoors, type PersonHasControl } from "./control.ts";
 import { type ComputerFailure, failureOutcome, personAudit } from "./person-audit.ts";
 import { fileTarget } from "./file-target.ts";
 import {
@@ -62,7 +72,7 @@ import {
 } from "./present.ts";
 import { snapshotStore } from "./snapshot-store.ts";
 import { spanEvent } from "./span-event.ts";
-import { secretRequests, SecretRequests } from "./secrets.ts";
+import { type AlreadyAsked, secretRequests, SecretRequests } from "./secrets.ts";
 import { auditAction, DirectAction, SecretRequest, ToolAction } from "./tool-action.ts";
 import { FileTransfers, fileTransfers } from "./transfers.ts";
 
@@ -226,6 +236,25 @@ class NeedsApproval extends Schema.TaggedError<NeedsApproval>()("NeedsApproval",
 /** An ask rule holds for an action from a call that names no turn, so there is no person to ask. */
 class NoOneToAsk extends Schema.TaggedError<NoOneToAsk>()("NoOneToAsk", {}) {}
 
+/** Why the gateway did not carry out a Bot's call: each is one `deny` row, and what the model reads. */
+type Denial =
+  | NotGranted
+  | AlreadyAsked
+  | PersonHasControl
+  | UnknownRef
+  | UnknownPage
+  | RuleRefused
+  | OutsideWorkspace
+  | NoTextField
+  | NoSite
+  | NoOneToAsk
+  | AlreadyWaiting
+  | DeclinedEarlier
+  | OutcomeUnknown
+  | ActionChanged
+  | AlreadySpent
+  | LedgerFailed;
+
 /** How much of a failed rule's error a deny row keeps. */
 const ruleErrorLimit = 500;
 
@@ -327,6 +356,9 @@ export const approvalWaitLimit = Duration.minutes(10);
 
 /** Who answered a question a rule put to the person, as its `approval.answered` row says. */
 type AnsweredBy = "person" | "time limit" | "the turn was stopped";
+
+/** Why a call ended early: the person stopped the turn it was made in. */
+const turnStopped = "the turn was stopped";
 
 /** What a Bot is told after its person, or the time limit, said no. */
 const holdOff =
@@ -490,13 +522,16 @@ const questionOf = DirectAction.match({
   list_files: ({ path }) => `List the files in ${path}?`,
 });
 
+/** What an audit row's `detail` holds. */
+type Detail = Readonly<Record<string, Schema.Json>>;
+
 /** Why a forwarded call did not come back with a result. */
 type ForwardFailure = ComputerFailure | ToolTimedOut;
 
 /** What a forwarded call became: its outcome row, and what the model is told. */
 interface Settled {
   readonly outcome: Outcome;
-  readonly detail: Readonly<Record<string, Schema.Json>>;
+  readonly detail: Detail;
   readonly answer: Result.Result<string, ToolFailed>;
 }
 
@@ -774,7 +809,7 @@ export const gatewayLayer = Layer.effectContext(
       bot: BotId,
       action: ToolAction,
       allowRule: string,
-      more: Readonly<Record<string, Schema.Json>>,
+      more: Detail,
     ) {
       const tool = action.action;
 
@@ -803,9 +838,7 @@ export const gatewayLayer = Layer.effectContext(
         return yield* forward(computer, bot, action).pipe(toolResult(forwarding[action.action]));
       }).pipe(
         Effect.result,
-        Effect.onInterrupt(() =>
-          rows.settle(allowRow, "unknown", { bot, reason: "the turn was stopped" }),
-        ),
+        Effect.onInterrupt(() => rows.settle(allowRow, "unknown", { bot, reason: turnStopped })),
       );
 
       const settled = settle(action.action, tool, forwarded);
@@ -836,6 +869,83 @@ export const gatewayLayer = Layer.effectContext(
       return yield* forwardAndSettle(bot, action.action, action, allowRow);
     });
 
+    /**
+    Writes the deny row of each refusal `self` fails with, `base` first in its detail, and tells the model
+    why `tool` did not run. A `ToolFailed` is already what the model reads, so it passes on.
+    */
+    const denyRefusals =
+      (tool: ToolName, base: Detail) =>
+      <A, R>(self: Effect.Effect<A, ToolFailed | Denial, R>): Effect.Effect<A, ToolFailed, R> =>
+        Effect.catchTag(self, "ToolFailed", Effect.fail, refused(tool, base));
+
+    /** The deny row of `refusal`, `base` first in its detail, and why `tool` did not run. */
+    const refused = (tool: ToolName, base: Detail) => {
+      const notRun = (tag: keyof typeof notAsked, more: Detail = {}) =>
+        deny(
+          tool,
+          { ...base, ...more, reason: notAsked[tag].reason },
+          `${tool} did not run: ${notAsked[tag].why}.`,
+        );
+
+      return Match.typeTags<Denial, Effect.Effect<never, ToolFailed>>()({
+        AlreadyAsked: () => deny(tool, { ...base, reason: "already asked" }, alreadyAskedAnswer),
+        NotGranted: ({ claim }) =>
+          deny(
+            tool,
+            { ...base, reason: `not granted to ${claimedName(claim)}` },
+            notGrantedAnswer(tool, claim),
+          ),
+        PersonHasControl: () =>
+          spanEvent("control.refused").pipe(
+            Effect.andThen(
+              deny(tool, { ...base, reason: "a person has control" }, personHasControlAnswer(tool)),
+            ),
+          ),
+        UnknownRef: (unknown) =>
+          deny(
+            tool,
+            { ...base, ref: unknown.ref, reason: unknown.reason },
+            unknownRefAnswer(tool, unknown),
+          ),
+        UnknownPage: () => deny(tool, { ...base, reason: unreadSnapshot }, unknownPageAnswer(tool)),
+        RuleRefused: ({ action, verdict }) => {
+          const { detail, why } = ruleRefusal(verdict);
+
+          return Effect.andThen(
+            Refused.guards.NoneAllowed(verdict)
+              ? Effect.void
+              : Effect.annotateCurrentSpan({ "gateway.rule": verdict.rule }),
+            deny(
+              tool,
+              { ...base, ...auditDetail(action), ...detail },
+              ruleRefusedAnswer(tool, why),
+            ),
+          );
+        },
+        OutsideWorkspace: ({ action }) =>
+          deny(
+            tool,
+            { ...base, ...fileTarget(action.path), reason: "outside workspace" },
+            outsideWorkspaceAnswer(action),
+          ),
+        NoTextField: ({ action }) =>
+          deny(
+            tool,
+            { ...base, ...auditDetail(action), reason: "not a text field" },
+            noTextFieldAnswer(action),
+          ),
+        NoSite: ({ action }) =>
+          deny(tool, { ...base, ...auditDetail(action), reason: "no site" }, noSiteAnswer(action)),
+        NoOneToAsk: () => notRun("NoOneToAsk"),
+        AlreadyWaiting: () => notRun("AlreadyWaiting"),
+        DeclinedEarlier: () => notRun("DeclinedEarlier"),
+        OutcomeUnknown: () => notRun("OutcomeUnknown"),
+        ActionChanged: ({ action }) => notRun("ActionChanged", auditDetail(action)),
+        AlreadySpent: () => notRun("AlreadySpent"),
+        LedgerFailed: () => notRun("LedgerFailed"),
+      });
+    };
+
     /** Writes who answered `approval`, and how. */
     const recordAnswer = (
       tool: ToolName,
@@ -864,9 +974,9 @@ export const gatewayLayer = Layer.effectContext(
         Effect.onInterrupt(() =>
           Effect.annotateCurrentSpan({
             "approval.answer": "no",
-            "approval.by": "the turn was stopped",
+            "approval.by": turnStopped,
           }).pipe(
-            Effect.andThen(recordAnswer(tool, bot, approval, "no", "the turn was stopped")),
+            Effect.andThen(recordAnswer(tool, bot, approval, "no", turnStopped)),
             Effect.ignore,
           ),
         ),
@@ -877,9 +987,9 @@ export const gatewayLayer = Layer.effectContext(
     /**
     Carries out `request` once its person said yes to `approval`: resolved again, through the door, and
     spent on the action only when it resolves to the action they were asked about. It then runs once,
-    its `allow` row naming the allow rule `allowRule`, the ask rule `askRule` and the approval. Whatever became of
-    it, the approval is finished once the Bot is told; a turn stopped meanwhile leaves it spent, so the
-    next run is told its outcome is unknown.
+    its `allow` row naming the allow rule `allowRule`, the ask rule `askRule` and the approval. Whatever
+    became of it, the approval is finished once the Bot is told; a turn stopped meanwhile leaves it spent,
+    so the next run is told its outcome is unknown.
     */
     const carryOutApproved = Effect.fnUntraced(function* (
       bot: BotId,
@@ -889,12 +999,18 @@ export const gatewayLayer = Layer.effectContext(
       askRule: string,
     ) {
       const { action, host } = yield* resolve(bot, request);
-      yield* approval.spend(digestOf(bot, action, host));
 
-      const allowRow = yield* allow(bot, action, allowRule, {
-        asked: askRule,
-        approval: approval.id,
-      });
+      // Uninterruptible, so a stopped turn finds the yes unspent, and it lapses, or spent with its allow
+      // row written, which an outcome row then settles.
+      const allowRow = yield* Effect.uninterruptible(
+        approval
+          .spend({ bot, action, host })
+          .pipe(
+            Effect.andThen(
+              allow(bot, action, allowRule, { asked: askRule, approval: approval.id }),
+            ),
+          ),
+      );
 
       return yield* forwardAndSettle(bot, action.action, action, allowRow).pipe(
         Effect.onExit((exit) => (Exit.hasInterrupts(exit) ? Effect.void : approval.finish)),
@@ -907,7 +1023,8 @@ export const gatewayLayer = Layer.effectContext(
     question waits there, after a no to that rule in this run, or once after an earlier run spent a yes
     on it and never said what became of it. Its `ask` row and its ledger row are written, then it is shown
     and waits for the person outside the door, at most {@link approvalWaitLimit}. A no, or no answer,
-    refuses it; a yes carries it out.
+    refuses it; a yes carries it out. From its `ask` row on, every way it ends is a row that names the
+    approval: its `allow` row, or a `deny` row, also when the turn is stopped before it ran.
     */
     const askThenCarryOut = (
       bot: BotId,
@@ -920,57 +1037,47 @@ export const gatewayLayer = Layer.effectContext(
       const tool = action.action;
       const asked = { bot, ...auditDetail(action), rule: askRule };
 
-      const notRun = ({ _tag }: { readonly _tag: keyof typeof notAsked }) =>
-        deny(
-          tool,
-          { ...asked, reason: notAsked[_tag].reason },
-          `${tool} did not run: ${notAsked[_tag].why}.`,
-        );
+      const answerThenCarryOut = Effect.fnUntraced(function* (approval: OpenApproval) {
+        const { answer, by } = yield* askPerson(tool, bot, askRule, approval, questionOf(action));
+
+        if (answer === "no") {
+          return yield* deny(
+            tool,
+            { ...asked, approval: approval.id, reason: by === "person" ? "declined" : "no answer" },
+            declinedApprovalAnswer(tool, by),
+          );
+        }
+
+        return yield* doors.admit(carryOutApproved(bot, request, approval, allowRule, askRule), {
+          queued,
+        });
+      });
 
       return Effect.scoped(
         Effect.gen(function* () {
           if (Option.isNone(turn)) return yield* new NoOneToAsk();
 
-          const approval = yield* approvals.open(turn.value, askRule, digestOf(bot, action, host));
+          const approval = yield* approvals.open(turn.value, askRule, { bot, action, host });
+          const named = { ...asked, approval: approval.id };
 
-          yield* record(tool, "ask", auditAction(tool), {
-            ...asked,
-            allowedBy: allowRule,
-            approval: approval.id,
-          });
+          yield* record(tool, "ask", auditAction(tool), { ...named, allowedBy: allowRule });
           yield* Effect.annotateCurrentSpan({
             "gateway.decision": "ask",
             "gateway.asked": askRule,
           });
-          const { answer, by } = yield* askPerson(tool, bot, askRule, approval, questionOf(action));
 
-          if (answer === "no") {
-            return yield* deny(
-              tool,
-              {
-                ...asked,
-                approval: approval.id,
-                reason: by === "person" ? "declined" : "no answer",
-              },
-              declinedApprovalAnswer(tool, by),
-            );
-          }
-
-          return yield* doors.admit(carryOutApproved(bot, request, approval, allowRule, askRule), {
-            queued,
-          });
+          return yield* answerThenCarryOut(approval).pipe(
+            Effect.onInterrupt(() =>
+              Effect.flatMap(approval.spent, (spent) =>
+                spent
+                  ? Effect.void
+                  : rows.deny(auditAction(tool), { ...named, reason: turnStopped }),
+              ),
+            ),
+            denyRefusals(tool, named),
+          );
         }),
-      ).pipe(
-        Effect.catchTags({
-          NoOneToAsk: notRun,
-          AlreadyWaiting: notRun,
-          DeclinedEarlier: notRun,
-          OutcomeUnknown: notRun,
-          ActionChanged: notRun,
-          AlreadySpent: notRun,
-          LedgerFailed: notRun,
-        }),
-      );
+      ).pipe(denyRefusals(tool, asked));
     };
 
     /**
@@ -1060,9 +1167,7 @@ export const gatewayLayer = Layer.effectContext(
 
           const answered = yield* open.ask(capText(field, fieldLimit), host).pipe(
             Effect.andThen(open.wait(secretWaitLimit)),
-            Effect.onInterrupt(() =>
-              rows.settle(allowRow, "failed", { bot, reason: "the turn was stopped" }),
-            ),
+            Effect.onInterrupt(() => rows.settle(allowRow, "failed", { bot, reason: turnStopped })),
           );
 
           const unanswered = (reason: string, message: string) =>
@@ -1123,72 +1228,7 @@ export const gatewayLayer = Layer.effectContext(
                   askThenCarryOut(granted, turnOf(claim), request, needs, queued),
                 ),
               );
-      }).pipe(
-        Effect.catchTags({
-          AlreadyAsked: () =>
-            deny(request.action, { bot, reason: "already asked" }, alreadyAskedAnswer),
-          NotGranted: (refused) =>
-            deny(
-              request.action,
-              { bot, reason: `not granted to ${claimedName(refused.claim)}` },
-              notGrantedAnswer(request.action, refused.claim),
-            ),
-          PersonHasControl: () =>
-            spanEvent("control.refused").pipe(
-              Effect.andThen(
-                deny(
-                  request.action,
-                  { bot, reason: "a person has control" },
-                  personHasControlAnswer(request.action),
-                ),
-              ),
-            ),
-          UnknownRef: (unknown) =>
-            deny(
-              request.action,
-              { bot, ref: unknown.ref, reason: unknown.reason },
-              unknownRefAnswer(request.action, unknown),
-            ),
-          UnknownPage: () =>
-            deny(
-              request.action,
-              { bot, reason: unreadSnapshot },
-              unknownPageAnswer(request.action),
-            ),
-          RuleRefused: ({ action, verdict }) => {
-            const { detail, why } = ruleRefusal(verdict);
-
-            return Effect.andThen(
-              Refused.guards.NoneAllowed(verdict)
-                ? Effect.void
-                : Effect.annotateCurrentSpan({ "gateway.rule": verdict.rule }),
-              deny(
-                action.action,
-                { bot, ...auditDetail(action), ...detail },
-                ruleRefusedAnswer(action.action, why),
-              ),
-            );
-          },
-          OutsideWorkspace: ({ action }) =>
-            deny(
-              action.action,
-              { bot, ...fileTarget(action.path), reason: "outside workspace" },
-              outsideWorkspaceAnswer(action),
-            ),
-          NoTextField: ({ action }) =>
-            deny(
-              action.action,
-              { bot, ...auditDetail(action), reason: "not a text field" },
-              noTextFieldAnswer(action),
-            ),
-          NoSite: ({ action }) =>
-            deny(
-              action.action,
-              { bot, ...auditDetail(action), reason: "no site" },
-              noSiteAnswer(action),
-            ),
-        }),
-      );
+      }).pipe(denyRefusals(request.action, { bot }));
     });
 
     return Context.make(Gateway, Gateway.of({ refuse, act })).pipe(

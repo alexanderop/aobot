@@ -78,7 +78,8 @@ const keepSnapshotUrl = Effect.gen(function* () {
 
 // The ledger of every question a rule put to a person. A row only moves forward, one compare-and-set
 // UPDATE at a time, so an approved action is spent once and a restart can tell it was started:
-// asked -> yes | no, yes -> spent, spent -> finished | told. No action, digest or typed text is kept.
+// asked -> yes | no, yes -> spent | lapsed, spent -> finished | told. No action, digest or typed text is
+// kept.
 const createApprovals = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
@@ -88,7 +89,8 @@ const createApprovals = Effect.gen(function* () {
       conversation_id text NOT NULL,
       run_id text NOT NULL,
       rule text NOT NULL,
-      state text NOT NULL CHECK (state IN ('asked', 'yes', 'no', 'spent', 'finished', 'told')),
+      state text NOT NULL
+        CHECK (state IN ('asked', 'yes', 'no', 'spent', 'lapsed', 'finished', 'told')),
       updated_at text NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     )
   `;
@@ -103,7 +105,7 @@ const createApprovals = Effect.gen(function* () {
       OR NEW.rule IS NOT OLD.rule
       OR NOT (
         (OLD.state = 'asked' AND NEW.state IN ('yes', 'no'))
-        OR (OLD.state = 'yes' AND NEW.state = 'spent')
+        OR (OLD.state = 'yes' AND NEW.state IN ('spent', 'lapsed'))
         OR (OLD.state = 'spent' AND NEW.state IN ('finished', 'told'))
       )
     BEGIN SELECT RAISE(ABORT, 'an approval only moves forward'); END

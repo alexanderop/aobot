@@ -15,6 +15,7 @@ import type { ToolFailed } from "../../shared/tool-result.ts";
 import { assistant } from "../bots/testing/test-bots.ts";
 import { policyFrom } from "../policy/testing/test-policy.ts";
 import { ApprovalRequests } from "./approvals.ts";
+import { ComputerControl } from "./control.ts";
 import { approvalWaitLimit, Claim, Gateway } from "./gateway.ts";
 import { database, decodedTrail, fakeComputers, startGateway } from "./testing/test-gateway.ts";
 
@@ -352,7 +353,114 @@ describe("Gateway asking the person", () => {
         "click did not run: what it acts on changed after your person answered, so their answer does not cover it. Take a snapshot and ask again.",
       );
       expect(computer.actions.map((action) => action.action)).toEqual(["snapshot", "snapshot"]);
-      expect((yield* decodedTrail).map(([row]) => row)).not.toContain("click · allow");
+      expect((yield* decodedTrail).at(-1)).toEqual([
+        "click · deny",
+        {
+          bot: "assistant",
+          ref: "e3",
+          role: "button",
+          name: "Delete everything",
+          host: "example.com",
+          rule: "ask-before-rm",
+          approval: clicked.approval,
+          reason: "action changed",
+        },
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("refuses a yes once a person took the computer, naming the approval", () =>
+    Effect.gen(function* () {
+      const computer = shell();
+
+      const [shown, result] = yield* Effect.gen(function* () {
+        const acting = yield* actInBackground(firstRun, removeNotes);
+        const shown = yield* untilShown;
+        yield* ComputerControl.use((control) => control.take);
+        yield* answerTo(shown, "yes");
+
+        return [shown, yield* Fiber.join(acting)] as const;
+      }).pipe(Effect.provide(startGateway(computer.layer, askBeforeRm)));
+
+      expect(computer.actions).toEqual([]);
+      expect(refusalOf(result)).toBe(
+        "run did not run: a person has control of your computer. Wait until they hand it back, then take a snapshot.",
+      );
+      expect((yield* decodedTrail).at(-1)).toEqual([
+        "run · deny",
+        {
+          bot: "assistant",
+          command: "rm notes.txt",
+          rule: "ask-before-rm",
+          approval: shown.approval,
+          reason: "a person has control",
+        },
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("refuses an approved command whose turn was stopped while it waited its turn", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+
+      const computer = fakeComputers({
+        run: () =>
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.as({
+              action: "run" as const,
+              end: CommandEnd.cases.Exited.make({ code: 0 }),
+              stdout: { text: "", truncated: false },
+              stderr: { text: "", truncated: false },
+              leftOutputOpen: false,
+            }),
+          ),
+      });
+
+      const shown = yield* Effect.gen(function* () {
+        const acting = yield* actInBackground(firstRun, removeNotes);
+        const shown = yield* untilShown;
+        const long = yield* actInBackground(firstRun, { action: "run", command: "sleep 100" });
+        yield* Deferred.await(started);
+        yield* answerTo(shown, "yes");
+        yield* Effect.yieldNow;
+        yield* Fiber.interrupt(acting);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(long);
+
+        return shown;
+      }).pipe(Effect.provide(startGateway(computer.layer, askBeforeRm)));
+
+      expect(computer.actions).toEqual([{ action: "run", command: "sleep 100" }]);
+      expect(
+        (yield* decodedTrail).filter(([, detail]) => detail.approval === shown.approval),
+      ).toEqual([
+        [
+          "run · ask",
+          {
+            bot: "assistant",
+            command: "rm notes.txt",
+            rule: "ask-before-rm",
+            allowedBy: "granted-tools",
+            approval: shown.approval,
+          },
+        ],
+        [
+          "approval.answered · answered",
+          { bot: "assistant", approval: shown.approval, answer: "yes", by: "person" },
+        ],
+        [
+          "run · deny",
+          {
+            bot: "assistant",
+            command: "rm notes.txt",
+            rule: "ask-before-rm",
+            approval: shown.approval,
+            reason: "the turn was stopped",
+          },
+        ],
+      ]);
     }).pipe(Effect.provide(database)),
   );
 
@@ -407,7 +515,7 @@ describe("Gateway asking the person", () => {
       }).pipe(Effect.provide(database)),
   );
 
-  it.effect("records no for a question whose turn was stopped while it waited", () =>
+  it.effect("records no and refuses a question whose turn was stopped while it waited", () =>
     Effect.gen(function* () {
       const computer = shell();
 
@@ -424,6 +532,16 @@ describe("Gateway asking the person", () => {
         [
           "approval.answered · answered",
           { bot: "assistant", approval: shown.approval, answer: "no", by: "the turn was stopped" },
+        ],
+        [
+          "run · deny",
+          {
+            bot: "assistant",
+            command: "rm notes.txt",
+            rule: "ask-before-rm",
+            approval: shown.approval,
+            reason: "the turn was stopped",
+          },
         ],
       ]);
     }).pipe(Effect.provide(database)),
