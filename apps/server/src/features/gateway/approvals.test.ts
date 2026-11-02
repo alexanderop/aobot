@@ -11,6 +11,7 @@ import {
   approvals,
   DeclinedEarlier,
   digestOf,
+  type OpenApproval,
   OutcomeUnknown,
 } from "./approvals.ts";
 import { database } from "./testing/test-gateway.ts";
@@ -39,7 +40,19 @@ const ledger = Effect.gen(function* () {
   return rows.map((row) => [row["run_id"], row["state"]]);
 });
 
-/** Opens a question about removing notes.txt in `turn`, shows it and answers it `answer`, in a scope of its own. */
+/** The question shown in `shownConversation`, once there is one. */
+const untilShown = (requests: ApprovalRequests["Service"], shownConversation = conversation) =>
+  requests.pending(shownConversation).pipe(
+    Stream.filter(Option.isSome),
+    Stream.runHead,
+    Effect.map((shown) => Option.getOrThrow(Option.flatten(shown))),
+  );
+
+/** Asks `approval` about removing notes.txt, in a fiber of its own. */
+const asking = (approval: OpenApproval) =>
+  Effect.forkChild(approval.ask("run", "Run `rm notes.txt`?", "10 minutes"));
+
+/** Opens a question about removing notes.txt in `turn` and answers it `answer`, in a scope of its own. */
 const askAndAnswer = (
   store: Effect.Success<typeof approvals>,
   turn: typeof firstRun,
@@ -48,10 +61,11 @@ const askAndAnswer = (
   Effect.scoped(
     Effect.gen(function* () {
       const approval = yield* store.open(turn, rule, removeNotes);
-      yield* approval.show("run", "Run `rm notes.txt`?");
+      const waiting = yield* asking(approval);
+      yield* untilShown(store.requests, turn.conversation);
       yield* store.requests.answer(turn.conversation, approval.id, answer);
 
-      return { approval, answered: yield* approval.wait("10 minutes") };
+      return { approval, answered: yield* Fiber.join(waiting) };
     }),
   );
 
@@ -102,16 +116,18 @@ describe("approvals", () => {
             }),
           );
 
-          yield* approval.show("run", "Run `rm notes.txt`?");
+          const waiting = yield* asking(approval);
 
+          expect(yield* untilShown(store.requests)).toEqual({
+            approval: approval.id,
+            tool: "run",
+            question: "Run `rm notes.txt`?",
+          });
           expect(yield* ledger).toEqual([["run-1", "asked"]]);
-          expect(yield* shownIn(store.requests)).toEqual(
-            Option.some({ approval: approval.id, tool: "run", question: "Run `rm notes.txt`?" }),
-          );
 
           yield* store.requests.answer(conversation, approval.id, "yes");
 
-          expect(yield* approval.wait("10 minutes")).toEqual({ answer: "yes", by: "person" });
+          expect(yield* Fiber.join(waiting)).toEqual({ answer: "yes", by: "person" });
           expect(yield* shownIn(store.requests)).toEqual(Option.none());
           expect(yield* ledger).toEqual([["run-1", "yes"]]);
         }),
@@ -133,10 +149,9 @@ describe("approvals", () => {
           run: firstRun.run,
         };
 
-        const other = yield* store.open(elsewhere, rule, removeNotes);
-        yield* other.show("run", "Run `rm notes.txt`?");
+        yield* asking(yield* store.open(elsewhere, rule, removeNotes));
 
-        expect(Option.isSome(yield* shownIn(store.requests, elsewhere.conversation))).toBe(true);
+        expect((yield* untilShown(store.requests, elsewhere.conversation)).tool).toBe("run");
       }),
     ).pipe(Effect.provide(database)),
   );
@@ -146,9 +161,8 @@ describe("approvals", () => {
       Effect.gen(function* () {
         const store = yield* approvals;
         const approval = yield* store.open(firstRun, rule, removeNotes);
-        yield* approval.show("run", "Run `rm notes.txt`?");
-
-        const waiting = yield* Effect.forkChild(approval.wait("10 minutes"));
+        const waiting = yield* asking(approval);
+        yield* untilShown(store.requests);
         yield* TestClock.adjust("10 minutes");
 
         expect(yield* Fiber.join(waiting)).toEqual({ answer: "no", by: "time limit" });
@@ -164,11 +178,8 @@ describe("approvals", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const store = yield* approvals;
-        const approval = yield* store.open(firstRun, rule, removeNotes);
-        yield* approval.show("run", "Run `rm notes.txt`?");
-
-        const waiting = yield* Effect.forkChild(approval.wait("10 minutes"));
-        yield* Effect.yieldNow;
+        const waiting = yield* asking(yield* store.open(firstRun, rule, removeNotes));
+        yield* untilShown(store.requests);
         yield* Fiber.interrupt(waiting);
 
         expect(yield* ledger).toEqual([["run-1", "no"]]);

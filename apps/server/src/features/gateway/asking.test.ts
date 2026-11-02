@@ -1,0 +1,443 @@
+import {
+  type ApprovalAnswer,
+  CommandEnd,
+  ConversationId,
+  type PageAction,
+  type PageRead,
+  type PendingApproval,
+  RunId,
+} from "@aobot/domain";
+import { describe, expect, it } from "@effect/vitest";
+import { Deferred, Effect, Fiber, Option, Result, Stream } from "effect";
+import { TestClock } from "effect/testing";
+import { recordedSpans } from "../../shared/testing/recorded-spans.ts";
+import type { ToolFailed } from "../../shared/tool-result.ts";
+import { assistant } from "../bots/testing/test-bots.ts";
+import { policyFrom } from "../policy/testing/test-policy.ts";
+import { ApprovalRequests } from "./approvals.ts";
+import { approvalWaitLimit, Claim, Gateway } from "./gateway.ts";
+import { database, decodedTrail, fakeComputers, startGateway } from "./testing/test-gateway.ts";
+
+const conversation = ConversationId.make("conversation-1");
+
+/** The assistant's call in run `run` of the conversation. */
+const inRun = (run: string) =>
+  Claim.cases.Named.make({ bot: assistant.id, turn: { conversation, run: RunId.make(run) } });
+
+const firstRun = inRun("run-1");
+
+const askBeforeRm = policyFrom(`deny: []
+allow:
+  - name: granted-tools
+    when: "true"
+ask:
+  - name: ask-before-rm
+    when: command.startsWith("rm") || element.name == "Delete"
+`);
+
+const removeNotes = { action: "run", command: "rm notes.txt" } as const;
+
+/** A computer whose every command exits 0, and keeps every action it was sent. */
+function shell() {
+  return fakeComputers({
+    run: () =>
+      Effect.succeed({
+        action: "run",
+        end: CommandEnd.cases.Exited.make({ code: 0 }),
+        stdout: { text: "", truncated: false },
+        stderr: { text: "", truncated: false },
+        leftOutputOpen: false,
+      }),
+  });
+}
+
+/** The question the person is shown, once the conversation waits on one. */
+const untilShown = ApprovalRequests.use((requests) =>
+  requests.pending(conversation).pipe(
+    Stream.filter(Option.isSome),
+    Stream.runHead,
+    Effect.map((shown) => Option.getOrThrow(Option.flatten(shown))),
+  ),
+);
+
+/** The question the person is shown now, if any. */
+const shownNow = ApprovalRequests.use((requests) =>
+  requests.pending(conversation).pipe(Stream.runHead, Effect.map(Option.flatten)),
+);
+
+/** The person's `answer` to `shown`. */
+const answerTo = (shown: PendingApproval, answer: ApprovalAnswer) =>
+  ApprovalRequests.use((requests) => requests.answer(conversation, shown.approval, answer));
+
+/** What the model read of a call that was refused, or `""` for one that ran. */
+const refusalOf = Result.match({
+  onSuccess: () => "",
+  onFailure: (failure: ToolFailed) => failure.message,
+});
+
+/** `request` in a fiber of its own, as `claim`. */
+const actInBackground = (claim: Claim, request: Parameters<Gateway["Service"]["act"]>[1]) =>
+  Gateway.use((gateway) => Effect.forkChild(Effect.result(gateway.act(claim, request))));
+
+/** `request` as `claim`, answered `answer` once its question is shown, with what the person was shown. */
+const askAndAnswer = (
+  claim: Claim,
+  request: Parameters<Gateway["Service"]["act"]>[1],
+  answer: ApprovalAnswer,
+) =>
+  Effect.gen(function* () {
+    const acting = yield* actInBackground(claim, request);
+    const shown = yield* untilShown;
+    yield* answerTo(shown, answer);
+
+    return { shown, result: yield* Fiber.join(acting) };
+  });
+
+describe("Gateway asking the person", () => {
+  it.effect("runs an action once its person says yes, once, with each step in the trail", () =>
+    Effect.gen(function* () {
+      const computer = shell();
+      const tracing = recordedSpans();
+
+      const { shown, result } = yield* askAndAnswer(firstRun, removeNotes, "yes").pipe(
+        Effect.provide(startGateway(computer.layer, askBeforeRm)),
+        Effect.provide(tracing.layer),
+      );
+
+      expect(shown).toEqual({
+        approval: expect.any(String),
+        tool: "run",
+        question: "Run `rm notes.txt`?",
+      });
+      expect(refusalOf(result)).toBe("");
+      expect(computer.actions).toEqual([removeNotes]);
+
+      const approval = shown.approval;
+
+      expect(yield* decodedTrail).toEqual([
+        [
+          "run · ask",
+          {
+            bot: "assistant",
+            command: "rm notes.txt",
+            rule: "ask-before-rm",
+            allowedBy: "granted-tools",
+            approval,
+          },
+        ],
+        [
+          "approval.answered · answered",
+          { bot: "assistant", approval, answer: "yes", by: "person" },
+        ],
+        [
+          "run · allow",
+          {
+            bot: "assistant",
+            command: "rm notes.txt",
+            rule: "granted-tools",
+            asked: "ask-before-rm",
+            approval,
+          },
+        ],
+        ["run · succeeded", { bot: "assistant" }],
+      ]);
+
+      const waited = tracing.spans.find((span) => span.name === "Gateway.awaitApproval");
+      expect(waited?.attributes.get("gateway.rule")).toBe("ask-before-rm");
+      expect(waited?.attributes.get("approval.answer")).toBe("yes");
+      expect(waited?.attributes.get("approval.by")).toBe("person");
+
+      const acted = tracing.spans.find((span) => span.name === "Gateway.act");
+      expect(acted?.attributes.get("gateway.asked")).toBe("ask-before-rm");
+      expect(acted?.attributes.get("gateway.decision")).toBe("allow");
+      expect(acted?.attributes.get("gateway.outcome")).toBe("succeeded");
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("refuses an action its person says no to, and never sends it to the computer", () =>
+    Effect.gen(function* () {
+      const computer = shell();
+
+      const { shown, result } = yield* askAndAnswer(firstRun, removeNotes, "no").pipe(
+        Effect.provide(startGateway(computer.layer, askBeforeRm)),
+      );
+
+      expect(computer.actions).toEqual([]);
+      expect(refusalOf(result)).toEqual(
+        "run did not run: your person said no. Do not try it, or another way to do it, until they write to you; tell them it did not run.",
+      );
+      expect((yield* decodedTrail).slice(1)).toEqual([
+        [
+          "approval.answered · answered",
+          { bot: "assistant", approval: shown.approval, answer: "no", by: "person" },
+        ],
+        [
+          "run · deny",
+          {
+            bot: "assistant",
+            command: "rm notes.txt",
+            rule: "ask-before-rm",
+            approval: shown.approval,
+            reason: "declined",
+          },
+        ],
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("counts no answer within the time limit as no, and takes no answer after it", () =>
+    Effect.gen(function* () {
+      const computer = shell();
+      const tracing = recordedSpans();
+
+      const [shown, result, late] = yield* Effect.gen(function* () {
+        const acting = yield* actInBackground(firstRun, removeNotes);
+        const shown = yield* untilShown;
+        yield* TestClock.adjust(approvalWaitLimit);
+        const result = yield* Fiber.join(acting);
+
+        return [shown, result, yield* Effect.flip(answerTo(shown, "yes"))] as const;
+      }).pipe(
+        Effect.provide(startGateway(computer.layer, askBeforeRm)),
+        Effect.provide(tracing.layer),
+      );
+
+      expect(computer.actions).toEqual([]);
+      expect(refusalOf(result)).toContain(
+        "your person did not answer within 10m, which counts as no.",
+      );
+      expect(late._tag).toBe("NoApprovalWaiting");
+      expect((yield* decodedTrail).slice(1)).toEqual([
+        [
+          "approval.answered · answered",
+          { bot: "assistant", approval: shown.approval, answer: "no", by: "time limit" },
+        ],
+        [
+          "run · deny",
+          {
+            bot: "assistant",
+            command: "rm notes.txt",
+            rule: "ask-before-rm",
+            approval: shown.approval,
+            reason: "no answer",
+          },
+        ],
+      ]);
+
+      const waited = tracing.spans.find((span) => span.name === "Gateway.awaitApproval");
+      expect(waited?.attributes.get("approval.by")).toBe("time limit");
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect(
+    "refuses an equivalent action without a card after a no, for the rest of the run only",
+    () =>
+      Effect.gen(function* () {
+        const computer = shell();
+
+        const { again, shownAfter, nextRun } = yield* Effect.gen(function* () {
+          yield* askAndAnswer(firstRun, removeNotes, "no");
+
+          const again = yield* Gateway.use((gateway) =>
+            Effect.flip(gateway.act(firstRun, { action: "run", command: "rm ./notes.txt" })),
+          );
+
+          const shownAfter = yield* shownNow;
+          const nextRun = yield* askAndAnswer(inRun("run-2"), removeNotes, "yes");
+
+          return { again, shownAfter, nextRun };
+        }).pipe(Effect.provide(startGateway(computer.layer, askBeforeRm)));
+
+        expect(again.message).toBe(
+          "run did not run: your person already said no to this in this conversation. Do not ask again until they write to you.",
+        );
+        expect(shownAfter).toEqual(Option.none());
+        expect(refusalOf(nextRun.result)).toBe("");
+        expect(computer.actions).toEqual([removeNotes]);
+        expect((yield* decodedTrail).map(([row]) => row)).toEqual([
+          "run · ask",
+          "approval.answered · answered",
+          "run · deny",
+          "run · deny",
+          "run · ask",
+          "approval.answered · answered",
+          "run · allow",
+          "run · succeeded",
+        ]);
+      }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("shows one card for two calls at once, and refuses the second while it waits", () =>
+    Effect.gen(function* () {
+      const computer = shell();
+
+      const [second, result] = yield* Effect.gen(function* () {
+        const first = yield* actInBackground(firstRun, removeNotes);
+        const shown = yield* untilShown;
+
+        const second = yield* Gateway.use((gateway) =>
+          Effect.flip(gateway.act(firstRun, { action: "run", command: "rm todo.txt" })),
+        );
+
+        yield* answerTo(shown, "yes");
+
+        return [second, yield* Fiber.join(first)] as const;
+      }).pipe(Effect.provide(startGateway(computer.layer, askBeforeRm)));
+
+      expect(second.message).toBe(
+        "run did not run: you already asked your person and they have not answered. Wait for that answer.",
+      );
+      expect(refusalOf(result)).toBe("");
+      expect(computer.actions).toEqual([removeNotes]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("refuses an asked action from a call that names no conversation", () =>
+    Effect.gen(function* () {
+      const computer = shell();
+
+      const refused = yield* Gateway.use((gateway) =>
+        Effect.flip(gateway.act(Claim.cases.Named.make({ bot: assistant.id }), removeNotes)),
+      ).pipe(Effect.provide(startGateway(computer.layer, askBeforeRm)));
+
+      expect(refused.message).toBe(
+        "run did not run: a rule asks your person first, and this call came from no conversation they could answer in.",
+      );
+      expect(computer.actions).toEqual([]);
+      expect(yield* decodedTrail).toEqual([
+        [
+          "run · deny",
+          {
+            bot: "assistant",
+            command: "rm notes.txt",
+            rule: "ask-before-rm",
+            reason: "no one to ask",
+          },
+        ],
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("refuses a yes for an element the page no longer shows under its ref", () =>
+    Effect.gen(function* () {
+      const page =
+        (snapshot: string) =>
+        (action: PageAction): Effect.Effect<PageRead> =>
+          Effect.succeed({
+            action: action.action,
+            url: "https://example.com/notes",
+            title: "Notes",
+            snapshot,
+            truncated: false,
+          });
+
+      let snapshot = '- button "Delete" [ref=e3]';
+      const computer = fakeComputers({ browse: (action) => page(snapshot)(action) });
+
+      const [result, clicked] = yield* Effect.gen(function* () {
+        yield* Gateway.use((gateway) => gateway.act(firstRun, { action: "snapshot" }));
+
+        const acting = yield* actInBackground(firstRun, { action: "click", ref: "e3" });
+        const shown = yield* untilShown;
+
+        snapshot = '- button "Delete everything" [ref=e3]';
+        yield* Gateway.use((gateway) => gateway.act(firstRun, { action: "snapshot" }));
+        yield* answerTo(shown, "yes");
+
+        return [yield* Fiber.join(acting), shown] as const;
+      }).pipe(Effect.provide(startGateway(computer.layer, askBeforeRm)));
+
+      expect(clicked.question).toBe('Click the button "Delete" on example.com?');
+      expect(refusalOf(result)).toEqual(
+        "click did not run: what it acts on changed after your person answered, so their answer does not cover it. Take a snapshot and ask again.",
+      );
+      expect(computer.actions.map((action) => action.action)).toEqual(["snapshot", "snapshot"]);
+      expect((yield* decodedTrail).map(([row]) => row)).not.toContain("click · allow");
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect(
+    "never runs an approved action twice after a restart, and tells the next run once",
+    () =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+
+        const hanging = fakeComputers({
+          run: () => Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+        });
+
+        yield* Effect.gen(function* () {
+          const acting = yield* actInBackground(firstRun, removeNotes);
+          yield* answerTo(yield* untilShown, "yes");
+          yield* Deferred.await(started);
+          yield* Fiber.interrupt(acting);
+        }).pipe(Effect.provide(startGateway(hanging.layer, askBeforeRm)));
+
+        const computer = shell();
+        const nextRun = inRun("run-2");
+
+        const [told, shownAfter, asked] = yield* Effect.gen(function* () {
+          const told = yield* Gateway.use((gateway) =>
+            Effect.flip(gateway.act(nextRun, removeNotes)),
+          );
+
+          const shownAfter = yield* shownNow;
+
+          return [told, shownAfter, yield* askAndAnswer(nextRun, removeNotes, "yes")] as const;
+        }).pipe(Effect.provide(startGateway(computer.layer, askBeforeRm)));
+
+        expect(hanging.actions).toEqual([removeNotes]);
+        expect(told.message).toBe(
+          "run did not run: an action like it that your person approved was started before the server stopped; whether it happened is unknown, and it was not run again. Check, for example with ls, before asking again.",
+        );
+        expect(shownAfter).toEqual(Option.none());
+        expect(refusalOf(asked.result)).toBe("");
+        expect(computer.actions).toEqual([removeNotes]);
+        expect((yield* decodedTrail).map(([row, detail]) => [row, detail.reason])).toEqual([
+          ["run · ask", undefined],
+          ["approval.answered · answered", undefined],
+          ["run · allow", undefined],
+          ["run · unknown", "the turn was stopped"],
+          ["run · deny", "outcome unknown"],
+          ["run · ask", undefined],
+          ["approval.answered · answered", undefined],
+          ["run · allow", undefined],
+          ["run · succeeded", undefined],
+        ]);
+      }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("records no for a question whose turn was stopped while it waited", () =>
+    Effect.gen(function* () {
+      const computer = shell();
+
+      const shown = yield* Effect.gen(function* () {
+        const acting = yield* actInBackground(firstRun, removeNotes);
+        const shown = yield* untilShown;
+        yield* Fiber.interrupt(acting);
+
+        return shown;
+      }).pipe(Effect.provide(startGateway(computer.layer, askBeforeRm)));
+
+      expect(computer.actions).toEqual([]);
+      expect((yield* decodedTrail).slice(1)).toEqual([
+        [
+          "approval.answered · answered",
+          { bot: "assistant", approval: shown.approval, answer: "no", by: "the turn was stopped" },
+        ],
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("asks nothing of an action no ask rule holds for", () =>
+    Effect.gen(function* () {
+      const computer = shell();
+
+      yield* Gateway.use((gateway) => gateway.act(firstRun, { action: "run", command: "ls" })).pipe(
+        Effect.provide(startGateway(computer.layer, askBeforeRm)),
+      );
+
+      expect((yield* decodedTrail).map(([row]) => row)).toEqual(["run · allow", "run · succeeded"]);
+    }).pipe(Effect.provide(database)),
+  );
+});

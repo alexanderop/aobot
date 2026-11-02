@@ -153,6 +153,44 @@ describe("request_secret", () => {
     }).pipe(Effect.provide(database)),
   );
 
+  it.effect("asks no second question of a secret an ask rule holds for, and names the rule", () =>
+    Effect.gen(function* () {
+      const computer = signInComputer();
+
+      const policy = policyFrom(`deny: []
+allow:
+  - name: granted-tools
+    when: "true"
+ask:
+  - name: ask-for-secrets
+    when: tool.name == "request_secret"
+`);
+
+      yield* Effect.gen(function* () {
+        const asking = yield* readThenAsk;
+        yield* answerOnceShown(supplied);
+        yield* Fiber.join(asking);
+      }).pipe(Effect.provide(startGateway(computer.layer, policy)));
+
+      expect((yield* trail).filter(([row]) => row === "secret.requested · allow")).toEqual([
+        [
+          "secret.requested · allow",
+          {
+            bot: "assistant",
+            ref: "e3",
+            role: "textbox",
+            name: "Password",
+            host: "shop.example",
+            field: "the password for shop.example",
+            rule: "granted-tools",
+            asked: "ask-for-secrets",
+          },
+        ],
+      ]);
+      expect(computer.actions.at(-1)?.action).toBe("type_secret");
+    }).pipe(Effect.provide(database)),
+  );
+
   it.effect("takes no answer for another request than the one waiting", () =>
     Effect.gen(function* () {
       const computer = signInComputer();

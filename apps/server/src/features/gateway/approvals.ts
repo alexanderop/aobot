@@ -101,13 +101,16 @@ export class LedgerFailed extends Schema.TaggedError<LedgerFailed>()("LedgerFail
 /** One question for a person, from {@link approvals}'s `open`. */
 export interface OpenApproval {
   readonly id: ApprovalId;
-  /** Records the question as asked, then shows it as `question` about `tool`. Nothing is shown unrecorded. */
-  readonly show: (tool: ToolName, question: string) => Effect.Effect<void, LedgerFailed>;
   /**
-  The person's answer, or no once `limit` passed, recorded, and the question withdrawn. An answer that
-  took the question before the limit is kept. Interrupted, it records no.
+  Records the question as asked, shows it as `question` about `tool`, and waits for the person's answer, or
+  no once `limit` passed; then records it and withdraws the question. Nothing is shown unrecorded, and an
+  answer that took the question before the limit is kept. Interrupted, it records no.
   */
-  readonly wait: (limit: Duration.Input) => Effect.Effect<Answered, LedgerFailed>;
+  readonly ask: (
+    tool: ToolName,
+    question: string,
+    limit: Duration.Input,
+  ) => Effect.Effect<Answered, LedgerFailed>;
   /**
   Spends a yes on the action, once: `current`, the action as it resolves now, must be the one asked about.
   */
@@ -262,45 +265,50 @@ export const approvals = Effect.gen(function* () {
             Effect.andThen(withdraw(turn.conversation, id)),
           );
 
-        return {
-          id,
-          show: (tool, question) =>
-            sql`
-              INSERT INTO approvals (id, conversation_id, run_id, rule, state)
-              VALUES (${id}, ${turn.conversation}, ${turn.run}, ${rule}, 'asked')
-            `.pipe(
-              Effect.mapError(ledgerFailed),
-              Effect.andThen(
-                SubscriptionRef.update(questions, (all) =>
-                  HashMap.modifyAt(
-                    all,
-                    turn.conversation,
-                    Option.map((waiting) =>
-                      waiting.id === id
-                        ? { ...waiting, card: Option.some({ approval: id, tool, question }) }
-                        : waiting,
-                    ),
+        const show = (tool: ToolName, question: string) =>
+          sql`
+            INSERT INTO approvals (id, conversation_id, run_id, rule, state)
+            VALUES (${id}, ${turn.conversation}, ${turn.run}, ${rule}, 'asked')
+          `.pipe(
+            Effect.mapError(ledgerFailed),
+            Effect.andThen(
+              SubscriptionRef.update(questions, (all) =>
+                HashMap.modifyAt(
+                  all,
+                  turn.conversation,
+                  Option.map((waiting) =>
+                    waiting.id === id
+                      ? { ...waiting, card: Option.some({ approval: id, tool, question }) }
+                      : waiting,
                   ),
                 ),
               ),
             ),
-          wait: (limit) =>
-            Deferred.await(answer).pipe(
-              Effect.timeoutOption(limit),
-              Effect.flatMap(
-                Option.match({
-                  onSome: (given) => Effect.succeed<Answered>({ answer: given, by: "person" }),
-                  onNone: () =>
-                    Effect.flatMap(takeCard(turn.conversation, id), (timedOut) =>
-                      Option.isSome(timedOut)
-                        ? Effect.succeed<Answered>({ answer: "no", by: "time limit" })
-                        : Effect.map(Deferred.await(answer), (given): Answered => ({
-                            answer: given,
-                            by: "person",
-                          })),
-                    ),
-                }),
-              ),
+          );
+
+        const byPerson = (given: ApprovalAnswer): Answered => ({ answer: given, by: "person" });
+
+        const answerWithin = (limit: Duration.Input) =>
+          Deferred.await(answer).pipe(
+            Effect.timeoutOption(limit),
+            Effect.flatMap(
+              Option.match({
+                onSome: (given) => Effect.succeed(byPerson(given)),
+                onNone: () =>
+                  Effect.flatMap(takeCard(turn.conversation, id), (timedOut) =>
+                    Option.isSome(timedOut)
+                      ? Effect.succeed<Answered>({ answer: "no", by: "time limit" })
+                      : Effect.map(Deferred.await(answer), byPerson),
+                  ),
+              }),
+            ),
+          );
+
+        return {
+          id,
+          ask: (tool, question, limit) =>
+            show(tool, question).pipe(
+              Effect.andThen(answerWithin(limit)),
               Effect.tap(({ answer: given }) => record(given)),
               Effect.onInterrupt(() =>
                 record("no").pipe(
