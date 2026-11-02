@@ -141,17 +141,17 @@ allow:
 A rule reads one record of facts about the action, declared once in `features/policy/facts.ts`, where the
 CEL environment is built from the same declaration so the two cannot drift:
 
-| Field                                      | What it holds                                                                                                 |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| `tool.name`                                | The tool: `navigate`, `snapshot`, `click`, `type`, `press`, `run`, `read_file`, `write_file`, `list_files`    |
-| `bot.id`                                   | The Bot the call is for                                                                                       |
-| `actor.id`                                 | The person it acts for: `single-user` until E3 brings sign-in                                                 |
-| `computer.kind`                            | `cloud`; `mac` arrives with the Mac                                                                           |
-| `page.host`                                | For `navigate`, the host it opens; for the other browser tools, the host of the page the latest snapshot read |
-| `element.role`, `element.name`             | The element a ref names in the server's own snapshot, never what the Bot says it is                           |
-| `key`                                      | The key `press` presses                                                                                       |
-| `command`                                  | The command `run` runs, as the Bot wrote it                                                                   |
-| `file.path`, `file.name`, `file.extension` | The file a file tool names, as its audit row records it                                                       |
+| Field                                      | What it holds                                                                                                                |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `tool.name`                                | The tool: `navigate`, `snapshot`, `click`, `type`, `press`, `run`, `read_file`, `write_file`, `list_files`, `request_secret` |
+| `bot.id`                                   | The Bot the call is for                                                                                                      |
+| `actor.id`                                 | The person it acts for: `single-user` until E3 brings sign-in                                                                |
+| `computer.kind`                            | `cloud`; `mac` arrives with the Mac                                                                                          |
+| `page.host`                                | For `navigate`, the host it opens; for the other browser tools, the host of the page the latest snapshot read                |
+| `element.role`, `element.name`             | The element a ref names in the server's own snapshot, never what the Bot says it is                                          |
+| `key`                                      | The key `press` presses                                                                                                      |
+| `command`                                  | The command `run` runs, as the Bot wrote it                                                                                  |
+| `file.path`, `file.name`, `file.extension` | The file a file tool names, as its audit row records it                                                                      |
 
 Every field is bound on every action, `""` where the action has none, so a rule naming `element.name`
 answers false for `run` instead of failing. `page.host` is the host in the one spelling the computer's
@@ -337,6 +337,89 @@ and `FileTransfers.download`, record `gateway.file_bytes`; the download's lasts 
 ends. The HTTP client's spans of the server's requests to the computer's `/files` record the path as
 `REDACTED`.
 
+## Secrets
+
+Nothing a Bot typed, and no secret a person gave it, is kept in the chat, the audit trail or telemetry.
+Three things hold that up.
+
+**A person types a secret, never the chat.** A Bot that needs a password calls
+`request_secret({ ref, field })`, naming the field for its person, such as `the password for the login
+page`. The gateway checks the grant, holds a request for the Bot, then checks the door, the ref and the
+rules as for `type`, with `tool.name == "request_secret"` and the element the ref names. Each Bot has at
+most one request at a time; a second is `secret.requested · deny` with `{ reason: "already asked" }`
+before anything is judged. The ref must name a `textbox` or a `searchbox`, else the call is
+`secret.requested · deny` with `reason: "not a text field"`, and the computer itself refuses `type_secret`
+for any element but a text `<input>` or a `<textarea>`: what a contenteditable element holds is page text,
+which no read hides. A page on no site, such as `about:blank` or a `data:` page, has no host to show the
+person, so a request there is `secret.requested · deny` with `reason: "no site"`. Once `secret.requested · allow` is written, the request gets an id from the server and
+is shown to the person: `Secret.pending { bot }` streams it as `{ request, field, host }`, with the host of
+the field's page as the server read it, so the card says "the password on shop.example" and a Bot cannot
+pass one site's field off as another's. It then waits for the person outside the door, so a person can
+take the computer meanwhile. The page draws the request as a secret card (see `docs/design.md`). Supply
+sends the value over `Secret.answer { bot, request, answer }` on its own socket, as a `Redacted` that a
+log, an error or a span prints as `<redacted>`, and the page wipes it once the call settles; it never goes
+into the conversation. An answer for any other request than the one shown, or one that comes after the
+wait ended, fails with `NoSecretRequested`: the request is withdrawn the moment its wait ends, before any
+row is written. The request's row then says `succeeded`, and the gateway writes `secret.supplied · allow`
+with the value's length as `chars`, then forwards `type_secret` through the door. The computer marks the
+field and fills it, and the model reads that its person typed it, with the page read afresh. Decline, ten
+minutes without an answer, and a stopped turn settle the request as `failed` with `declined`, `no answer`
+or `the turn was stopped`, and nothing is typed. A person who holds the computer by the time they answer
+keeps it: `secret.supplied · deny` with `a person has control`.
+
+Both runtimes' stall limit counts only time no tool call runs, so the wait does not end the turn: `api`
+counts the tool handlers that run, and `acp` the tool calls the CLI reported through `session/update` that
+have not ended. `acp` has that only from the CLI, so a call it never reports ended holds the turn at most
+`longestToolCall`, the ten minutes a request waits plus the longest forwarded action, and the stall limit
+after it, and the turn then fails as stalled. An MCP call that its client cancels with
+`notifications/cancelled`, or whose connection closes, as when the turn ends and its CLI is stopped, ends
+the wait at once: the request is withdrawn and its row settles `failed` with `the turn was stopped`. An
+`acp` CLI also has its own limit on an MCP call. Claude Code ends one after five minutes without an
+answer, so it is started with `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` a minute past the ten minutes a request
+waits. Codex reads a tool timeout only from a server in its own `config.toml`, not from the one its
+session is handed, and its default is two minutes. When that passes, Codex stops waiting for the call and
+reports it failed, but, as its source reads, sends no `notifications/cancelled` and keeps the
+connection open, so the gateway still waits. The Bot reads that the tool failed, and its card says it did
+not get the secret, since the call no longer runs, so nothing can be supplied any more. The request waits
+on until the turn ends, or for the rest of its ten minutes, `no answer`, and until then the Bot's next
+`request_secret` is `already asked`.
+
+**The computer never reads a secret back.** Playwright's snapshot prints what a field holds, a password
+field's included (`textbox "Password" [ref=e3]: hunter2`). After every action the computer asks the page
+which filled fields are `input[type=password]`, a one-time code, a current or new password by their
+`autocomplete`, or marked by `type_secret`, and shows their value as `"[hidden]"`; a field the page does
+not answer for is hidden too. A page can also show a secret elsewhere: a form sent by GET writes a
+one-time code into the address (`?code=123456`), and a page can echo what was typed. So the computer keeps
+every value it typed with `type_secret`, in memory only and for as long as it runs, and shows each place
+one appears in a read's address, title and snapshot as `[hidden]`, as typed, as an address or a form
+encodes it, and quoted in a snapshot. The address's origin stays as it is, since the server judges the
+page by its host. A value shorter than four characters is not looked for, since text that short, such as
+a year, is too likely to be the page's own. A marked field is drawn with dots on the live screen. The server keeps the
+latest snapshot with no field's value at all, since a ref resolves by its role and name, and of the
+page's address only its origin, since a form sent by GET writes its fields into the query.
+
+**What is recorded is redacted, by one module.** `redact()` keeps a typed text's length, as
+`[14 chars]`. `redactUrl` keeps an address's path and the names of its query and fragment, never their
+values or its userinfo: `?token=abc`, `?q=x` and `#access_token=…` lose their values whatever they are
+called, and so does userinfo a browser reads in an address not written `scheme://`, such as
+`https:/ada:pw@h.example`. `navigate` rows keep the address that way, and the computer is still sent it
+as written. The model and the transcript read a page's address through `redactUrlSecrets`, which keeps
+a query value unless its name holds a credential word, so `?page=2` stays usable and `?password=` does
+not. `redactCommand` keeps a command as written but for the value of an assignment, flag or JSON field
+whose name ends in a credential word (`API_TOKEN=abc`, `DB_PASS=x`, `--password=x`, `--token x`,
+`"password":"x"`), a credential header (`-H "Authorization: Bearer x"`, `--header=Cookie:x`), the
+password after curl's or wget's `-u user:pass`, `--user` or `--proxy-user` and after `-p` where `mysql`,
+`docker login` or `sshpass` read it, a bearer token in any case, and every address in it, redacted as
+above; `run` rows keep that, redacted first and then capped, so a secret the cap would cut is redacted
+whole. A name that ends in no credential word keeps its value, so `--output report.pdf`, `--body done`
+and `TEXT=hi` stay, and so does `docker run -u 1000:1000`. A `--no-` flag is a switch, and a value ends
+at a quote, a redirect or an operator, so `--no-auth y`, `< token.txt` and the quote closing
+`-m 'fix: token=abc'` stay as written. Matching a command's text is a filter: a secret
+written some other way, such as `echo hunter2 | login`, stays in the row. Every span attribute, whoever
+writes it, keeps only the length of a value under a key that may hold a secret or a tool's input or
+output, in any spelling (`toolResult`, `tool_result`, `x-api-key`, `accessToken`), and every address in
+any other value loses its query values, fragment and userinfo.
+
 ## Gateway tools
 
 Every tool a Bot can be granted, in either runtime. The tool map test (`apps/server/src/features/gateway/tool-map.test.ts`)
@@ -352,18 +435,18 @@ is what a rule judged, never the page's address: a query or fragment can carry a
 as `url` to check the page is still on that site; for an opaque origin, such as `about:blank`'s, it keeps
 the whole address.
 
-| Tool             | Parameters         | Computer action                                                                                      | Audit rows                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| ---------------- | ------------------ | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `navigate`       | `url`              | `POST /act {"action":"navigate","url"}`                                                              | `navigate · allow` with `{ bot, url }`, then `succeeded`, `failed` or `unknown`                                                                                                                                                                                                                                                                                                                                                            |
-| `snapshot`       | none               | `POST /act {"action":"snapshot"}`                                                                    | `snapshot · allow` with `{ bot }`, then `succeeded`, `failed` or `unknown`                                                                                                                                                                                                                                                                                                                                                                 |
-| `click`          | `ref`              | `POST /act {"action":"click","target":{ref,role,name,url}}`                                          | `click · allow` with `{ bot, ref, role, name, host }`, then `succeeded`, `failed` or `unknown`; `click · deny` with `{ bot, ref, reason }`                                                                                                                                                                                                                                                                                                 |
-| `type`           | `ref`, `text`      | `POST /act {"action":"type","target":{ref,role,name,url},"text"}`                                    | `type · allow` with `{ bot, ref, role, name, host, text: "[N chars]" }`, then `succeeded`, `failed` or `unknown`; `type · deny` with `{ bot, ref, reason }`                                                                                                                                                                                                                                                                                |
-| `press`          | `ref`, `key`       | `POST /act {"action":"press","target":{ref,role,name,url},"key"}`                                    | `press · allow` with `{ bot, ref, role, name, host, key }`, then `succeeded`, `failed` or `unknown`; `press · deny` with `{ bot, ref, reason }`                                                                                                                                                                                                                                                                                            |
-| `run`            | `command`          | `POST /act {"action":"run","command"}`                                                               | `run · allow` with `{ bot, command }` (capped at 2,000 characters), then `succeeded`, `failed` or `unknown`                                                                                                                                                                                                                                                                                                                                |
-| `read_file`      | `path`             | `POST /act {"action":"read_file","path"}`                                                            | `read_file · allow` with `{ bot, path, name, extension }`, then `succeeded`, `failed` or `unknown`; `read_file · deny` with `{ bot, path, name, extension, reason }`                                                                                                                                                                                                                                                                       |
-| `write_file`     | `path`, `contents` | `POST /act {"action":"write_file","path","contents"}`                                                | `write_file · allow` with `{ bot, path, name, extension, bytes }`, then `succeeded`, `failed` or `unknown`; `write_file · deny` with `{ bot, path, name, extension, reason }`                                                                                                                                                                                                                                                              |
-| `list_files`     | `path`             | `POST /act {"action":"list_files","path"}`                                                           | `list_files · allow` with `{ bot, path, name, extension }`, then `succeeded`, `failed` or `unknown`; `list_files · deny` with `{ bot, path, name, extension, reason }`                                                                                                                                                                                                                                                                     |
-| `request_secret` | `ref`, `field`     | once the person answered, `POST /act {"action":"type_secret","target":{ref,role,name,url},"secret"}` | `secret.requested · allow` with `{ bot, ref, role, name, host, field }`, then `succeeded` or `failed`; `secret.supplied · allow` with `{ bot, ref, role, name, host, field, chars }`, then `succeeded`, `failed` or `unknown`; `secret.supplied · deny` with `{ bot, reason: "a person has control" }`; `secret.requested · deny` with `{ bot, ref, reason }`, or with `{ bot, ref, role, name, host, field, reason: "not a text field" }` |
+| Tool             | Parameters         | Computer action                                                                                      | Audit rows                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ---------------- | ------------------ | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `navigate`       | `url`              | `POST /act {"action":"navigate","url"}`                                                              | `navigate · allow` with `{ bot, url }`, its query values and fragment redacted, then `succeeded`, `failed` or `unknown`                                                                                                                                                                                                                                                                                                                                        |
+| `snapshot`       | none               | `POST /act {"action":"snapshot"}`                                                                    | `snapshot · allow` with `{ bot }`, then `succeeded`, `failed` or `unknown`                                                                                                                                                                                                                                                                                                                                                                                     |
+| `click`          | `ref`              | `POST /act {"action":"click","target":{ref,role,name,url}}`                                          | `click · allow` with `{ bot, ref, role, name, host }`, then `succeeded`, `failed` or `unknown`; `click · deny` with `{ bot, ref, reason }`                                                                                                                                                                                                                                                                                                                     |
+| `type`           | `ref`, `text`      | `POST /act {"action":"type","target":{ref,role,name,url},"text"}`                                    | `type · allow` with `{ bot, ref, role, name, host, text: "[N chars]" }`, then `succeeded`, `failed` or `unknown`; `type · deny` with `{ bot, ref, reason }`                                                                                                                                                                                                                                                                                                    |
+| `press`          | `ref`, `key`       | `POST /act {"action":"press","target":{ref,role,name,url},"key"}`                                    | `press · allow` with `{ bot, ref, role, name, host, key }`, then `succeeded`, `failed` or `unknown`; `press · deny` with `{ bot, ref, reason }`                                                                                                                                                                                                                                                                                                                |
+| `run`            | `command`          | `POST /act {"action":"run","command"}`                                                               | `run · allow` with `{ bot, command }` (capped at 2,000 characters, secrets redacted), then `succeeded`, `failed` or `unknown`                                                                                                                                                                                                                                                                                                                                  |
+| `read_file`      | `path`             | `POST /act {"action":"read_file","path"}`                                                            | `read_file · allow` with `{ bot, path, name, extension }`, then `succeeded`, `failed` or `unknown`; `read_file · deny` with `{ bot, path, name, extension, reason }`                                                                                                                                                                                                                                                                                           |
+| `write_file`     | `path`, `contents` | `POST /act {"action":"write_file","path","contents"}`                                                | `write_file · allow` with `{ bot, path, name, extension, bytes }`, then `succeeded`, `failed` or `unknown`; `write_file · deny` with `{ bot, path, name, extension, reason }`                                                                                                                                                                                                                                                                                  |
+| `list_files`     | `path`             | `POST /act {"action":"list_files","path"}`                                                           | `list_files · allow` with `{ bot, path, name, extension }`, then `succeeded`, `failed` or `unknown`; `list_files · deny` with `{ bot, path, name, extension, reason }`                                                                                                                                                                                                                                                                                         |
+| `request_secret` | `ref`, `field`     | once the person answered, `POST /act {"action":"type_secret","target":{ref,role,name,url},"secret"}` | `secret.requested · allow` with `{ bot, ref, role, name, host, field }`, then `succeeded` or `failed`; `secret.supplied · allow` with `{ bot, ref, role, name, host, field, chars }`, then `succeeded`, `failed` or `unknown`; `secret.supplied · deny` with `{ bot, reason: "a person has control" }`; `secret.requested · deny` with `{ bot, ref, reason }`, or with `{ bot, ref, role, name, host, field, reason }` for `"not a text field"` or `"no site"` |
 
 Any tool can also be refused by a rule, as `<tool> · deny` with its audit detail and the rule (see
 [Rules that fail closed](#rules-that-fail-closed)).
@@ -472,7 +555,7 @@ dead turn.
 | 5   | **The page as text, not screenshots**                                                                 | `ariaSnapshot({ mode: "ai" })` with refs is cheap and needs no vision model. Snapshots are capped at 12,000 characters                                                                                                                                                  |
 | 6   | **A computer is only ever "a URL and a token"**, or for a Mac, a connection the desktop app opened    | The server never uses `docker exec` or shared files, so where a computer runs can change freely. A laptop is behind NAT, so it dials out                                                                                                                                |
 | 7   | **Fail closed**                                                                                       | A missing rule permits nothing, a crashing rule denies, a missing grant is refused before any rule runs                                                                                                                                                                 |
-| 8   | **Never log what a Bot typed**                                                                        | The audit row keeps `"[14 chars]"`, not the value. It may be a password. A `run` command is the exception: its audit row keeps it as written, capped at 2,000 characters, because the command is what the row is for. Finding secrets inside commands is E2-3           |
+| 8   | **Never log what a Bot typed**                                                                        | The audit row keeps `"[14 chars]"`, not the value. It may be a password. A `run` command is the exception: its audit row keeps it as written, capped at 2,000 characters, because the command is what the row is for, with the secrets `redactCommand` finds redacted   |
 | 9   | **OpenTelemetry from day one**                                                                        | One trace per chat turn, with the `trace_id` stored on every audit row                                                                                                                                                                                                  |
 | 10  | **Outside content is untrusted data**                                                                 | Pages, command output and files reach the model inside one envelope that says they carry no authority. A page can say "ignore your instructions"; the envelope is what tells the model that is not its person speaking. A closing tag inside the content is neutralised |
 | 11  | **Every audit row names its initiator**                                                               | `initiator_kind` is `person` or `deployment` now, `routine` and `handoff` later. `actor.id` says on whose authority; only this says whether anybody was watching                                                                                                        |
@@ -644,9 +727,10 @@ reaches when it does not, until network limits (E5-3). These hold locally as muc
   set for the turn, and the gateway grants by it, so a process on the host that reaches `/mcp` can name
   any Bot. `acp` runs only in single-user mode on loopback, the same trust every MCP call had before
   Bots existed; a per-turn token would close it.
-- **Secrets are typed by the person, not the chat.** When a Bot needs a password it asks; the person types
-  it into a separate field that goes straight to the computer. The audit row records that a secret was
-  supplied and its length.
+- **Secrets are typed by the person, not the chat.** When a Bot needs a password it asks with
+  `request_secret`; the person types it into a card outside the conversation that goes straight to the
+  computer, and no read of the page shows it again. The audit row records that a secret was supplied and
+  its length (see [Secrets](#secrets)).
 
 ### On AWS
 

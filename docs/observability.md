@@ -72,5 +72,9 @@ trace, so "the Bot did X" leads straight to everything that happened around it.
 
 ## Never in telemetry
 
-The same rule as the audit trail: nothing a Bot typed, no secrets, no tokens. Span attributes go
-through the same `redact()` as audit rows.
+The same rule as the audit trail: nothing a Bot typed, no secrets, no tokens. Every span attribute, ours
+or a library's, goes through the same redaction module as audit rows before any exporter sees it: a
+value under a key that may hold a secret or a tool's input or output, in any spelling (`parameters`,
+`toolResult`, `tool_result`, `authorization`), keeps only its length, and an address in any other value
+keeps no query value, fragment or userinfo. A person's secret travels over `Secret.answer`, an RPC with
+tracing off, as a `Redacted`. See [architecture.md § Secrets](architecture.md#secrets).
