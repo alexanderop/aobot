@@ -5,7 +5,6 @@ import {
   type AuditAction,
   BotId,
   ComputerAction,
-  ConversationId,
   commandTimeLimit,
   escapesWorkspace,
   FileAction,
@@ -13,7 +12,6 @@ import {
   PressKey,
   type RefTarget,
   RunCommand,
-  RunId,
   SecretAnswer,
   type SecretValue,
   snapshotRefs,
@@ -76,6 +74,7 @@ import { snapshotStore } from "./snapshot-store.ts";
 import { spanEvent } from "./span-event.ts";
 import { type AlreadyAsked, secretRequests, SecretRequests } from "./secrets.ts";
 import { auditAction, DirectAction, SecretRequest, ToolAction } from "./tool-action.ts";
+import { TurnRef } from "./turn.ts";
 import { FileTransfers, fileTransfers } from "./transfers.ts";
 
 /** Something an agent asked for that the gateway turned down. `detail` is already redacted. */
@@ -122,15 +121,6 @@ export const BotRequest = Schema.Union([
 
 /** A decoded {@link BotRequest}. */
 export type BotRequest = typeof BotRequest.Type;
-
-/**
-The turn a call is made in: its conversation, and its run, which starts with each message the person
-writes. A question a rule puts to the person is shown in that conversation, and their no holds for that run.
-*/
-export const TurnRef = Schema.Struct({ conversation: ConversationId, run: RunId });
-
-/** A decoded {@link TurnRef}. */
-export type TurnRef = typeof TurnRef.Type;
 
 /**
 The Bot a call says it is made for: one named by its id, with the turn it is made in when the call says,

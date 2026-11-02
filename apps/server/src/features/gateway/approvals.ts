@@ -23,8 +23,8 @@ import {
   SubscriptionRef,
 } from "effect";
 import { SqlClient } from "effect/sql";
-import type { TurnRef } from "./gateway.ts";
 import { ToolAction } from "./tool-action.ts";
+import type { TurnRef } from "./turn.ts";
 
 /** One action as it resolved, as a digest: an approval covers that action only. */
 const ActionDigest = Schema.String.pipe(Schema.brand("ActionDigest"));

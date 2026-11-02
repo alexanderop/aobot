@@ -15,13 +15,13 @@ function headersOf(entries: ReadonlyArray<{ readonly name: string; readonly valu
 
 describe("claimOf", () => {
   it("reads the Bot and the turn the acp runtime's headers name", () => {
-    expect(claimOf(headersOf(turnHeaders(bot, turn)))).toEqual(
+    expect(claimOf(headersOf(turnHeaders({ bot, ...turn })))).toEqual(
       Claim.cases.Named.make({ bot, turn }),
     );
   });
 
   it("reads a Bot without a turn when the turn's headers are not both there", () => {
-    const [botOnly, conversationOnly] = turnHeaders(bot, turn);
+    const [botOnly, conversationOnly] = turnHeaders({ bot, ...turn });
 
     expect(claimOf(headersOf([botOnly, conversationOnly]))).toEqual(
       Claim.cases.Named.make({ bot }),
@@ -29,7 +29,7 @@ describe("claimOf", () => {
   });
 
   it("keeps a Bot header that is no Bot id as written, and its turn out", () => {
-    const [, ...turnOnly] = turnHeaders(bot, turn);
+    const [, ...turnOnly] = turnHeaders({ bot, ...turn });
 
     expect(claimOf(headersOf([{ name: "aobot-bot", value: "Not A Bot" }, ...turnOnly]))).toEqual(
       Claim.cases.Unreadable.make({ header: "Not A Bot" }),

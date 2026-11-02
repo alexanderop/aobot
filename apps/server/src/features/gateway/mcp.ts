@@ -3,8 +3,9 @@ import { Effect, Layer, Option, Schema } from "effect";
 import { McpProtocol, McpServer } from "effect/ai";
 import { Headers, HttpTraceContext } from "effect/http";
 import { botToolkit } from "../bots/public.ts";
-import { Claim, TurnRef } from "./gateway.ts";
+import { Claim } from "./gateway.ts";
 import { ActingBot, botToolHandlers } from "./tools.ts";
+import { TurnRef } from "./turn.ts";
 
 /** The header the `acp` runtime names its turn's Bot in, on every call its CLI makes to this server. */
 export const botHeader = "aobot-bot";
@@ -17,13 +18,12 @@ const decodeBot = Schema.decodeUnknownOption(BotId);
 
 const decodeTurn = Schema.decodeUnknownOption(TurnRef);
 
-/** The headers that name `bot` and `turn` on every call a CLI makes to this server in that turn. */
+/** The headers that name the turn's Bot, conversation and run on every call a CLI makes to this server in it. */
 export function turnHeaders(
-  bot: BotId,
-  turn: TurnRef,
+  turn: { readonly bot: BotId } & TurnRef,
 ): ReadonlyArray<{ name: string; value: string }> {
   return [
-    { name: botHeader, value: bot },
+    { name: botHeader, value: turn.bot },
     { name: conversationHeader, value: turn.conversation },
     { name: runHeader, value: turn.run },
   ];
