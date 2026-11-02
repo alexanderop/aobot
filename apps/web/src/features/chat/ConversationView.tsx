@@ -2,6 +2,7 @@ import { Option } from "effect";
 import { useEffect, useRef } from "react";
 import type { BotId, ConversationId } from "@aobot/domain";
 import { BotAvatar } from "../bots/public.ts";
+import { ApprovalCard } from "./ApprovalCard.tsx";
 import { Bubble } from "./Bubble.tsx";
 import { Composer } from "./Composer.tsx";
 import { TranscriptItem } from "./conversation-state.ts";
@@ -10,7 +11,10 @@ import "./chat.css";
 import { useAttachments } from "./use-attachments.ts";
 import { useConversation } from "./use-conversation.ts";
 
-/** One conversation with a Bot: the pill with its avatar and name, the transcript, and the composer. */
+/**
+One conversation with a Bot: the pill with its avatar and name, the transcript with the question the Bot
+waits on below it, and the composer.
+*/
 export function ConversationView(props: {
   readonly conversationId: ConversationId;
   readonly botId: BotId;
@@ -59,6 +63,7 @@ export function ConversationView(props: {
             ),
           }),
         )}
+        <ApprovalCard conversationId={props.conversationId} isRunning={isRunning} />
         <div ref={bottom} />
       </div>
       {Option.match(error, {

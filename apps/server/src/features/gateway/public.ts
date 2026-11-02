@@ -19,4 +19,6 @@ export { controlHandlers } from "./control-rpcs.ts";
 
 export { secretHandlers } from "./secret-rpcs.ts";
 
+export { approvalHandlers } from "./approval-rpcs.ts";
+
 export { FileTransfers, TransferFailed } from "./transfers.ts";

@@ -1,6 +1,13 @@
 import { createServer } from "node:http";
 import { isIPv6 } from "node:net";
-import { BotRpcs, ChatRpcs, ControlRpcs, ScreenRpcs, SecretRpcs } from "@aobot/domain";
+import {
+  ApprovalRpcs,
+  BotRpcs,
+  ChatRpcs,
+  ControlRpcs,
+  ScreenRpcs,
+  SecretRpcs,
+} from "@aobot/domain";
 import {
   NodeChildProcessSpawner,
   NodeFileSystem,
@@ -28,6 +35,7 @@ import { chatLayer, migrateChat } from "../features/chat/public.ts";
 import { policyFileLayer } from "../features/policy/public.ts";
 import { computersLayer } from "../features/computers/public.ts";
 import {
+  approvalHandlers,
   botToolHandlers,
   controlHandlers,
   secretHandlers,
@@ -117,9 +125,10 @@ const server = Layer.unwrap(
 
     // Off because the handlers name their own spans and `Chat.turn` starts its own trace. The RPC span
     // around each call would only add a second trace of one span.
-    const rpc = RpcServer.layer(ChatRpcs.merge(BotRpcs, ScreenRpcs, ControlRpcs, SecretRpcs), {
-      disableTracing: true,
-    }).pipe(
+    const rpc = RpcServer.layer(
+      ChatRpcs.merge(BotRpcs, ScreenRpcs, ControlRpcs, SecretRpcs, ApprovalRpcs),
+      { disableTracing: true },
+    ).pipe(
       Layer.provide(rpcSocket(config.publicHost)),
       Layer.provide(RpcSerialization.layerJson),
       Layer.provide([
@@ -128,6 +137,7 @@ const server = Layer.unwrap(
         screenHandlers.pipe(Layer.provide(computers)),
         controlHandlers.pipe(Layer.provide(gateway)),
         secretHandlers.pipe(Layer.provide(gateway)),
+        approvalHandlers.pipe(Layer.provide(gateway)),
       ]),
       Layer.provide(runtime.agent),
       Layer.provide(bots),
