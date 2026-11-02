@@ -53,6 +53,8 @@ import { FileTransfers, fileTransfers } from "./transfers.ts";
 
 /** Something an agent asked for that the gateway turned down. `detail` is already redacted. */
 export interface Refusal {
+  /** The Bot whose turn the CLI was running. */
+  readonly bot: BotId;
   /** The CLI or runtime that asked, such as `claude-code`. */
   readonly agent: string;
   /** What it asked for, such as `terminal/create`. */
@@ -458,7 +460,11 @@ export const gatewayLayer = Layer.effectContext(
 
     const refuse = Effect.fn("Gateway.refuse")(function* (refusal: Refusal) {
       yield* rows
-        .decide("deny", refusal.action, { agent: refusal.agent, request: refusal.detail })
+        .decide("deny", refusal.action, {
+          bot: refusal.bot,
+          agent: refusal.agent,
+          request: refusal.detail,
+        })
         .pipe(Effect.orDie);
     });
 

@@ -89,10 +89,11 @@ const { Exited, Signalled, TimedOut } = CommandEnd.cases;
 const navigate = { action: "navigate", url: "https://example.com" } as const;
 
 describe("Gateway", () => {
-  it.effect("writes a refusal as a deny row naming the agent, in the trace that asked", () =>
+  it.effect("writes a refusal as a deny row naming the Bot and agent, in the asking trace", () =>
     Effect.gen(function* () {
       const traceId = yield* Gateway.use((gateway) =>
         gateway.refuse({
+          bot: assistant.id,
           agent: "codex",
           action: "terminal/create",
           detail: { command: "[3 chars]" },
@@ -111,7 +112,11 @@ describe("Gateway", () => {
           initiator_kind: "person",
           decision: "deny",
           action: "terminal/create",
-          detail: JSON.stringify({ agent: "codex", request: { command: "[3 chars]" } }),
+          detail: JSON.stringify({
+            bot: assistant.id,
+            agent: "codex",
+            request: { command: "[3 chars]" },
+          }),
           outcome_of: null,
         },
       ]);
