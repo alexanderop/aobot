@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BotId, MessageId } from "@aobot/domain";
+import { BotId, ConversationId, RunId, MessageId } from "@aobot/domain";
 import {
   NodeChildProcessSpawner,
   NodeFileSystem,
@@ -50,6 +50,8 @@ const limits = { maxSteps: 4, stallTimeout: Duration.seconds(90) };
 
 const turn: Turn = {
   bot: BotId.make("assistant"),
+  conversation: ConversationId.make("conversation-1"),
+  run: RunId.make("run-1"),
   instructions: "Answer briefly.",
   history: [{ id: MessageId.make("message-1"), role: "user", text: "Say hi" }],
 };
@@ -397,7 +399,12 @@ describe.each(names)("the %s agent runtime", (name) => {
 
         expect(gateway.refusals).toEqual([]);
         expect(gateway.requests).toEqual([{ action: "snapshot" }]);
-        expect(gateway.askedBy).toEqual([Claim.cases.Named.make({ bot: turn.bot })]);
+        expect(gateway.askedBy).toEqual([
+          Claim.cases.Named.make({
+            bot: turn.bot,
+            turn: { conversation: turn.conversation, run: turn.run },
+          }),
+        ]);
         expect(textOf(events)).toContain("Read it.");
         expect(mock.requests().join("\n")).toContain("The page is blank.");
       });

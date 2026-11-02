@@ -450,6 +450,36 @@ describe("Chat RPCs", () => {
     },
   );
 
+  it.effect("runs each message as a new run of its conversation, the run its events name", () => {
+    const turns: Array<Turn> = [];
+
+    const agent = Layer.succeed(
+      AgentRuntime,
+      AgentRuntime.of({
+        run: (turn) => {
+          turns.push(turn);
+
+          return Stream.make(AgentEvent.TextDelta({ text: "Ok" }), AgentEvent.Done());
+        },
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const client = yield* RpcTest.makeClient(ChatRpcs);
+
+      const started = yield* Effect.forEach(["user-1", "user-2"], (messageId) =>
+        client["Chat.send"](send("Hi", messageId)).pipe(
+          Stream.runCollect,
+          Effect.map((events) => events.find((event) => event.type === "RUN_STARTED")),
+        ),
+      );
+
+      expect(turns.map((turn) => turn.conversation)).toEqual([conversationId, conversationId]);
+      expect(new Set(turns.map((turn) => turn.run)).size).toBe(2);
+      expect(started.map((event) => event?.runId)).toEqual(turns.map((turn) => turn.run));
+    }).pipe(Effect.provide(chatLayer.pipe(Layer.provide([agent, testDatabase, testBots]))));
+  });
+
   it.effect("refuses a Bot the server does not know, storing nothing and running no turn", () =>
     Effect.gen(function* () {
       const client = yield* RpcTest.makeClient(ChatRpcs);

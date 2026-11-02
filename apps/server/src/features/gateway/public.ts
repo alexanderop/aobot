@@ -9,7 +9,7 @@ export {
 
 export { migrateGateway } from "./migrations.ts";
 
-export { botHeader, gatewayMcpLayer, gatewayMcpName } from "./mcp.ts";
+export { gatewayMcpLayer, gatewayMcpName, turnHeaders } from "./mcp.ts";
 
 export { ActingBot, botToolHandlers } from "./tools.ts";
 

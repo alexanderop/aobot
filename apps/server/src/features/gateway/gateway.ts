@@ -3,6 +3,7 @@ import {
   type AuditAction,
   BotId,
   ComputerAction,
+  ConversationId,
   commandTimeLimit,
   escapesWorkspace,
   FileAction,
@@ -10,6 +11,7 @@ import {
   PressKey,
   type RefTarget,
   RunCommand,
+  RunId,
   SecretAnswer,
   type SecretValue,
   snapshotRefs,
@@ -97,11 +99,21 @@ export const BotRequest = Schema.Union([
 export type BotRequest = typeof BotRequest.Type;
 
 /**
-The Bot a call says it is made for: one named by its id, or, from an `acp` CLI whose `aobot-bot` header
-is no Bot id, that header as it was written. Only a named Bot can have been granted anything.
+The turn a call is made in: its conversation, and its run, which starts with each message the person
+writes. A question a rule puts to the person is shown in that conversation, and their no holds for that run.
+*/
+export const TurnRef = Schema.Struct({ conversation: ConversationId, run: RunId });
+
+/** A decoded {@link TurnRef}. */
+export type TurnRef = typeof TurnRef.Type;
+
+/**
+The Bot a call says it is made for: one named by its id, with the turn it is made in when the call says,
+or, from an `acp` CLI whose `aobot-bot` header is no Bot id, that header as it was written. Only a named
+Bot can have been granted anything, and only a call in a turn has a person to ask.
 */
 export const Claim = Schema.TaggedUnion({
-  Named: { bot: BotId },
+  Named: { bot: BotId, turn: Schema.optionalKey(TurnRef) },
   Unreadable: { header: Schema.String },
   Unnamed: {},
 });

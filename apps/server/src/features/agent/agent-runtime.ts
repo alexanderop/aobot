@@ -1,4 +1,4 @@
-import type { BotId, Message, ToolCallId } from "@aobot/domain";
+import type { BotId, ConversationId, Message, RunId, ToolCallId } from "@aobot/domain";
 import { Context, Data, Schema, type Stream } from "effect";
 
 /**
@@ -36,11 +36,14 @@ export class ModelFailed extends Schema.TaggedError<ModelFailed>()("ModelFailed"
 export type AgentError = Stalled | StepLimit | ModelFailed;
 
 /**
-One turn to run: the Bot whose turn it is, its instructions and the conversation so far, ending with the
-person's message. Every tool call of the turn goes to the gateway on that Bot's behalf.
+One turn to run: the Bot whose turn it is, the conversation and the run it is in, its instructions and the
+conversation so far, ending with the person's message. Every tool call of the turn goes to the gateway on
+that Bot's behalf, in that conversation and run.
 */
 export interface Turn {
   readonly bot: BotId;
+  readonly conversation: ConversationId;
+  readonly run: RunId;
   readonly instructions: string;
   readonly history: ReadonlyArray<Message>;
 }

@@ -3,29 +3,59 @@ import { Effect, Layer, Option, Schema } from "effect";
 import { McpProtocol, McpServer } from "effect/ai";
 import { Headers, HttpTraceContext } from "effect/http";
 import { botToolkit } from "../bots/public.ts";
-import { Claim } from "./gateway.ts";
+import { Claim, TurnRef } from "./gateway.ts";
 import { ActingBot, botToolHandlers } from "./tools.ts";
 
 /** The header the `acp` runtime names its turn's Bot in, on every call its CLI makes to this server. */
 export const botHeader = "aobot-bot";
 
+const conversationHeader = "aobot-conversation";
+
+const runHeader = "aobot-run";
+
 const decodeBot = Schema.decodeUnknownOption(BotId);
 
-/** The Bot the header names, or the header as written when it is no Bot id. */
-function claimOf(header: Option.Option<string>): Claim {
-  return Option.match(header, {
+const decodeTurn = Schema.decodeUnknownOption(TurnRef);
+
+/** The headers that name `bot` and `turn` on every call a CLI makes to this server in that turn. */
+export function turnHeaders(
+  bot: BotId,
+  turn: TurnRef,
+): ReadonlyArray<{ name: string; value: string }> {
+  return [
+    { name: botHeader, value: bot },
+    { name: conversationHeader, value: turn.conversation },
+    { name: runHeader, value: turn.run },
+  ];
+}
+
+/**
+The Bot the headers name, with the turn when both its headers are there, or the Bot header as written
+when it is no Bot id.
+*/
+export function claimOf(headers: Headers.Headers): Claim {
+  const turn = decodeTurn({
+    conversation: Option.getOrUndefined(Headers.get(headers, conversationHeader)),
+    run: Option.getOrUndefined(Headers.get(headers, runHeader)),
+  });
+
+  return Option.match(Headers.get(headers, botHeader), {
     onNone: () => Claim.cases.Unnamed.make({}),
     onSome: (written) =>
       Option.match(decodeBot(written), {
         onNone: () => Claim.cases.Unreadable.make({ header: written }),
-        onSome: (bot) => Claim.cases.Named.make({ bot }),
+        onSome: (bot) =>
+          Option.match(turn, {
+            onNone: () => Claim.cases.Named.make({ bot }),
+            onSome: (named) => Claim.cases.Named.make({ bot, turn: named }),
+          }),
       }),
   });
 }
 
 /**
-Runs each tool call on behalf of the Bot the request's `aobot-bot` header names, inside the trace its
-`traceparent` names. The `acp` runtime offers this server with both headers set to its turn's, so a CLI's
+Runs each tool call on behalf of the Bot and in the turn the request's headers name, inside the trace its
+`traceparent` names. The `acp` runtime offers this server with every one set to its turn's, so a CLI's
 tool calls are its Bot's and land inside `Chat.turn` too. A call without a Bot the header names is refused
 by the gateway as not granted.
 */
@@ -33,7 +63,7 @@ const turnContext = McpServer.middleware((effect, { headers }) =>
   Option.match(HttpTraceContext.fromHeaders(headers), {
     onNone: () => effect,
     onSome: (parent) => Effect.withParentSpan(effect, parent),
-  }).pipe(Effect.provideService(ActingBot, claimOf(Headers.get(headers, botHeader)))),
+  }).pipe(Effect.provideService(ActingBot, claimOf(headers))),
 );
 
 /** The gateway's tools as one Streamable HTTP MCP server at `/mcp`, for `acp` CLIs to call. */
