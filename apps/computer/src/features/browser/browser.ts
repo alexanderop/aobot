@@ -7,6 +7,7 @@ import {
   type PressKey,
   PersonInput,
   type RefTarget,
+  sameOrigin,
   type ScreenPoint,
   snapshotLimit,
   snapshotRefs,
@@ -61,18 +62,6 @@ function staleRef(target: RefTarget): string {
 /** What the Bot reads when the page moved to another site since the snapshot its ref came from. */
 function otherSite(target: RefTarget): string {
   return `The page is on another site than your latest snapshot read, so ${target.ref} is not the ${target.role} you saw. Take a snapshot again and use a ref from it.`;
-}
-
-/**
-Whether `now` is on the origin of `read`. An opaque origin, such as `about:blank`'s, is the same only at
-the same address.
-*/
-function sameOrigin(now: string, read: string): boolean {
-  if (!URL.canParse(now) || !URL.canParse(read)) return false;
-
-  const [here, there] = [new URL(now), new URL(read)];
-
-  return here.origin === "null" ? here.href === there.href : here.origin === there.origin;
 }
 
 /** Where `at` lands in a viewport of `width` by `height` pixels, kept inside it at the far edges. */

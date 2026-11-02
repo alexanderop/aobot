@@ -62,3 +62,16 @@ export function canonicalHost(host: string): string {
     onSome: (address) => Option.getOrElse(embeddedIpv4(address), () => address),
   });
 }
+
+/**
+Whether `now` is on the origin of `read`, as the computer checks before it acts on a ref: a query, a
+fragment or a `blob:` address of that origin is the same site. An opaque origin, such as `about:blank`'s,
+is the same only at the same address, and an address that does not parse is on no origin.
+*/
+export function sameOrigin(now: string, read: string): boolean {
+  const [here, there] = [URL.parse(now), URL.parse(read)];
+
+  if (here === null || there === null) return false;
+
+  return here.origin === "null" ? here.href === there.href : here.origin === there.origin;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { canonicalHost } from "./host.ts";
+import { canonicalHost, sameOrigin } from "./host.ts";
 
 describe("canonicalHost", () => {
   it.each([
@@ -17,5 +17,27 @@ describe("canonicalHost", () => {
     ["[x@[::1]/:]", "x@[::1]/:"],
   ])("spells %s as %s", (host, canonical) => {
     expect(canonicalHost(host)).toBe(canonical);
+  });
+});
+
+describe("sameOrigin", () => {
+  it.each([
+    ["https://shop.example/cart?step=2#pay", "https://shop.example/cart", true],
+    [
+      "blob:https://shop.example/0b9c6f1e-4c1f-4c3e-9f3a-2f1d5f6e7a8b",
+      "https://shop.example/",
+      true,
+    ],
+    ["https://shop.example:8443/", "https://shop.example/", false],
+    ["http://shop.example/", "https://shop.example/", false],
+    ["https://shop.example./", "https://shop.example/", false],
+    ["https://evil.example/", "https://shop.example/", false],
+    ["about:blank", "about:blank", true],
+    ["about:blank#top", "about:blank", false],
+    ["data:text/html,<p>hi</p>", "data:text/html,<p>bye</p>", false],
+    ["", "", false],
+    ["https://shop.example/", "", false],
+  ])("counts %s on the origin of %s: %s", (now, read, same) => {
+    expect(sameOrigin(now, read)).toBe(same);
   });
 });
