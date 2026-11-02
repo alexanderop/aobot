@@ -56,12 +56,13 @@ import {
   ApprovalRequests,
   approvalRequests,
   type DeclinedEarlier,
+  type LeftOpen,
   type LedgerFailed,
   type OpenApproval,
   type OutcomeUnknown,
 } from "./approvals.ts";
 import { ComputerControl, controlDoors, type PersonHasControl } from "./control.ts";
-import { type ComputerFailure, failureOutcome, personAudit } from "./person-audit.ts";
+import { type ComputerFailure, failureOutcome, personAudit, singleUser } from "./person-audit.ts";
 import { fileTarget } from "./file-target.ts";
 import {
   endAttributes,
@@ -355,10 +356,13 @@ export const secretWaitLimit = Duration.minutes(10);
 export const approvalWaitLimit = Duration.minutes(10);
 
 /** Who answered a question a rule put to the person, as its `approval.answered` row says. */
-type AnsweredBy = "person" | "time limit" | "the turn was stopped";
+type AnsweredBy = "person" | "time limit" | "the turn was stopped" | "the server stopped";
 
 /** Why a call ended early: the person stopped the turn it was made in. */
 const turnStopped = "the turn was stopped";
+
+/** Why a question an earlier run left open was answered no and refused at start-up. */
+const serverStopped = "the server stopped";
 
 /** What a Bot is told after its person, or the time limit, said no. */
 const holdOff =
@@ -600,6 +604,38 @@ export const gatewayLayer = Layer.effectContext(
     const secrets = yield* secretRequests;
     const approvals = yield* approvalRequests;
 
+    /** A row the deployment writes at start-up for the person's question, only logged when it fails. */
+    const byDeployment = (decision: Decision, action: AuditAction, detail: Detail) =>
+      audit
+        .record({
+          traceId: Option.none(),
+          initiatorKind: "deployment",
+          actorId: singleUser,
+          decision,
+          action,
+          detail,
+        })
+        .pipe(
+          Effect.catchTag("AuditWriteFailed", (error) =>
+            Effect.logError("A row closing a question left open could not be written").pipe(
+              Effect.annotateLogs({ action, decision, reason: error.message }),
+            ),
+          ),
+        );
+
+    const closeInTrail = ({ approval, bot, tool, rule, answered }: LeftOpen) =>
+      Effect.andThen(
+        answered
+          ? Effect.void
+          : byDeployment("answered", "approval.answered", {
+              bot,
+              approval,
+              answer: "no",
+              by: serverStopped,
+            }),
+        byDeployment("deny", auditAction(tool), { bot, rule, approval, reason: serverStopped }),
+      );
+
     // Before anything is forwarded: a call an earlier run allowed and never heard back from is
     // recorded as unknown, never run again.
     const unfinished = yield* audit.settleUnfinished;
@@ -608,6 +644,17 @@ export const gatewayLayer = Layer.effectContext(
       yield* Effect.logWarning(
         "Allowed calls from an earlier run had no outcome; recorded unknown",
       ).pipe(Effect.annotateLogs({ calls: unfinished }));
+    }
+
+    // Before any question is asked: one an earlier run left open, still waiting for the person or with
+    // its yes never spent, is answered no and refused, so every ask row in the trail is closed.
+    const leftOpen = yield* approvals.closeLeftOpen;
+    yield* Effect.forEach(leftOpen, closeInTrail, { discard: true });
+
+    if (leftOpen.length > 0) {
+      yield* Effect.logWarning(
+        "Questions from an earlier run were left open; answered no and refused",
+      ).pipe(Effect.annotateLogs({ questions: leftOpen.length }));
     }
 
     const refuse = Effect.fn("Gateway.refuse")(function* (refusal: Refusal) {
@@ -967,7 +1014,7 @@ export const gatewayLayer = Layer.effectContext(
       approval: OpenApproval,
       question: string,
     ) =>
-      approval.ask(tool, question, approvalWaitLimit).pipe(
+      approval.ask(question, approvalWaitLimit).pipe(
         Effect.tap(({ answer, by }) =>
           Effect.annotateCurrentSpan({ "approval.answer": answer, "approval.by": by }),
         ),

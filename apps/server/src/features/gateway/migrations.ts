@@ -79,7 +79,8 @@ const keepSnapshotUrl = Effect.gen(function* () {
 // The ledger of every question a rule put to a person. A row only moves forward, one compare-and-set
 // UPDATE at a time, so an approved action is spent once and a restart can tell it was started:
 // asked -> yes | no, yes -> spent | lapsed, spent -> finished | told. No action, digest or typed text is
-// kept.
+// kept: only the Bot, the tool and the ask rule, so a question a stopped server left open can be closed
+// in the audit trail at the next start-up.
 const createApprovals = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
@@ -88,6 +89,8 @@ const createApprovals = Effect.gen(function* () {
       id text PRIMARY KEY,
       conversation_id text NOT NULL,
       run_id text NOT NULL,
+      bot_id text NOT NULL,
+      tool text NOT NULL,
       rule text NOT NULL,
       state text NOT NULL
         CHECK (state IN ('asked', 'yes', 'no', 'spent', 'lapsed', 'finished', 'told')),
@@ -102,6 +105,8 @@ const createApprovals = Effect.gen(function* () {
     WHEN NEW.id IS NOT OLD.id
       OR NEW.conversation_id IS NOT OLD.conversation_id
       OR NEW.run_id IS NOT OLD.run_id
+      OR NEW.bot_id IS NOT OLD.bot_id
+      OR NEW.tool IS NOT OLD.tool
       OR NEW.rule IS NOT OLD.rule
       OR NOT (
         (OLD.state = 'asked' AND NEW.state IN ('yes', 'no'))

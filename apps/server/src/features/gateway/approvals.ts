@@ -2,11 +2,11 @@ import { createHash } from "node:crypto";
 import {
   type ApprovalAnswer,
   ApprovalId,
-  type BotId,
+  BotId,
   type ConversationId,
   NoApprovalWaiting,
   type PendingApproval,
-  type ToolName,
+  ToolName,
 } from "@aobot/domain";
 import {
   Context,
@@ -111,15 +111,11 @@ export class LedgerFailed extends Schema.TaggedError<LedgerFailed>()("LedgerFail
 export interface OpenApproval {
   readonly id: ApprovalId;
   /**
-  Records the question as asked, shows it as `question` about `tool`, and waits for the person's answer, or
-  no once `limit` passed; then records it and withdraws the question. Nothing is shown unrecorded, and an
-  answer that took the question before the limit is kept. Interrupted, it records no.
+  Records the question as asked, shows it as `question`, and waits for the person's answer, or no once
+  `limit` passed; then records it and withdraws the question. Nothing is shown unrecorded, and an answer
+  that took the question before the limit is kept. Interrupted, it records no.
   */
-  readonly ask: (
-    tool: ToolName,
-    question: string,
-    limit: Duration.Input,
-  ) => Effect.Effect<Answered, LedgerFailed>;
+  readonly ask: (question: string, limit: Duration.Input) => Effect.Effect<Answered, LedgerFailed>;
   /**
   Spends a yes on the action, once: `current`, the action as it resolves now, must be the one asked about.
   A yes not spent by the time the question's scope closes lapses.
@@ -132,6 +128,30 @@ export interface OpenApproval {
   /** Records that the Bot was told what became of the action the yes was spent on. */
   readonly finish: Effect.Effect<void>;
 }
+
+/**
+A question an earlier run left open, as when the server stopped while it waited for the person or before
+its yes was spent: the Bot it was asked for, the tool and the ask rule, and whether it was answered.
+*/
+export interface LeftOpen {
+  readonly approval: ApprovalId;
+  readonly bot: BotId;
+  readonly tool: ToolName;
+  readonly rule: string;
+  readonly answered: boolean;
+}
+
+const decodeLeftOpen = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      id: ApprovalId,
+      bot_id: BotId,
+      tool: ToolName,
+      rule: Schema.String,
+      state: Schema.Literals(["asked", "yes"]),
+    }),
+  ),
+);
 
 /** A question held for its conversation: its answer, and the card while the person may answer it. */
 interface Waiting {
@@ -289,10 +309,12 @@ export const approvalRequests = Effect.gen(function* () {
             Effect.andThen(withdraw(turn.conversation, id)),
           );
 
-        const show = (tool: ToolName, question: string) =>
+        const tool = asked.action.action;
+
+        const show = (question: string) =>
           sql`
-            INSERT INTO approvals (id, conversation_id, run_id, rule, state)
-            VALUES (${id}, ${turn.conversation}, ${turn.run}, ${rule}, 'asked')
+            INSERT INTO approvals (id, conversation_id, run_id, bot_id, tool, rule, state)
+            VALUES (${id}, ${turn.conversation}, ${turn.run}, ${asked.bot}, ${tool}, ${rule}, 'asked')
           `.pipe(
             Effect.mapError(ledgerFailed),
             Effect.andThen(
@@ -330,8 +352,8 @@ export const approvalRequests = Effect.gen(function* () {
 
         return {
           id,
-          ask: (tool, question, limit) =>
-            show(tool, question).pipe(
+          ask: (question, limit) =>
+            show(question).pipe(
               Effect.andThen(answerWithin(limit)),
               Effect.tap(({ answer: given }) => record(given)),
               Effect.onInterrupt(() =>
@@ -383,5 +405,38 @@ export const approvalRequests = Effect.gen(function* () {
     });
   });
 
-  return { open, requests: ApprovalRequests.of({ pending, answer }) };
+  /**
+  Closes every question an earlier run left open: one still asked is answered no, and a yes never spent
+  lapses. Returns each it closed. Run at start-up, before any question is asked; a second run finds none.
+  */
+  const closeLeftOpen = Effect.gen(function* () {
+    const open = yield* sql`
+      SELECT id, bot_id, tool, rule, state FROM approvals
+      WHERE state IN ('asked', 'yes')
+      ORDER BY rowid
+    `.pipe(Effect.flatMap(decodeLeftOpen), Effect.mapError(ledgerFailed));
+
+    const closed = yield* Effect.forEach(open, ({ id, bot_id, tool, rule, state }) =>
+      advance(
+        id,
+        state === "asked" ? { from: "asked", to: "no" } : { from: "yes", to: "lapsed" },
+      ).pipe(
+        Effect.map((moved) =>
+          moved
+            ? Option.some<LeftOpen>({
+                approval: id,
+                bot: bot_id,
+                tool,
+                rule,
+                answered: state === "yes",
+              })
+            : Option.none(),
+        ),
+      ),
+    );
+
+    return closed.flatMap(Option.toArray);
+  });
+
+  return { open, closeLeftOpen, requests: ApprovalRequests.of({ pending, answer }) };
 });

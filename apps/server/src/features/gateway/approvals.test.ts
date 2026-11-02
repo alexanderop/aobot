@@ -58,7 +58,7 @@ const untilShown = (requests: ApprovalRequests["Service"], shownConversation = c
 
 /** Asks `approval` about removing notes.txt, in a fiber of its own. */
 const asking = (approval: OpenApproval) =>
-  Effect.forkChild(approval.ask("run", "Run `rm notes.txt`?", "10 minutes"));
+  Effect.forkChild(approval.ask("Run `rm notes.txt`?", "10 minutes"));
 
 /** Opens a question about removing notes.txt in `turn` and answers it `answer`, held until the scope closes. */
 const answered = (
@@ -272,6 +272,40 @@ describe("approvalRequests", () => {
         ["run-2", "no"],
       ]);
     }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("closes every question an earlier run left open, once, and keeps the rest", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const store = yield* approvalRequests;
+        yield* askAndAnswer(store, firstRun, "no");
+
+        const { approval: approved } = yield* answered(store, secondRun, "yes");
+
+        const elsewhere = {
+          conversation: ConversationId.make("conversation-2"),
+          run: firstRun.run,
+        };
+
+        const waiting = yield* store.open(elsewhere, rule, removeNotes);
+        yield* asking(waiting);
+        yield* untilShown(store.requests, elsewhere.conversation);
+
+        const restarted = yield* approvalRequests;
+        const closed = { bot, tool: "run", rule };
+
+        expect(yield* restarted.closeLeftOpen).toEqual([
+          { approval: approved.id, ...closed, answered: true },
+          { approval: waiting.id, ...closed, answered: false },
+        ]);
+        expect(yield* restarted.closeLeftOpen).toEqual([]);
+        expect(yield* ledger).toEqual([
+          ["run-1", "no"],
+          ["run-2", "lapsed"],
+          ["run-1", "no"],
+        ]);
+      }),
+    ).pipe(Effect.provide(database)),
   );
 
   it.effect("keeps every row moving forward only, and never deletes one", () =>

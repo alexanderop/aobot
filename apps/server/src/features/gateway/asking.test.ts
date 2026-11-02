@@ -515,6 +515,42 @@ describe("Gateway asking the person", () => {
       }).pipe(Effect.provide(database)),
   );
 
+  it.effect("answers no to a question a stopped server left open, and refuses it, once", () =>
+    Effect.gen(function* () {
+      // The first server stops while the card is up, without running a finalizer, as a crash does: its
+      // call is detached, so closing its layer interrupts nothing.
+      const shown = yield* Effect.gen(function* () {
+        yield* Gateway.use((gateway) =>
+          Effect.forkDetach(Effect.result(gateway.act(firstRun, removeNotes))),
+        );
+
+        return yield* untilShown;
+      }).pipe(Effect.provide(startGateway(shell().layer, askBeforeRm)));
+
+      const restart = Effect.provide(Effect.void, startGateway(shell().layer, askBeforeRm));
+      yield* restart;
+      yield* restart;
+
+      expect(
+        (yield* decodedTrail).filter(([, detail]) => detail.approval === shown.approval).slice(1),
+      ).toEqual([
+        [
+          "approval.answered · answered",
+          { bot: "assistant", approval: shown.approval, answer: "no", by: "the server stopped" },
+        ],
+        [
+          "run · deny",
+          {
+            bot: "assistant",
+            rule: "ask-before-rm",
+            approval: shown.approval,
+            reason: "the server stopped",
+          },
+        ],
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
   it.effect("records no and refuses a question whose turn was stopped while it waited", () =>
     Effect.gen(function* () {
       const computer = shell();
