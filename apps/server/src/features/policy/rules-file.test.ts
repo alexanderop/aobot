@@ -88,6 +88,36 @@ describe("readRulesFile", () => {
       `deny: []\nallow:${granted.replace('"true"', "dyn(command)")}`,
       "it answers dyn, not true or false",
     ],
+    [
+      "calls matches, whose regular expression could stall the server",
+      `deny:${rmRf.replace('command.contains("rm -rf")', 'command.matches("^(a+)+$")')}\nallow: []`,
+      'matches is not allowed, since a regular expression can stall the server; use contains, startsWith, endsWith or lowerAscii()\n  at ["deny"][0]["when"]',
+    ],
+    [
+      "calls matches inside a macro",
+      `deny: []\nallow:${granted.replace('"true"', `'[command].exists(c, c.matches("x"))'`)}`,
+      "matches is not allowed",
+    ],
+    [
+      "gives a rule that reads a number out of text that holds none",
+      `deny: []\nallow:${granted.replace('"true"', "'int(\"ten\") > 3'")}`,
+      'it fails when every fact but tool.name is "": int() type error',
+    ],
+    [
+      "gives a rule that divides by zero",
+      `deny: []\nallow:${granted.replace('"true"', '"1/0 == 1"')}`,
+      'it fails when every fact but tool.name is "": division by zero',
+    ],
+    [
+      "gives a rule that indexes past the end of a list",
+      `deny: []\nallow:${granted.replace('"true"', '\'command.split(" ")[1] == "-rf"\'')}`,
+      "index out of bounds",
+    ],
+    [
+      "gives a rule that cuts a string past its end",
+      `deny: []\nallow:${granted.replace('"true"', 'file.name.substring(1) == "env"')}`,
+      "start index out of range",
+    ],
   ])("refuses a file that %s", (_case, text, why) => {
     expect(reason(text)).toContain(why);
   });

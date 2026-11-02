@@ -1,5 +1,11 @@
-import { type BotId, canonicalHost, ComputerAction, type RefTarget } from "@aobot/domain";
-import type { Facts } from "../policy/public.ts";
+import {
+  type BotId,
+  canonicalHost,
+  ComputerAction,
+  type FileAction,
+  type RefTarget,
+} from "@aobot/domain";
+import { blankFacts, type Facts } from "../policy/public.ts";
 import { fileTarget } from "./file-target.ts";
 import { singleUser } from "./person-audit.ts";
 
@@ -11,19 +17,24 @@ export function hostOf(url: string): string {
   return URL.canParse(url) ? canonicalHost(new URL(url).hostname) : "";
 }
 
-const element = ({ role, name }: RefTarget) => ({ element: { role, name } });
+/** The facts only some actions have, each as {@link Facts} names it, so a misspelt one does not compile. */
+type OwnFacts = Partial<Pick<Facts, "element" | "key" | "command" | "file">>;
+
+const element = ({ role, name }: RefTarget): OwnFacts => ({ element: { role, name } });
+
+const file = ({ path }: FileAction): OwnFacts => ({ file: fileTarget(path) });
 
 /** The facts only some actions have: the element a ref names, the key, the command, the file. */
 const ownFacts = ComputerAction.match({
-  navigate: () => ({}),
-  snapshot: () => ({}),
+  navigate: (): OwnFacts => ({}),
+  snapshot: (): OwnFacts => ({}),
   click: ({ target }) => element(target),
   type: ({ target }) => element(target),
-  press: ({ target, key }) => ({ ...element(target), key }),
-  run: ({ command }) => ({ command }),
-  read_file: ({ path }) => ({ file: fileTarget(path) }),
-  write_file: ({ path }) => ({ file: fileTarget(path) }),
-  list_files: ({ path }) => ({ file: fileTarget(path) }),
+  press: ({ target, key }): OwnFacts => ({ ...element(target), key }),
+  run: ({ command }): OwnFacts => ({ command }),
+  read_file: file,
+  write_file: file,
+  list_files: file,
 });
 
 /**
@@ -32,15 +43,12 @@ fact it has none of.
 */
 export function actionFacts(bot: BotId, action: ComputerAction, host: string): Facts {
   return {
+    ...blankFacts,
     tool: { name: action.action },
     bot: { id: bot },
     actor: { id: singleUser },
     computer: { kind: "cloud" },
     page: { host },
-    element: { role: "", name: "" },
-    key: "",
-    command: "",
-    file: { path: "", name: "", extension: "" },
     ...ownFacts(action),
   };
 }

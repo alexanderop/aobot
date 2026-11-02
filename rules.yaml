@@ -5,9 +5,13 @@
 # and the first that holds allows it. Anything no allow rule allows is refused, so an empty allow list
 # refuses everything.
 #
-# It fails closed. A deny rule that fails while it is checked, such as a regular expression that is not
-# one, refuses; an allow rule that fails allows nothing. A file that does not parse, a rule that names a
-# field there is not, or a rule that does not answer true or false stops the server at start-up.
+# It fails closed. A deny rule that fails while it is checked, such as int(command) on a command that is
+# no number, refuses; an allow rule that fails allows nothing. A file that does not parse, a rule that
+# names a field there is not, does not answer true or false, or fails when every field but tool.name
+# is "" stops the server at start-up.
+#
+# matches is refused: it runs a regular expression on the server's one thread, where one pattern can
+# stall every turn. Use contains, startsWith, endsWith and lowerAscii() instead.
 #
 # Each rule has a name (lowercase letters, digits and dashes, unique across both lists), which the audit
 # row and the Bot's answer name, and a `when` in CEL (https://cel.dev). It can read:

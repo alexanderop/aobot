@@ -2348,8 +2348,8 @@ allow: []
         const tracing = recordedSpans();
 
         const policy = policyFrom(`deny:
-  - name: own-pattern
-    when: command.matches(command)
+  - name: known-commands
+    when: 'command == "" || {"ls": true}[command]'
 allow:
   - name: granted-tools
     when: "true"
@@ -2360,7 +2360,7 @@ allow:
         ).pipe(Effect.provide(startGateway(computer.layer, policy)), Effect.provide(tracing.layer));
 
         expect(error.message).toBe(
-          "run did not run: the rule own-pattern could not be checked, so it refuses. Tell your person what was refused; do not try another way around it.",
+          "run did not run: the rule known-commands could not be checked, so it refuses. Tell your person what was refused; do not try another way around it.",
         );
         expect(computer.actions).toEqual([]);
         expect(yield* decodedTrail).toEqual([
@@ -2369,15 +2369,15 @@ allow:
             {
               bot: "assistant",
               command: "echo s3cret([",
-              rule: "own-pattern",
+              rule: "known-commands",
               reason: "rule failed",
-              error: expect.stringContaining("Invalid regular expression"),
+              error: expect.stringContaining("No such key: echo s3cret(["),
             },
           ],
         ]);
 
         const span = tracing.spans.find((candidate) => candidate.name === "Gateway.act");
-        expect(span?.attributes.get("gateway.rule")).toBe("own-pattern");
+        expect(span?.attributes.get("gateway.rule")).toBe("known-commands");
         expect(JSON.stringify([...(span?.attributes ?? [])])).not.toContain("s3cret");
       }).pipe(Effect.provide(database)),
   );

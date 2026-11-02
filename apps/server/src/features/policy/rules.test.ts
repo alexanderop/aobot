@@ -1,23 +1,22 @@
-import { BotId } from "@aobot/domain";
 import { describe, expect, it } from "vite-plus/test";
-import type { Facts } from "./facts.ts";
+import { blankFacts, type Facts } from "./facts.ts";
 import { judge, RuleName, Verdict } from "./rules.ts";
 import { rulesFrom } from "./testing/test-policy.ts";
 
 /** The facts of `run`ning `command` as Assistant, with every other field neutral. */
 function running(command: string): Facts {
   return {
+    ...blankFacts,
     tool: { name: "run" },
-    bot: { id: BotId.make("assistant") },
+    bot: { id: "assistant" },
     actor: { id: "single-user" },
     computer: { kind: "cloud" },
-    page: { host: "" },
-    element: { role: "", name: "" },
-    key: "",
     command,
-    file: { path: "", name: "", extension: "" },
   };
 }
+
+/** A rule that passes the check on blank facts, then fails on any command but a number. */
+const numberOnly = 'command == "" || int(command) > 0';
 
 const { Allowed, Denied, Broke, NoneAllowed } = Verdict.cases;
 
@@ -81,43 +80,43 @@ allow:
     [
       "a deny rule that fails refuses, though no rule after it would",
       `deny:
-  - name: bad-pattern
-    when: command.matches("[")
+  - name: number-only
+    when: ${numberOnly}
   - name: no-rm-rf
     when: command.contains("rm -rf")${allowAll}`,
       "ls",
-      brokeWith("bad-pattern", "Invalid regular expression"),
+      brokeWith("number-only", "int()"),
     ],
     [
       "a deny rule that fails on this action's value refuses",
       `deny:
-  - name: count-arguments
-    when: int(command) > 3${allowAll}`,
+  - name: third-argument
+    when: command == "" || command.split(" ")[2] == "-rf"${allowAll}`,
       "ls -la",
-      brokeWith("count-arguments", "int()"),
+      brokeWith("third-argument", "index out of bounds"),
     ],
     [
       "an allow rule that fails allows nothing, and a later one still can",
       `deny: []
 allow:
-  - name: bad-pattern
-    when: command.matches("[")
+  - name: number-only
+    when: ${numberOnly}
   - name: granted-tools
     when: "true"`,
       "ls",
       Allowed.make({
         rule: RuleName.make("granted-tools"),
-        broken: [RuleName.make("bad-pattern")],
+        broken: [RuleName.make("number-only")],
       }),
     ],
     [
       "an allow rule that fails, with none after it, leaves the action refused",
       `deny: []
 allow:
-  - name: bad-pattern
-    when: command.matches("[")`,
+  - name: number-only
+    when: ${numberOnly}`,
       "ls",
-      NoneAllowed.make({ broken: [RuleName.make("bad-pattern")] }),
+      NoneAllowed.make({ broken: [RuleName.make("number-only")] }),
     ],
     [
       "an action no allow rule holds for is refused",
@@ -137,32 +136,6 @@ allow:
   ])("%s", (_case, file, command, verdict) => {
     expect(judge(rulesFrom(file), running(command))).toEqual(verdict);
   });
-
-  it.each([
-    "tool.name",
-    "bot.id",
-    "actor.id",
-    "computer.kind",
-    "page.host",
-    "element.role",
-    "element.name",
-    "key",
-    "command",
-    "file.path",
-    "file.name",
-    "file.extension",
-  ])(
-    "binds %s on an action that has none, so a rule naming it answers and never fails",
-    (field) => {
-      const rules = rulesFrom(`deny:
-  - name: names-the-field
-    when: ${field} == "Submit"${allowAll}`);
-
-      expect(judge(rules, running("ls"))).toEqual(
-        Allowed.make({ rule: RuleName.make("granted-tools"), broken: [] }),
-      );
-    },
-  );
 });
 
 describe("a rule against submitting the shop's form", () => {

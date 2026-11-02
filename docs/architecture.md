@@ -167,13 +167,19 @@ file gives them: the first that holds refuses. Then every allow rule in order: t
 allows. Anything no allow rule allows is refused, so empty lists refuse everything; the server logs a
 warning at start-up when the allow list is empty.
 
-It fails closed. A deny rule that fails while it is evaluated, such as `command.matches("[")`, refuses.
-An allow rule that fails allows nothing, and a later allow rule still can. Either is logged by the rule's
+It fails closed. A deny rule that fails while it is evaluated, such as
+`command == "" || int(command) > 0` on `ls`, refuses. An allow rule that fails allows nothing, and a
+later allow rule still can. Either is logged by the rule's
 name and list only: CEL's error can echo what the action holds, so only the deny row keeps it, capped.
 A file that is missing, empty or not YAML, misses a list or misspells a key, gives a name that is not a
-slug or names two rules, or has a `when` that does not parse, names a field the facts do not have, or
-does not answer `bool` (a `dyn` answer included) stops the server with the path, every problem and where
-in the file each is.
+slug or names two rules, or has a `when` that does not parse, names a field the facts do not have,
+does not answer `bool` (a `dyn` answer included), calls `matches`, or fails when every fact but
+`tool.name` is `""` (such as `int("ten")`, `1/0` or `command.split(" ")[1]`) stops the server with the path,
+every problem and where in the file each is. Each rule is tried once on those blank facts when the file is
+read, so a rule that breaks on an action without the fact it reads never ships. `matches` is refused because cel-js runs it as a
+backtracking JavaScript regular expression on the server's one thread, where `^(a+)+$` on a short command
+holds every turn for seconds; write the rule with `contains`, `startsWith`, `endsWith` and
+`lowerAscii()` instead.
 
 A refusal is a `deny` row with the action's audit detail and the rule: `run · deny · no-rm-rf` is
 `{ bot, command, rule: "no-rm-rf", reason: "denied by rule" }`, a failed deny rule adds `error` with

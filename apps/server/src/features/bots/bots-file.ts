@@ -49,9 +49,7 @@ export function readBotsFile(
 ): Result.Result<Array.NonEmptyReadonlyArray<Bot>, string> {
   return parseYaml(text).pipe(
     Result.flatMap((contents) =>
-      contents === null || contents === undefined
-        ? Result.fail("the file is empty")
-        : decodeBotsFile(contents).pipe(Result.mapError((error) => error.message)),
+      decodeBotsFile(contents).pipe(Result.mapError((error) => error.message)),
     ),
     Result.map(({ bots }) =>
       Array.map(bots, (entry) => ({ ...entry, tools: new Set(entry.tools) })),

@@ -1,18 +1,80 @@
+import type { ASTNode, ParseResult } from "@marcbachmann/cel-js";
 import { Result, Schema } from "effect";
 import { parseYaml } from "../../shared/yaml.ts";
-import { factsEnvironment } from "./facts.ts";
+import { blankFacts, type Facts, factsEnvironment } from "./facts.ts";
 import { type Rule, RuleName, type Rules } from "./rules.ts";
 
+const decodeAnswer = Schema.decodeUnknownResult(Schema.Boolean);
+
 /**
-`true` when `when` can be a rule, or why not: it does not parse, names a field the facts do not have, or
-does not answer true or false. A `dyn` answer is refused too, since only evaluating it would tell.
+What a parsed rule answers on `facts`: true or false, or why it gave neither. Evaluating can throw, and CEL
+hands back any value, so the answer is read here.
+*/
+function answerOf(evaluate: ParseResult) {
+  return (facts: Facts): Result.Result<boolean, string> =>
+    Result.try({
+      try: () => evaluate(facts),
+      catch: (error) => (error instanceof Error ? error.message : String(error)),
+    }).pipe(
+      Result.flatMap((value) =>
+        decodeAnswer(value).pipe(Result.mapError(() => "it answered neither true nor false")),
+      ),
+    );
+}
+
+/** The expressions directly under `node`. */
+function children(node: ASTNode): ReadonlyArray<ASTNode> {
+  switch (node.op) {
+    case "value":
+    case "id":
+      return [];
+    case ".":
+    case ".?":
+      return [node.args[0]];
+    case "call":
+      return node.args[1];
+    case "rcall":
+      return [node.args[1], ...node.args[2]];
+    case "map":
+      return node.args.flat();
+    case "!_":
+    case "-_":
+      return [node.args];
+    default:
+      return node.args;
+  }
+}
+
+/** Whether `node`, or anything under it, calls `matches`, as a method or as a function. */
+function callsMatches(node: ASTNode): boolean {
+  const calls = (node.op === "call" || node.op === "rcall") && node.args[0] === "matches";
+
+  return calls || children(node).some(callsMatches);
+}
+
+/**
+`true` when `when` can be a rule, or why not: it does not parse, names a field the facts do not have, does
+not answer true or false, calls `matches`, or fails on {@link blankFacts}. A `dyn`
+answer is refused too, since only evaluating it would tell. `matches` runs a backtracking regular
+expression on the server's one thread, where one pattern can stall every turn.
 */
 function checkWhen(when: string): true | string {
   const checked = factsEnvironment.check(when);
 
   if (!checked.valid) return checked.error?.summary ?? "it is not a valid expression";
 
-  return checked.type === "bool" || `it answers ${checked.type ?? "nothing"}, not true or false`;
+  if (checked.type !== "bool") return `it answers ${checked.type ?? "nothing"}, not true or false`;
+
+  const parsed = factsEnvironment.parse(when);
+
+  if (callsMatches(parsed.ast)) {
+    return "matches is not allowed, since a regular expression can stall the server; use contains, startsWith, endsWith or lowerAscii()";
+  }
+
+  return Result.match(answerOf(parsed)(blankFacts), {
+    onSuccess: () => true,
+    onFailure: (error) => `it fails when every fact but tool.name is "": ${error}`,
+  });
 }
 
 const RuleEntry = Schema.Struct({
@@ -50,40 +112,21 @@ const decodeRulesFile = Schema.decodeUnknownResult(RulesFile, {
   errors: "all",
 });
 
-const decodeAnswer = Schema.decodeUnknownResult(Schema.Boolean);
-
-/**
-A checked entry as the rule it is, its expression parsed once, here. Evaluating it can still throw, and
-CEL hands back any value, so its answer is read here too.
-*/
+/** A checked entry as the rule it is, its expression parsed once, here. */
 function compile({ name, when }: RuleEntry): Rule {
-  const evaluate = factsEnvironment.parse(when);
-
-  return {
-    name,
-    answer: (facts) =>
-      Result.try({
-        try: () => evaluate(facts),
-        catch: (error) => (error instanceof Error ? error.message : String(error)),
-      }).pipe(
-        Result.flatMap((value) =>
-          decodeAnswer(value).pipe(Result.mapError(() => "it answered neither true nor false")),
-        ),
-      ),
-  };
+  return { name, answer: answerOf(factsEnvironment.parse(when)) };
 }
 
 /**
 The rules `text` defines, or why it is not a valid rules file: empty, not YAML, a list missing or a key
 misspelt, a name that is not a slug or names two rules, or a `when` that does not parse, names a field the
-facts do not have, or does not answer true or false. Every problem is named, not just the first.
+facts do not have, does not answer true or false, calls `matches`, or fails when every fact but
+`tool.name` is `""`. Every problem is named, not just the first.
 */
 export function readRulesFile(text: string): Result.Result<Rules, string> {
   return parseYaml(text).pipe(
     Result.flatMap((contents) =>
-      contents === null || contents === undefined
-        ? Result.fail("the file is empty")
-        : decodeRulesFile(contents).pipe(Result.mapError((error) => error.message)),
+      decodeRulesFile(contents).pipe(Result.mapError((error) => error.message)),
     ),
     Result.map(({ deny, allow }) => ({ deny: deny.map(compile), allow: allow.map(compile) })),
   );

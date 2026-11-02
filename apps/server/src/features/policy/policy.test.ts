@@ -1,10 +1,10 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BotId } from "@aobot/domain";
 import { NodeFileSystem } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
+import { blankFacts } from "./facts.ts";
 import { Policy, policyFileLayer } from "./policy.ts";
 import { RuleName, Verdict } from "./rules.ts";
 
@@ -55,17 +55,7 @@ allow:
 
       const verdict = yield* Policy.use((policy) =>
         Effect.succeed(
-          policy.judge({
-            tool: { name: "run" },
-            bot: { id: BotId.make("assistant") },
-            actor: { id: "single-user" },
-            computer: { kind: "cloud" },
-            page: { host: "" },
-            element: { role: "", name: "" },
-            key: "",
-            command: "rm -rf /tmp/x",
-            file: { path: "", name: "", extension: "" },
-          }),
+          policy.judge({ ...blankFacts, tool: { name: "run" }, command: "rm -rf /tmp/x" }),
         ),
       ).pipe(Effect.provide(policyFileLayer(path).pipe(Layer.provide(NodeFileSystem.layer))));
 
