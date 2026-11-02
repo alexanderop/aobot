@@ -10,7 +10,7 @@ A refusal shows in the transcript, the model reads which rule refused it, and th
 
 - `rules-deny` Assistant asked to run `rm -rf /tmp/x`: the shipped `no-rm-rf` refuses it. One
   `run · deny` with `{ "bot": "assistant", "command": "rm -rf /tmp/x", "rule": "no-rm-rf", "reason": "denied by rule" }`,
-  no allow row, the computer never starts.
+  no allow row.
 - `rules-allow` any other granted action: its `allow` row ends with `"rule": "granted-tools"`.
 - `rules-span` the turn's `Gateway.act` span has `gateway.decision` (`allow` or `deny`) and
   `gateway.rule` when a rule decided.
@@ -40,6 +40,8 @@ Preconditions: baseline.
 - `vp run verify E2-2` is the scripted proof of `rules-deny` and `rules-span`.
 - The server reads `rules.yaml` once at start-up. After editing it, restart the server
   (`docker compose restart server`); no rebuild.
+- A rule that calls `matches`, or that fails when every fact but `tool.name` is `""` (`int("ten")`,
+  `1/0`), stops the server at start-up like any other invalid rule.
 - In YAML, `when: "true"` is the CEL `true`. A CEL string literal needs both quotes: `when: '"x" == command'`.
 - A failed rule's error (which can echo the command) is never in a log or span. A failed deny rule's is in
   its deny row's `error`; when no allow rule allowed the action, each failed allow rule's is in the deny

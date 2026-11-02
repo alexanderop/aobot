@@ -10,7 +10,7 @@ import {
   modelRequests,
   script,
 } from "../chat.ts";
-import { attribute, traceSpans } from "../tempo.ts";
+import { attribute, gatewayActSpan, type TempoSpan, traceSpans } from "../tempo.ts";
 
 const DenyDetail = Schema.fromJsonString(
   Schema.Struct({
@@ -68,19 +68,15 @@ export default async function scenario(baseUrl: string, grafanaUrl: string): Pro
   const traceId = rows[0].trace_id ?? "";
   assert(traceId !== "", "the deny row carries the turn's trace_id");
 
-  let spans: Awaited<ReturnType<typeof traceSpans>> = [];
+  let spans: ReadonlyArray<TempoSpan> = [];
 
   await waitFor("the run Gateway.act span in Tempo", 60_000, async () => {
     spans = await traceSpans(grafanaUrl, traceId).catch(() => []);
 
-    return spans.some(
-      (span) => span.name === "Gateway.act" && attribute(span, "gateway.action") === "run",
-    );
+    return gatewayActSpan(spans, "run") !== undefined;
   });
 
-  const run = spans.find(
-    (span) => span.name === "Gateway.act" && attribute(span, "gateway.action") === "run",
-  );
+  const run = gatewayActSpan(spans, "run");
 
   assert(
     run !== undefined &&

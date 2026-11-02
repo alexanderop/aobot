@@ -46,6 +46,16 @@ export async function traceSpans(
   return trace.resourceSpans.flatMap(({ scopeSpans }) => scopeSpans.flatMap(({ spans }) => spans));
 }
 
+/** The `Gateway.act` span in `spans` of the Bot action `action`, such as `run`. */
+export function gatewayActSpan(
+  spans: ReadonlyArray<TempoSpan>,
+  action: string,
+): TempoSpan | undefined {
+  return spans.find(
+    (span) => span.name === "Gateway.act" && attribute(span, "gateway.action") === action,
+  );
+}
+
 /** The names from the root down to `span`. */
 export function ancestry(spans: ReadonlyArray<TempoSpan>, span: TempoSpan): ReadonlyArray<string> {
   const parent = spans.find((candidate) => candidate.spanId === span.parentSpanId);

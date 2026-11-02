@@ -121,6 +121,12 @@ describe("ToolCallCard", () => {
     expect(html).toMatch(/<details[^>]*>.*heading &quot;Results&quot;.*<\/details>/s);
   });
 
+  it("says it presses a key while the call's arguments are still streaming in", () => {
+    expect(draw(call("press", '{"ref":"e2","ke', ToolCallStatus.Running()))).toContain(
+      "Pressing a key…",
+    );
+  });
+
   it("says why a key press a rule refused did not happen", () => {
     const html = draw(
       call(

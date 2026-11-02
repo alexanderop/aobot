@@ -15,7 +15,7 @@ import {
   modelRequests,
   script,
 } from "../chat.ts";
-import { attribute, traceSpans } from "../tempo.ts";
+import { attribute, gatewayActSpan, type TempoSpan, traceSpans } from "../tempo.ts";
 
 const expenses = "date,item,amount\n2026-10-01,Train,12.50\n2026-10-02,Lunch,7.50\n";
 
@@ -219,19 +219,15 @@ export default async function scenario(baseUrl: string, grafanaUrl: string): Pro
   const traceId = rows.find((row) => row.action === "write_file")?.trace_id ?? "";
   assert(traceId !== "", "the write_file row carries the turn's trace_id");
 
-  let spans: Awaited<ReturnType<typeof traceSpans>> = [];
+  let spans: ReadonlyArray<TempoSpan> = [];
 
   await waitFor("the write_file Gateway.act span in Tempo", 60_000, async () => {
     spans = await traceSpans(grafanaUrl, traceId).catch(() => []);
 
-    return spans.some(
-      (span) => span.name === "Gateway.act" && attribute(span, "gateway.action") === "write_file",
-    );
+    return gatewayActSpan(spans, "write_file") !== undefined;
   });
 
-  const write = spans.find(
-    (span) => span.name === "Gateway.act" && attribute(span, "gateway.action") === "write_file",
-  );
+  const write = gatewayActSpan(spans, "write_file");
 
   assert(
     write !== undefined && attribute(write, "gateway.file_bytes") === String(bytes(totalled)),
