@@ -3,6 +3,7 @@ import { type Array, Option } from "effect";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { botList } from "../features/bots/public.ts";
 import { conversation, OpenOutcome } from "../features/chat/public.ts";
+import { type History, pageHistory } from "../shared/page-history.ts";
 import {
   follow,
   type Memory,
@@ -16,12 +17,8 @@ import {
 } from "./selection.ts";
 
 /** What the selection needs of the browser: its URL and history, its storage, and new ids. */
-export interface Browser {
-  readonly url: () => URL;
-  readonly push: (url: URL) => void;
+export interface Browser extends History {
   readonly replace: (url: URL) => void;
-  /** Calls `f` each time the person goes back or forward. Answers how to stop. */
-  readonly onPop: (f: () => void) => () => void;
   readonly storage: MemoryStorage;
   readonly newConversation: () => ConversationId;
 }
@@ -124,14 +121,8 @@ export function makeSelection(
 
 /** The page's own browser. */
 const pageBrowser: Browser = {
-  url: () => new URL(window.location.href),
-  push: (url) => window.history.pushState(null, "", url),
+  ...pageHistory,
   replace: (url) => window.history.replaceState(null, "", url),
-  onPop: (f) => {
-    window.addEventListener("popstate", f);
-
-    return () => window.removeEventListener("popstate", f);
-  },
   storage: () => window.localStorage,
   newConversation: () => ConversationId.make(crypto.randomUUID()),
 };
