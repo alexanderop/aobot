@@ -32,7 +32,7 @@ import {
 } from "effect";
 import { AuditLog, type AuditRowId, type Decision, type Outcome } from "../audit/public.ts";
 import { Bots, isGranted } from "../bots/public.ts";
-import { Policy, Refused, Verdict } from "../policy/public.ts";
+import { type Allowed, Policy, Refused, Verdict } from "../policy/public.ts";
 import {
   type Computer,
   type ComputerActFailed,
@@ -221,8 +221,8 @@ it runs only once the person says yes.
 class NeedsApproval extends Schema.TaggedError<NeedsApproval>()("NeedsApproval", {
   action: DirectAction,
   host: Schema.String,
-  askRule: Schema.String,
   allowRule: Schema.String,
+  askRule: Schema.String,
 }) {}
 
 /** An ask rule holds for an action from a call that names no turn, so there is no person to ask. */
@@ -774,12 +774,16 @@ export const gatewayLayer = Layer.effectContext(
     };
 
     /**
-    The allow rule that allows `bot` taking `action` on a page at `host`, and the ask rule that asks the
+    The verdict that allows `bot` taking `action` on a page at `host`, naming the ask rule that asks the
     person first when one holds, or a {@link RuleRefused}. A rule that failed is logged by its name and
     list only, never its error, which can echo what the action holds. A refusal's deny row keeps the error
     of every rule that failed, capped; an allowed action's rules that failed are only logged.
     */
-    const allowedBy = (bot: BotId, action: ToolAction, host: string) => {
+    const allowedBy = (
+      bot: BotId,
+      action: ToolAction,
+      host: string,
+    ): Effect.Effect<Allowed, RuleRefused> => {
       const failed = (list: "deny" | "allow" | "ask", rule: string) =>
         Effect.logWarning("A rule failed while it was checked").pipe(
           Effect.annotateLogs({ rule, list, action: action.action }),
@@ -791,12 +795,18 @@ export const gatewayLayer = Layer.effectContext(
       const refused = (verdict: Refused) => Effect.fail(new RuleRefused({ action, verdict }));
 
       return Verdict.match(policy.judge(actionFacts(bot, action, host)), {
-        Allowed: ({ rule, broken }) =>
-          Effect.as(failedRules(broken), { allowRule: rule, askRule: Option.none<string>() }),
-        Ask: ({ askRule, allowRule, broken, failed: askFailed }) =>
-          failedRules(broken).pipe(
-            Effect.andThen(askFailed ? failed("ask", askRule) : Effect.void),
-            Effect.as({ allowRule, askRule: Option.some<string>(askRule) }),
+        Allowed: (allowed) =>
+          failedRules(allowed.broken).pipe(
+            Effect.andThen(
+              Option.match(
+                Option.filter(allowed.ask, (ask) => ask.failed),
+                {
+                  onNone: () => Effect.void,
+                  onSome: (ask) => failed("ask", ask.rule),
+                },
+              ),
+            ),
+            Effect.as(allowed),
           ),
         Denied: refused,
         DenyRuleFailed: (failure) => Effect.andThen(failed("deny", failure.rule), refused(failure)),
@@ -895,13 +905,18 @@ export const gatewayLayer = Layer.effectContext(
       // the computer still confines every path itself.
       const { action, host } = yield* resolve(bot, request);
 
-      const { allowRule, askRule } = yield* allowedBy(bot, action, host);
+      const allowed = yield* allowedBy(bot, action, host);
 
-      if (Option.isSome(askRule)) {
-        return yield* new NeedsApproval({ action, host, askRule: askRule.value, allowRule });
+      if (Option.isSome(allowed.ask)) {
+        return yield* new NeedsApproval({
+          action,
+          host,
+          allowRule: allowed.rule,
+          askRule: allowed.ask.value.rule,
+        });
       }
 
-      const allowRow = yield* allow(bot, action, allowRule, {});
+      const allowRow = yield* allow(bot, action, allowed.rule, {});
 
       return yield* forwardAndSettle(bot, action.action, action, allowRow);
     });
@@ -1186,7 +1201,8 @@ export const gatewayLayer = Layer.effectContext(
 
               if (asked.host === "") return yield* new NoSite({ action: asked.action });
 
-              const { allowRule, askRule } = yield* allowedBy(bot, asked.action, asked.host);
+              const allowed = yield* allowedBy(bot, asked.action, asked.host);
+              const askRule = Option.map(allowed.ask, ({ rule }) => rule);
 
               if (Option.isSome(askRule) && Option.isSome(turn)) {
                 yield* approvals.mayAsk(turn.value, askRule.value).pipe(
@@ -1202,14 +1218,14 @@ export const gatewayLayer = Layer.effectContext(
               const allowRow = yield* allow(
                 bot,
                 asked.action,
-                allowRule,
+                allowed.rule,
                 Option.match(askRule, {
                   onNone: () => ({}),
                   onSome: (named) => ({ asked: named }),
                 }),
               );
 
-              return { ...asked, allowRow, allowRule };
+              return { ...asked, allowRow, allowRule: allowed.rule };
             }),
             { queued: false },
           );

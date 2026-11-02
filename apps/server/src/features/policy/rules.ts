@@ -32,21 +32,17 @@ export interface Rules {
 /** A rule that failed while it was checked, and why. `error` can echo what the action holds. */
 const FailedRule = Schema.Struct({ rule: RuleName, error: Schema.String });
 
+/** The ask rule an allowed action waits on the person's yes for, which `failed` when it could not be checked. */
+const AskRule = Schema.Struct({ rule: RuleName, failed: Schema.Boolean });
+
 /**
-What the rules make of one action. `Allowed`, `Ask` and `NoneAllowed` carry the allow rules that failed on
-the way, each counted as not matching. `Ask` is an action the allow rule `allowRule` allows only once the
-person says yes to the ask rule `askRule`, which `failed` when it asks because it could not be checked.
-`DenyRuleFailed` is a deny rule that failed, which refuses. A failed rule's `error` can echo what the
+What the rules make of one action. `Allowed` and `NoneAllowed` carry the allow rules that failed on the
+way, each counted as not matching. An `Allowed` action with an `ask` rule runs only once the person says
+yes. `DenyRuleFailed` is a deny rule that failed, which refuses. A failed rule's `error` can echo what the
 action holds, so it goes into the audit row only.
 */
 export const Verdict = Schema.TaggedUnion({
-  Allowed: { rule: RuleName, broken: Schema.Array(FailedRule) },
-  Ask: {
-    askRule: RuleName,
-    allowRule: RuleName,
-    broken: Schema.Array(FailedRule),
-    failed: Schema.Boolean,
-  },
+  Allowed: { rule: RuleName, broken: Schema.Array(FailedRule), ask: Schema.Option(AskRule) },
   Denied: { rule: RuleName },
   DenyRuleFailed: { rule: RuleName, error: Schema.String },
   NoneAllowed: { broken: Schema.Array(FailedRule) },
@@ -55,9 +51,12 @@ export const Verdict = Schema.TaggedUnion({
 /** A decoded {@link Verdict}. */
 export type Verdict = typeof Verdict.Type;
 
-const { Allowed, Ask, Denied, DenyRuleFailed, NoneAllowed } = Verdict.cases;
+const { Allowed, Denied, DenyRuleFailed, NoneAllowed } = Verdict.cases;
 
-/** A {@link Verdict} that refuses the action: every one but `Allowed` and `Ask`. */
+/** A {@link Verdict} that lets the action run, at once or once the person says yes. */
+export type Allowed = typeof Allowed.Type;
+
+/** A {@link Verdict} that refuses the action: every one but `Allowed`. */
 export const Refused = Schema.Union([Denied, DenyRuleFailed, NoneAllowed]).pipe(
   Schema.toTaggedUnion("_tag"),
 );
@@ -103,14 +102,15 @@ export function judge(rules: Rules, facts: Facts): Verdict {
 
   if (Option.isNone(allowedBy)) return NoneAllowed.make({ broken });
 
+  const allowed = (ask: Option.Option<typeof AskRule.Type>) =>
+    Allowed.make({ rule: allowedBy.value, broken, ask });
+
   for (const rule of rules.ask) {
     const asks = rule.answer(facts);
     const failed = Result.isFailure(asks);
 
-    if (failed || asks.success) {
-      return Ask.make({ askRule: rule.name, allowRule: allowedBy.value, broken, failed });
-    }
+    if (failed || asks.success) return allowed(Option.some({ rule: rule.name, failed }));
   }
 
-  return Allowed.make({ rule: allowedBy.value, broken });
+  return allowed(Option.none());
 }

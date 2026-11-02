@@ -460,8 +460,9 @@ call, as the `aobot-conversation` and `aobot-run` headers next to `aobot-bot`. E
 writes starts a new run. A call that names no turn, such as one whose headers do not decode, has no person
 to ask, so an action an ask rule holds for is refused with `no one to ask`.
 
-**The gateway asks before anything runs.** The verdict `Ask` names the ask rule and the allow rule. The
-action leaves the door before any row is written, and the gateway, in `gateway/approvals.ts`:
+**The gateway asks before anything runs.** An `Allowed` verdict names the allow rule, and the ask rule
+as `ask` when one holds. The action leaves the door before any row is written, and the gateway, in
+`gateway/approvals.ts`:
 
 1. Holds a question for the conversation. One waits per conversation at a time, so a second action is
    refused with `already waiting` and gets no second card.
