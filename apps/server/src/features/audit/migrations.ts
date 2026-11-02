@@ -16,6 +16,24 @@ const refuseRewrites = Effect.gen(function* () {
   `;
 });
 
+// One outcome per allow row, and an outcome only of an allow row.
+const guardOutcomes = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+
+  yield* sql`
+    CREATE UNIQUE INDEX audit_rows_one_outcome ON audit_rows (outcome_of)
+    WHERE outcome_of IS NOT NULL
+  `;
+
+  yield* sql`
+    CREATE TRIGGER audit_rows_outcome_of_allow BEFORE INSERT ON audit_rows
+    WHEN NEW.outcome_of IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM audit_rows WHERE id = NEW.outcome_of AND decision = 'allow'
+    )
+    BEGIN SELECT RAISE(ABORT, 'an outcome follows an allow row'); END
+  `;
+});
+
 const createAuditRows = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
@@ -68,19 +86,7 @@ const addOutcomeRows = Effect.gen(function* () {
   yield* sql`ALTER TABLE audit_rows_next RENAME TO audit_rows`;
 
   yield* refuseRewrites;
-
-  yield* sql`
-    CREATE UNIQUE INDEX audit_rows_one_outcome ON audit_rows (outcome_of)
-    WHERE outcome_of IS NOT NULL
-  `;
-
-  yield* sql`
-    CREATE TRIGGER audit_rows_outcome_of_allow BEFORE INSERT ON audit_rows
-    WHEN NEW.outcome_of IS NOT NULL AND NOT EXISTS (
-      SELECT 1 FROM audit_rows WHERE id = NEW.outcome_of AND decision = 'allow'
-    )
-    BEGIN SELECT RAISE(ABORT, 'an outcome follows an allow row'); END
-  `;
+  yield* guardOutcomes;
 });
 
 // The audit page reads newest first and pages by this key.
@@ -90,13 +96,54 @@ const indexNewestFirst = Effect.gen(function* () {
   yield* sql`CREATE INDEX audit_rows_newest_first ON audit_rows (created_at, seq)`;
 });
 
+// `ask` and `answered` are decisions, so they follow no row. The table is rebuilt as in 0002.
+const addApprovalRows = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+
+  yield* sql`
+    CREATE TABLE audit_rows_next (
+      seq integer PRIMARY KEY AUTOINCREMENT,
+      id text NOT NULL UNIQUE,
+      created_at text NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      trace_id text,
+      initiator_kind text NOT NULL CHECK (initiator_kind IN ('person', 'deployment')),
+      actor_id text NOT NULL,
+      decision text NOT NULL CHECK (
+        decision IN ('allow', 'deny', 'ask', 'answered', 'succeeded', 'failed', 'unknown')
+      ),
+      action text NOT NULL,
+      detail text NOT NULL,
+      outcome_of text,
+      CHECK ((decision IN ('allow', 'deny', 'ask', 'answered')) = (outcome_of IS NULL))
+    )
+  `;
+
+  yield* sql`
+    INSERT INTO audit_rows_next
+      (seq, id, created_at, trace_id, initiator_kind, actor_id, decision, action, detail, outcome_of)
+    SELECT seq, id, created_at, trace_id, initiator_kind, actor_id, decision, action, detail, outcome_of
+    FROM audit_rows
+  `;
+
+  yield* sql`DROP TABLE audit_rows`;
+  yield* sql`ALTER TABLE audit_rows_next RENAME TO audit_rows`;
+
+  yield* refuseRewrites;
+  yield* guardOutcomes;
+  yield* indexNewestFirst;
+});
+
+/** Every migration of the audit table, in the order they run. */
+export const auditMigrations = {
+  "0001_create_audit_rows": createAuditRows,
+  "0002_add_outcome_rows": addOutcomeRows,
+  "0003_index_newest_first": indexNewestFirst,
+  "0004_add_approval_rows": addApprovalRows,
+};
+
 /** Brings the audit table up to date. Safe to run at every boot. */
 export const migrateAudit = SqliteMigrator.run({
   // Its own table, so the audit trail's migrations never share a numbering with another feature's.
   table: "audit_migrations",
-  loader: SqliteMigrator.fromRecord({
-    "0001_create_audit_rows": createAuditRows,
-    "0002_add_outcome_rows": addOutcomeRows,
-    "0003_index_newest_first": indexNewestFirst,
-  }),
+  loader: SqliteMigrator.fromRecord(auditMigrations),
 });

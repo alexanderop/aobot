@@ -1,10 +1,19 @@
 import { DateTime, Schema } from "effect";
 
 /**
-What an audit row says of its action: the gateway's decision, `allow` or `deny`, or what became of an
-allowed action, `succeeded`, `failed` or `unknown`.
+What an audit row says of its action: the gateway's decision, `allow` or `deny`, or `ask` when it asked the
+person first and `answered` once they answered or the time ran out; or what became of an allowed action,
+`succeeded`, `failed` or `unknown`.
 */
-export const AuditDecision = Schema.Literals(["allow", "deny", "succeeded", "failed", "unknown"]);
+export const AuditDecision = Schema.Literals([
+  "allow",
+  "deny",
+  "ask",
+  "answered",
+  "succeeded",
+  "failed",
+  "unknown",
+]);
 
 /** A decoded {@link AuditDecision}. */
 export type AuditDecision = typeof AuditDecision.Type;
@@ -38,8 +47,8 @@ export type AcpClientMethod = typeof AcpClientMethod.Type;
 
 /**
 Every action an audit row can name: a Bot's tool, `request_secret` as `secret.requested` and the person's
-answer as `secret.supplied`, a person taking or handing back the computer, a person's file going in or
-out, and a CLI's call outside the gateway.
+answer as `secret.supplied`, the person's answer to an action a rule asked them about, a person taking or
+handing back the computer, a person's file going in or out, and a CLI's call outside the gateway.
 */
 export const AuditAction = Schema.Literals([
   "navigate",
@@ -53,6 +62,7 @@ export const AuditAction = Schema.Literals([
   "list_files",
   "secret.requested",
   "secret.supplied",
+  "approval.answered",
   "control_taken",
   "control_released",
   "file.uploaded",
@@ -67,6 +77,8 @@ export type AuditAction = typeof AuditAction.Type;
 const decisionLabels: Readonly<Record<AuditDecision, string>> = {
   allow: "Allowed",
   deny: "Refused",
+  ask: "Asked the person",
+  answered: "Answered",
   succeeded: "Succeeded",
   failed: "Failed",
   unknown: "Outcome unknown",
@@ -85,6 +97,7 @@ const actionLabels: Readonly<Record<AuditAction, string>> = {
   list_files: "List files",
   "secret.requested": "Ask for a secret",
   "secret.supplied": "Type a person's secret",
+  "approval.answered": "Answer an approval",
   control_taken: "Take control",
   control_released: "Hand back control",
   "file.uploaded": "Upload a file",
