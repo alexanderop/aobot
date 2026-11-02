@@ -48,6 +48,7 @@ Each file: H1 title, one paragraph of user-visible behavior, then exactly `Sub-f
 - [Files](./files.md): a person uploads into the Bot's workspace and downloads what it saved; the Bot's file tools stay inside it. E1-6.
 - [Bots](./bots.md): the sidebar of Bots from `bots.yaml`, picking one, and the gateway refusing a tool it was not granted. E2-1.
 - [Rules](./rules.md): `rules.yaml`'s deny and allow rules judging every Bot action, failing closed, naming the rule. E2-2.
+- [Secrets](./secrets.md): a Bot asks for a password, the person types it into a secret card; nothing a Bot typed or a person gave it is recorded. E2-3.
 
 Cross-cutting: every turn is one `Chat.turn` trace (E0-2). Check it with `$S trace` on any feature's audit
 row `trace_id`.

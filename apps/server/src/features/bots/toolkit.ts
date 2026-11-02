@@ -118,6 +118,21 @@ const listFiles = Tool.make("list_files", {
   failureMode: "return",
 });
 
+const requestSecret = Tool.make("request_secret", {
+  description:
+    "Ask your person to type a secret, such as a password or a one-time code, into a field of the page open in your computer's browser. They type it themselves and you never see it: the field shows [hidden]. Answers once they did, with the page read afresh, or that they declined. Ask in the chat first what you need it for if they might not know.",
+  parameters: Schema.Struct({
+    ref,
+    field: Schema.String.annotate({
+      description:
+        "What the secret is, in the words your person reads, such as: the password for shop.example.",
+    }),
+  }),
+  success: Schema.String,
+  failure: ToolFailed,
+  failureMode: "return",
+});
+
 /**
 The tools every Bot is offered, whatever it was granted: the gateway is what refuses a tool a Bot was not
 granted, so a model that calls one reads why. Each is a gateway call: the gateway implements their
@@ -133,4 +148,5 @@ export const botToolkit = Toolkit.make(
   readFile,
   writeFile,
   listFiles,
+  requestSecret,
 );

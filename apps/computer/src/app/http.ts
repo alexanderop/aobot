@@ -111,6 +111,7 @@ const act = Effect.fn("Computer.act")(function* (action: ComputerAction) {
     click: browse,
     type: browse,
     press: browse,
+    type_secret: browse,
     run: ({ command }) => Shell.use((shell) => shell.run(command)),
     read_file: files,
     write_file: files,

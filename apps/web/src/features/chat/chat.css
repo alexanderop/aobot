@@ -115,6 +115,62 @@
   white-space: pre-wrap;
 }
 
+.secret-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.secret-entry__input {
+  padding: 8px 12px;
+  border: 0;
+  border-radius: var(--radius-row);
+  background: var(--row-active);
+  color: var(--fg);
+  font: inherit;
+}
+
+.secret-entry__input:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+.secret-entry__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.secret-entry__button {
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--row-active);
+  color: var(--fg);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.secret-entry__button--accent {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.secret-entry__button:disabled,
+.secret-entry__input:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.secret-entry__note {
+  margin: 0;
+  font-size: 13px;
+}
+
+.secret-entry__problem {
+  margin: 0;
+  color: var(--danger);
+}
+
 .conversation__error {
   margin: 8px 0 0;
   padding: 8px 14px;

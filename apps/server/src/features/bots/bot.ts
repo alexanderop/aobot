@@ -31,6 +31,8 @@ const toolGuidance = {
   read_file: `read_file reads a file in ${workspaceRoot} by its path inside it, such as notes.txt. A file your person gives you lands there.`,
   write_file: `write_file saves a file in ${workspaceRoot}. Your person can download it from the chat, so save what they ask you to make that way.`,
   list_files: `list_files lists the files and folders in ${workspaceRoot}.`,
+  request_secret:
+    "request_secret asks your person to type a password or another secret into a field by its ref. You never see it; never ask for one in the chat instead.",
 } satisfies { readonly [Name in ToolName]: string };
 
 /** The paragraph about the tools `bot` was granted, in the toolkit's order. */

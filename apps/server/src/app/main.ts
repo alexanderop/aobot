@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { isIPv6 } from "node:net";
-import { BotRpcs, ChatRpcs, ControlRpcs, ScreenRpcs } from "@aobot/domain";
+import { BotRpcs, ChatRpcs, ControlRpcs, ScreenRpcs, SecretRpcs } from "@aobot/domain";
 import {
   NodeChildProcessSpawner,
   NodeFileSystem,
@@ -30,12 +30,13 @@ import { computersLayer } from "../features/computers/public.ts";
 import {
   botToolHandlers,
   controlHandlers,
+  secretHandlers,
   gatewayLayer,
   gatewayMcpLayer,
   migrateGateway,
   screenHandlers,
 } from "../features/gateway/public.ts";
-import { toolInputsRedacted } from "../shared/span-redaction.ts";
+import { spanAttributesRedacted } from "../shared/span-redaction.ts";
 import { serverConfig } from "./config.ts";
 import { fileRoutes } from "./file-routes.ts";
 import { rpcSocket } from "./rpc-socket.ts";
@@ -115,7 +116,7 @@ const server = Layer.unwrap(
 
     // Off because the handlers name their own spans and `Chat.turn` starts its own trace. The RPC span
     // around each call would only add a second trace of one span.
-    const rpc = RpcServer.layer(ChatRpcs.merge(BotRpcs, ScreenRpcs, ControlRpcs), {
+    const rpc = RpcServer.layer(ChatRpcs.merge(BotRpcs, ScreenRpcs, ControlRpcs, SecretRpcs), {
       disableTracing: true,
     }).pipe(
       Layer.provide(rpcSocket(config.publicHost)),
@@ -125,6 +126,7 @@ const server = Layer.unwrap(
         botHandlers,
         screenHandlers.pipe(Layer.provide(computers)),
         controlHandlers.pipe(Layer.provide(gateway)),
+        secretHandlers.pipe(Layer.provide(gateway)),
       ]),
       Layer.provide(runtime.agent),
       Layer.provide(bots),
@@ -153,7 +155,7 @@ const server = Layer.unwrap(
     return HttpRouter.serve(Layer.mergeAll(rpc, files, webApp, runtime.routes)).pipe(
       Layer.merge(runtime.beside),
       Layer.provide(listener),
-      Layer.provide([toolInputsRedacted.pipe(Layer.provide(telemetry)), untracedHttp]),
+      Layer.provide([spanAttributesRedacted.pipe(Layer.provide(telemetry)), untracedHttp]),
     );
   }),
 );

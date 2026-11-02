@@ -15,10 +15,10 @@ import {
   type AgentError,
   AgentRuntime,
   ModelFailed,
-  Stalled,
   StepLimit,
   type Turn,
 } from "./agent-runtime.ts";
+import { stallWhenSilent } from "./stall.ts";
 
 /** How far one turn may go before it is stopped. */
 export interface AgentLimits {
@@ -77,6 +77,24 @@ function agentEvent<Part extends Response.AnyPart>(part: Part): Result.Result<Ag
   return Result.fail(part);
 }
 
+/** `toolkit`, counting in `running` the handlers that run: from when one starts until its results end. */
+function counting<Tools extends Record<string, Tool.Any>>(
+  toolkit: Toolkit.WithHandler<Tools>,
+  running: Ref.Ref<number>,
+): Toolkit.WithHandler<Tools> {
+  const ended = Ref.update(running, (calls) => calls - 1);
+
+  return {
+    tools: toolkit.tools,
+    handle: (name, params, toolCallId, options) =>
+      Ref.update(running, (calls) => calls + 1).pipe(
+        Effect.andThen(toolkit.handle(name, params, toolCallId, options)),
+        Effect.onError(() => ended),
+        Effect.map((results) => Stream.ensuring(results, ended)),
+      ),
+  };
+}
+
 function modelFailed<E>(error: E): ModelFailed {
   return new ModelFailed({
     reason: AiError.isAiError(error)
@@ -100,9 +118,6 @@ export function layerApi<Tools extends Record<string, Tool.Any>>(
       const tools = yield* toolkit;
       const toolServices = yield* Effect.context<ToolServices<Tools>>();
 
-      const stalled = () =>
-        Stream.fail(new Stalled({ waitedMs: Duration.toMillis(limits.stallTimeout) }));
-
       const step = (
         chat: Chat.Chat,
         index: number,
@@ -110,10 +125,16 @@ export function layerApi<Tools extends Record<string, Tool.Any>>(
         Stream.unwrap(
           Effect.gen(function* () {
             const calledTools = yield* Ref.make(false);
+            const running = yield* Ref.make(0);
 
-            const answer = chat.streamText({ prompt: [], toolkit: tools }).pipe(
-              Stream.mapError(modelFailed),
-              Stream.timeoutOrElse({ duration: limits.stallTimeout, orElse: stalled }),
+            const answer = stallWhenSilent(
+              chat
+                .streamText({ prompt: [], toolkit: counting(tools, running) })
+                .pipe(Stream.mapError(modelFailed)),
+              Effect.map(Ref.get(running), (calls) => calls > 0),
+              // Each handler is the gateway's own, bounded by it, so the count is never stuck.
+              { limit: limits.stallTimeout, busyLimit: Duration.infinity },
+            ).pipe(
               Stream.tap((part) =>
                 part.type === "tool-call" ? Ref.set(calledTools, true) : Effect.void,
               ),

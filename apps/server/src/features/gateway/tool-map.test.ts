@@ -30,10 +30,24 @@ describe("docs/architecture.md § Gateway tools", () => {
     expect([...documented].sort()).toEqual(Object.keys(botToolkit.tools).sort());
   });
 
-  it.each(Object.keys(botToolkit.tools))("gives %s its audit rows", (tool) => {
+  /** The allow row each tool's row of the table names, and the outcomes it settles as. */
+  const audited = {
+    navigate: ["navigate", "`succeeded`, `failed` or `unknown`"],
+    snapshot: ["snapshot", "`succeeded`, `failed` or `unknown`"],
+    click: ["click", "`succeeded`, `failed` or `unknown`"],
+    type: ["type", "`succeeded`, `failed` or `unknown`"],
+    press: ["press", "`succeeded`, `failed` or `unknown`"],
+    run: ["run", "`succeeded`, `failed` or `unknown`"],
+    read_file: ["read_file", "`succeeded`, `failed` or `unknown`"],
+    write_file: ["write_file", "`succeeded`, `failed` or `unknown`"],
+    list_files: ["list_files", "`succeeded`, `failed` or `unknown`"],
+    request_secret: ["secret.requested", "`succeeded` or `failed`"],
+  } satisfies Record<keyof typeof botToolkit.tools, readonly [string, string]>;
+
+  it.each(Object.entries(audited))("gives %s its audit rows", (tool, [action, outcomes]) => {
     const auditRows = rows.find(([name]) => name === `\`${tool}\``)?.at(-1) ?? "";
 
-    expect(auditRows).toContain(`\`${tool} · allow\` with \`{ bot`);
-    expect(auditRows).toContain("`succeeded`, `failed` or `unknown`");
+    expect(auditRows).toContain(`\`${action} · allow\` with \`{ bot`);
+    expect(auditRows).toContain(outcomes);
   });
 });

@@ -8,13 +8,14 @@ import {
   Option,
   Path,
   Queue,
+  Ref,
   Result,
   Schema,
   Stream,
 } from "effect";
 import { HttpTraceContext } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { botHeader, Gateway, gatewayMcpName } from "../../gateway/public.ts";
+import { botHeader, Gateway, gatewayMcpName, longestToolCall } from "../../gateway/public.ts";
 import {
   type AgentEvent,
   AgentRuntime,
@@ -29,8 +30,10 @@ import {
   noToolCalls,
   promptOutcome,
   sessionUpdateEvents,
+  toolCallRunning,
   type ToolCalls,
 } from "./session-updates.ts";
+import { stallWhenSilent } from "../stall.ts";
 import { turnPrompt } from "./turn-prompt.ts";
 
 /** What the `acp` runtime needs: which CLI to start and how, and where the gateway's MCP server is. */
@@ -104,6 +107,8 @@ export function layerAcp(options: AcpRuntimeOptions) {
       const { agent, launcher } = options;
 
       const stalled = new Stalled({ waitedMs: Duration.toMillis(options.stallTimeout) });
+
+      const busyLimit = Duration.sum(longestToolCall, options.stallTimeout);
 
       const ask = <S extends Schema.ConstraintDecoder<unknown>>(
         connection: AcpConnection,
@@ -271,13 +276,22 @@ export function layerAcp(options: AcpRuntimeOptions) {
             Effect.forkScoped,
           );
 
-        return Stream.fromQueue(signals).pipe(
-          Stream.timeoutOrElse({
-            duration: options.stallTimeout,
-            orElse: () => Stream.fail(stalled),
-          }),
+        const calls = yield* Ref.make(noToolCalls);
+
+        return stallWhenSilent(
+          Stream.fromQueue(signals),
+          Effect.map(Ref.get(calls), toolCallRunning),
+          { limit: options.stallTimeout, busyLimit },
+        ).pipe(
           Stream.takeUntil((signal) => !Signal.$is("Update")(signal)),
-          Stream.mapAccum(() => noToolCalls, signalEvents),
+          Stream.mapEffect((signal) =>
+            Ref.modify(calls, (current) => {
+              const [next, events] = signalEvents(current, signal);
+
+              return [events, next] as const;
+            }),
+          ),
+          Stream.flattenIterable,
           Stream.flatten(),
         );
       });

@@ -41,6 +41,28 @@ console.log(JSON.stringify(rows));`;
   );
 }
 
+const Held = Schema.fromJsonString(Schema.Array(Schema.String));
+
+/**
+Which of `texts` are anywhere in the bytes of the server's SQLite files on its volume: the database, and
+its journal or write-ahead log when there is one, so a row since deleted or overwritten counts too.
+*/
+export function databaseHolds(texts: ReadonlyArray<string>): ReadonlyArray<string> {
+  const read = `const { readdirSync, readFileSync } = require("node:fs");
+const bytes = Buffer.concat(readdirSync("/data").filter((name) => name.startsWith("aobot.db"))
+  .map((name) => readFileSync("/data/" + name)));
+console.log(JSON.stringify(process.argv.slice(1).filter((text) => bytes.includes(Buffer.from(text)))));`;
+
+  return Schema.decodeUnknownSync(Held)(
+    composeOutput("exec", "-T", "server", "node", "-e", read, ...texts),
+  );
+}
+
+/** What the server printed since it started. */
+export function serverLog(): string {
+  return composeOutput("logs", "server");
+}
+
 /** What the server sent the mock model since the last script. */
 export async function modelRequests(): Promise<ReadonlyArray<string>> {
   const response = await fetch(`${mockModel}/mock/requests`);

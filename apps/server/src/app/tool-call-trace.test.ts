@@ -19,7 +19,7 @@ import {
   gatewayLayer,
   migrateGateway,
 } from "../features/gateway/public.ts";
-import { toolInputsRedacted } from "../shared/span-redaction.ts";
+import { spanAttributesRedacted } from "../shared/span-redaction.ts";
 
 /**
 The `api` runtime wired as `main.ts` wires it, with only the model and the computer faked: a tool call
@@ -282,7 +282,7 @@ describe("a tool call in an api turn", () => {
     }).pipe(
       Effect.provide(chatLayer.pipe(Layer.provide([agent, testBots]))),
       Effect.provide(database),
-      Effect.provide(toolInputsRedacted.pipe(Layer.provide(recorder.layer))),
+      Effect.provide(spanAttributesRedacted.pipe(Layer.provide(recorder.layer))),
     );
   });
 

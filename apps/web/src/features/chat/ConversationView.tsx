@@ -54,7 +54,9 @@ export function ConversationView(props: {
         {transcript.map(
           TranscriptItem.$match({
             Message: (message) => <Bubble key={`message-${message.id}`} message={message} />,
-            ToolCall: (call) => <ToolCallCard key={`tool-${call.id}`} call={call} />,
+            ToolCall: (call) => (
+              <ToolCallCard key={`tool-${call.id}`} call={call} bot={props.botId} />
+            ),
           }),
         )}
         <div ref={bottom} />

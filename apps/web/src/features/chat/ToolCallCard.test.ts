@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ToolCallId } from "@aobot/domain";
+import { BotId, ToolCallId } from "@aobot/domain";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ToolCallCard } from "./ToolCallCard.tsx";
@@ -14,7 +14,9 @@ const call = (name: string, args: string, status: ToolCallStatus): ToolCall => (
 });
 
 const draw = (toolCall: ToolCall) =>
-  renderToStaticMarkup(createElement(ToolCallCard, { call: toolCall }));
+  renderToStaticMarkup(
+    createElement(ToolCallCard, { call: toolCall, bot: BotId.make("assistant") }),
+  );
 
 describe("ToolCallCard", () => {
   it("says which page navigate opened once it is done", () => {

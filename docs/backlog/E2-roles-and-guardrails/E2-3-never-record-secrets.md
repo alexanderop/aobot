@@ -2,7 +2,7 @@
 id: E2-3
 title: Never record secrets
 epic: E2
-status: todo
+status: done
 depends_on: [E1-2]
 estimate: 2d
 ---

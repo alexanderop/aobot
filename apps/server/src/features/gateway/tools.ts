@@ -30,6 +30,7 @@ export const botToolHandlers = botToolkit.toLayer(
       read_file: ({ path }) => act({ action: "read_file", path }),
       write_file: ({ path, contents }) => act({ action: "write_file", path, contents }),
       list_files: ({ path }) => act({ action: "list_files", path }),
+      request_secret: ({ ref, field }) => act({ action: "request_secret", ref, field }),
     };
   }),
 );

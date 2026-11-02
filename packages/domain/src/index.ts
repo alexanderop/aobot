@@ -46,6 +46,7 @@ export {
   RunCommand,
   Screen,
   ScreenFrame,
+  SecretValue,
   snapshotLimit,
   WorkspacePath,
   workspaceRoot,
@@ -65,10 +66,18 @@ export { ControlRpcs } from "./control-rpcs.ts";
 
 export { ScreenRpcs } from "./screen-rpcs.ts";
 
-export { canonicalHost, sameOrigin } from "./host.ts";
+export {
+  NoSecretRequested,
+  PendingSecret,
+  SecretAnswer,
+  SecretRequestId,
+  SecretRpcs,
+} from "./secret-rpcs.ts";
+
+export { canonicalHost, originOf, sameOrigin } from "./host.ts";
 
 export { keepFirst, keepLast } from "./text.ts";
 
 export { tokensMatch } from "./token.ts";
 
-export { findRef, snapshotRefs } from "./aria-snapshot.ts";
+export { filledFields, findRef, hiddenValue, hideValues, snapshotRefs } from "./aria-snapshot.ts";

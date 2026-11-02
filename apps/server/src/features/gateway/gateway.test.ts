@@ -6,7 +6,6 @@ import {
   CommandEnd,
   type CommandRan,
   commandTimeLimit,
-  type ComputerAction,
   ComputerNotStarted,
   FileAction,
   Control,
@@ -18,7 +17,6 @@ import {
   PersonInput,
 } from "@aobot/domain";
 import { NodeHttpServer } from "@effect/platform-node";
-import { SqliteClient } from "@effect/sql-sqlite-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Arbitrary,
@@ -33,78 +31,35 @@ import {
   Redacted,
   Semaphore,
   Stream,
-  Tracer,
 } from "effect";
 import { McpClient, McpProtocol } from "effect/ai";
 import { FetchHttpClient, HttpClient, HttpMiddleware, HttpRouter, HttpServer } from "effect/http";
 import { SqlClient } from "effect/sql";
 import { TestClock } from "effect/testing";
+import { recordedSpans } from "../../shared/testing/recorded-spans.ts";
 import { ToolFailed } from "../../shared/tool-result.ts";
-import { auditLogLayer, migrateAudit } from "../audit/public.ts";
 import { botToolkit } from "../bots/public.ts";
-import { assistant, researcher, testBots } from "../bots/testing/test-bots.ts";
+import { assistant, researcher } from "../bots/testing/test-bots.ts";
 import {
-  type Computer,
   ComputerActFailed,
   computerAt,
   Computers,
   ComputerUnavailable,
 } from "../computers/public.ts";
-import { fakeComputer } from "../computers/testing/fake-computer.ts";
-import type { Policy } from "../policy/public.ts";
-import { allowEverything, policyFrom } from "../policy/testing/test-policy.ts";
+import { policyFrom } from "../policy/testing/test-policy.ts";
 import { ComputerControl } from "./control.ts";
-import { Claim, Gateway, gatewayLayer } from "./gateway.ts";
+import { Claim, Gateway } from "./gateway.ts";
 import { FileTransfers } from "./transfers.ts";
 import { botHeader, gatewayMcpLayer } from "./mcp.ts";
 import { migrateGateway } from "./migrations.ts";
+import {
+  auditRows,
+  database,
+  decodedTrail,
+  fakeComputers,
+  startGateway,
+} from "./testing/test-gateway.ts";
 import { ActingBot, botToolHandlers } from "./tools.ts";
-
-/**
-A computer that answers with `answers`, and keeps every page, command and file action it was sent. It is
-running and starts at once, unless `computers` says how `ensure` or `running` answer instead.
-*/
-function fakeComputers(
-  answers: Partial<Computer>,
-  computers: Partial<Pick<Computers["Service"], "ensure" | "running">> = {},
-) {
-  const actions: Array<ComputerAction> = [];
-  const answering = fakeComputer(answers);
-
-  const computer: Computer = {
-    ...answering,
-    browse: (action) =>
-      Effect.andThen(
-        Effect.sync(() => actions.push(action)),
-        answering.browse(action),
-      ),
-    run: (command) =>
-      Effect.andThen(
-        Effect.sync(() => actions.push(command)),
-        answering.run(command),
-      ),
-    files: (action) =>
-      Effect.andThen(
-        Effect.sync(() => actions.push(action)),
-        answering.files(action),
-      ),
-  };
-
-  const layer = Layer.succeed(
-    Computers,
-    Computers.of({
-      ensure: Effect.succeed(computer),
-      running: Effect.succeed(computer),
-      stop: Effect.void,
-      reset: Effect.void,
-      list: Effect.succeed([]),
-      screen: Stream.never,
-      ...computers,
-    }),
-  );
-
-  return { actions, layer };
-}
 
 const exampleDomain = (action: PageAction): Effect.Effect<PageRead> =>
   Effect.succeed({
@@ -114,33 +69,6 @@ const exampleDomain = (action: PageAction): Effect.Effect<PageRead> =>
     snapshot: '- heading "Example Domain" [level=1] [ref=e1]',
     truncated: false,
   });
-
-const database = Layer.effectDiscard(Effect.andThen(migrateAudit, migrateGateway)).pipe(
-  Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })),
-  Layer.fresh,
-);
-
-/** A gateway on the database in the context, as one server start would build it, judging by `policy`. */
-function startGateway(
-  computers: Layer.Layer<Computers>,
-  policy: Layer.Layer<Policy> = allowEverything,
-) {
-  return gatewayLayer.pipe(
-    Layer.provide(auditLogLayer),
-    Layer.provide(computers),
-    Layer.provide(testBots),
-    Layer.provide(policy),
-  );
-}
-
-const auditRows = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
-
-  return yield* sql`
-    SELECT id, trace_id, initiator_kind, decision, action, detail, outcome_of
-    FROM audit_rows ORDER BY seq
-  `;
-});
 
 /** Each audit row as `action · decision`, with the reason its detail gives, oldest first. */
 const trailWithReasons = Effect.map(auditRows, (rows) =>
@@ -517,6 +445,37 @@ describe("Gateway refs", () => {
     }).pipe(Effect.provide(database)),
   );
 
+  it.effect("keeps the latest page without what was typed into it, or its address's query", () =>
+    Effect.gen(function* () {
+      const computer = fakeComputers({
+        browse: (action) =>
+          Effect.succeed({
+            action: action.action,
+            url: "https://example.com/form?q=hunter2",
+            title: "Form",
+            snapshot:
+              action.action === "type" ? form.replace("[ref=e2]", "[ref=e2]: hunter2") : form,
+            truncated: false,
+          }),
+      });
+
+      yield* Gateway.use((gateway) =>
+        Effect.all([
+          gateway.act(bot, { action: "snapshot" }),
+          gateway.act(bot, { action: "type", ref: "e2", text: "hunter2" }),
+        ]),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      const stored = yield* SqlClient.SqlClient.pipe(
+        Effect.flatMap((sql) => sql`SELECT snapshot, url FROM computer_snapshot`),
+      );
+
+      expect(stored).toEqual([
+        { snapshot: form.replace("[ref=e2]", '[ref=e2]: "[hidden]"'), url: "https://example.com" },
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
   it.effect(
     "sends the computer the element the ref names, and records its role and name with the typed text redacted",
     () =>
@@ -534,12 +493,12 @@ describe("Gateway refs", () => {
         expect(computer.actions.slice(1)).toEqual([
           {
             action: "type",
-            target: { ref: "e2", role: "textbox", name: "Name", url: "https://example.com/form" },
+            target: { ref: "e2", role: "textbox", name: "Name", url: "https://example.com" },
             text: "hunter2 is my password",
           },
           {
             action: "click",
-            target: { ref: "e3", role: "button", name: "Send", url: "https://example.com/form" },
+            target: { ref: "e3", role: "button", name: "Send", url: "https://example.com" },
           },
         ]);
 
@@ -589,7 +548,7 @@ describe("Gateway refs", () => {
       expect(answer).toContain('heading "Thank you"');
       expect(computer.actions.at(-1)).toEqual({
         action: "press",
-        target: { ref: "e2", role: "textbox", name: "Name", url: "https://example.com/form" },
+        target: { ref: "e2", role: "textbox", name: "Name", url: "https://example.com" },
         key: "Enter",
       });
       expect((yield* auditRows).find((row) => row["action"] === "press")).toMatchObject({
@@ -661,7 +620,7 @@ describe("Gateway refs", () => {
       ]);
       expect(computer.actions.at(-1)).toEqual({
         action: "click",
-        target: { ref: "e4", role: "heading", name: "Thank you", url: "https://example.com/form" },
+        target: { ref: "e4", role: "heading", name: "Thank you", url: "https://example.com" },
       });
       expect((yield* auditRows).find((row) => row["decision"] === "deny")).toMatchObject({
         action: "click",
@@ -722,21 +681,6 @@ function shell(ran: Partial<Omit<CommandRan, "action">>) {
         ...ran,
       }),
   });
-}
-
-function recordedSpans() {
-  const spans: Array<Tracer.NativeSpan> = [];
-
-  const tracer = Tracer.make({
-    span: (options) => {
-      const span = new Tracer.NativeSpan(options);
-      spans.push(span);
-
-      return span;
-    },
-  });
-
-  return { spans, layer: Layer.succeed(Tracer.Tracer, tracer) };
 }
 
 const makeNotes = { action: "run", command: "echo hello > notes.txt && ls" } as const;
@@ -1077,8 +1021,25 @@ describe("Gateway run", () => {
 
       expect(computer.actions.at(-1)).toEqual({
         action: "click",
-        target: { ref: "e1", role: "heading", name: "Example Domain", url: "https://example.com/" },
+        target: { ref: "e1", role: "heading", name: "Example Domain", url: "https://example.com" },
       });
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("redacts a secret in a command's audit row, and runs the command as written", () =>
+    Effect.gen(function* () {
+      const computer = shell({});
+      const command = "API_TOKEN=hunter2 curl -u ada:pw https://api.example/?key=abc";
+
+      yield* Gateway.use((gateway) => gateway.act(bot, { action: "run", command })).pipe(
+        Effect.provide(startGateway(computer.layer)),
+      );
+
+      const [allow] = yield* auditRows;
+      expect(JSON.parse(String(allow?.["detail"])).command).toBe(
+        "API_TOKEN=[7 chars] curl -u ada:[2 chars] https://api.example/?key=[3 chars]",
+      );
+      expect(computer.actions).toEqual([{ action: "run", command }]);
     }).pipe(Effect.provide(database)),
   );
 
@@ -1094,6 +1055,21 @@ describe("Gateway run", () => {
       const recorded = JSON.parse(String(allow?.["detail"])).command;
       expect(recorded.length).toBeLessThan(2_100);
       expect(recorded).toMatch(/^echo x+\n\[truncated: \d+ characters\]$/u);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("redacts a secret the cap would cut before it caps the command", () =>
+    Effect.gen(function* () {
+      const flag = `${"x".repeat(1_960)} --token "`;
+      const command = `${flag}${"a1b2c3d4".repeat(5)}"`;
+
+      yield* Gateway.use((gateway) => gateway.act(bot, { action: "run", command })).pipe(
+        Effect.provide(startGateway(shell({}).layer)),
+      );
+
+      const [allow] = yield* auditRows;
+      const recorded = JSON.parse(String(allow?.["detail"])).command;
+      expect(recorded).toBe(`${flag}[40 chars]"`);
     }).pipe(Effect.provide(database)),
   );
 });
@@ -1245,7 +1221,16 @@ describe("Gateway control", () => {
         expect(yield* auditTrail).toEqual([
           "control_taken · allow",
           "control_taken · succeeded",
-          ...tools.map((tool) => `${tool.name} · deny`),
+          "navigate · deny",
+          "snapshot · deny",
+          "click · deny",
+          "type · deny",
+          "press · deny",
+          "run · deny",
+          "read_file · deny",
+          "write_file · deny",
+          "list_files · deny",
+          "secret.requested · deny",
         ]);
         expect(
           (yield* auditRows).slice(2).map((row) => JSON.parse(String(row["detail"])).reason),
@@ -2137,13 +2122,6 @@ const shippedRules = policyFrom(
 const removeX = { action: "run", command: "rm -rf /tmp/x" } as const;
 
 /** The detail of each audit row, decoded, as `action · decision` with it, oldest first. */
-const decodedTrail = Effect.map(auditRows, (rows) =>
-  rows.map((row) => [
-    `${String(row["action"])} · ${String(row["decision"])}`,
-    JSON.parse(String(row["detail"])),
-  ]),
-);
-
 describe("Gateway rules", () => {
   it.effect("refuses a command a deny rule names, records the rule, and never runs it", () =>
     Effect.gen(function* () {
@@ -2280,38 +2258,82 @@ allow:
     }).pipe(Effect.provide(database)),
   );
 
-  it.effect("records the host of a ref's page in its audit row, never its address", () =>
-    Effect.gen(function* () {
-      const computer = fakeComputers({
-        browse: (action) =>
-          Effect.succeed({
-            action: action.action,
-            url: "https://shop.example/callback?code=abc#access_token=hunter2",
-            title: "Signed in",
-            snapshot: form,
-            truncated: false,
-          }),
-      });
+  it.effect(
+    "records the host of a ref's page in its audit row, and sends the computer only its origin",
+    () =>
+      Effect.gen(function* () {
+        const computer = fakeComputers({
+          browse: (action) =>
+            Effect.succeed({
+              action: action.action,
+              url: "https://shop.example/callback?code=abc#access_token=hunter2",
+              title: "Signed in",
+              snapshot: form,
+              truncated: false,
+            }),
+        });
 
-      yield* Gateway.use((gateway) =>
-        gateway
-          .act(bot, { action: "snapshot" })
-          .pipe(Effect.andThen(gateway.act(bot, { action: "click", ref: "e3" }))),
-      ).pipe(Effect.provide(startGateway(computer.layer)));
+        yield* Gateway.use((gateway) =>
+          gateway
+            .act(bot, { action: "snapshot" })
+            .pipe(Effect.andThen(gateway.act(bot, { action: "click", ref: "e3" }))),
+        ).pipe(Effect.provide(startGateway(computer.layer)));
+
+        const rows = yield* decodedTrail;
+        expect(rows.find(([row]) => row === "click · allow")?.[1]).toEqual({
+          bot: "assistant",
+          ref: "e3",
+          role: "button",
+          name: "Send",
+          host: "shop.example",
+          rule: "everything",
+        });
+        expect(JSON.stringify(rows)).not.toContain("hunter2");
+        expect(computer.actions.at(-1)).toMatchObject({
+          target: { url: "https://shop.example" },
+        });
+      }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("records the address navigate opens without its query values or fragment", () =>
+    Effect.gen(function* () {
+      const computer = fakeComputers({ browse: exampleDomain });
+      const url = "https://shop.example/callback?code=abc&state=x#access_token=hunter2";
+
+      yield* Gateway.use((gateway) => gateway.act(bot, { action: "navigate", url })).pipe(
+        Effect.provide(startGateway(computer.layer)),
+      );
 
       const rows = yield* decodedTrail;
-      expect(rows.find(([row]) => row === "click · allow")?.[1]).toEqual({
-        bot: "assistant",
-        ref: "e3",
-        role: "button",
-        name: "Send",
-        host: "shop.example",
-        rule: "everything",
-      });
+      expect(rows[0]).toEqual([
+        "navigate · allow",
+        {
+          bot: "assistant",
+          url: "https://shop.example/callback?code=[3 chars]&state=[1 chars]#access_token=[7 chars]",
+          rule: "everything",
+        },
+      ]);
       expect(JSON.stringify(rows)).not.toContain("hunter2");
-      expect(computer.actions.at(-1)).toMatchObject({
-        target: { url: "https://shop.example/callback?code=abc#access_token=hunter2" },
+      expect(computer.actions).toEqual([{ action: "navigate", url }]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("shows the model the page's address without a secret it carries", () =>
+    Effect.gen(function* () {
+      const landed = "https://shop.example/login?page=2&password=hunter2#access_token=abc";
+
+      const computer = fakeComputers({
+        browse: (action) => Effect.map(exampleDomain(action), (read) => ({ ...read, url: landed })),
       });
+
+      const answer = yield* Gateway.use((gateway) =>
+        gateway.act(bot, { action: "navigate", url: "https://shop.example/login" }),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(answer).toContain(
+        "URL: https://shop.example/login?page=2&password=[7 chars]#access_token=[3 chars]",
+      );
+      expect(answer).not.toContain("hunter2");
     }).pipe(Effect.provide(database)),
   );
 
