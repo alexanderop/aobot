@@ -49,7 +49,7 @@ import {
 } from "../../shared/tool-result.ts";
 import { redact, redactCommand, redactUrl } from "../../shared/redact.ts";
 import { actionFacts, hostOf } from "./action-facts.ts";
-import { ApprovalRequests, approvals, digestOf, type OpenApproval } from "./approvals.ts";
+import { ApprovalRequests, approvalRequests, digestOf, type OpenApproval } from "./approvals.ts";
 import { ComputerControl, controlDoors } from "./control.ts";
 import { type ComputerFailure, failureOutcome, personAudit } from "./person-audit.ts";
 import { fileTarget } from "./file-target.ts";
@@ -563,7 +563,7 @@ export const gatewayLayer = Layer.effectContext(
     const doors = yield* controlDoors;
     const transfers = yield* fileTransfers;
     const secrets = yield* secretRequests;
-    const asking = yield* approvals;
+    const approvals = yield* approvalRequests;
 
     // Before anything is forwarded: a call an earlier run allowed and never heard back from is
     // recorded as unknown, never run again.
@@ -931,7 +931,7 @@ export const gatewayLayer = Layer.effectContext(
         Effect.gen(function* () {
           if (Option.isNone(turn)) return yield* new NoOneToAsk();
 
-          const approval = yield* asking.open(turn.value, askRule, digestOf(bot, action, host));
+          const approval = yield* approvals.open(turn.value, askRule, digestOf(bot, action, host));
 
           yield* record(tool, "ask", auditAction(tool), {
             ...asked,
@@ -1195,7 +1195,7 @@ export const gatewayLayer = Layer.effectContext(
       Context.add(ComputerControl, doors.control),
       Context.add(FileTransfers, transfers),
       Context.add(SecretRequests, secrets.requests),
-      Context.add(ApprovalRequests, asking.requests),
+      Context.add(ApprovalRequests, approvals.requests),
     );
   }),
 );

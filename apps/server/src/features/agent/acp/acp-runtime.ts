@@ -215,7 +215,7 @@ export function layerAcp(options: AcpRuntimeOptions) {
         // The CLI sends these on every call to the gateway, so its tool calls are this turn's Bot's and
         // land in this turn's trace.
         const headers = [
-          ...turnHeaders(turn.bot, { conversation: turn.conversation, run: turn.run }),
+          ...turnHeaders(turn.bot, turn),
           ...Option.match(yield* Effect.option(Effect.currentSpan), {
             onNone: () => [],
             onSome: (span) => [

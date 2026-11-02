@@ -28,7 +28,7 @@ import { ToolAction } from "./tool-action.ts";
 const ActionDigest = Schema.String.pipe(Schema.brand("ActionDigest"));
 
 /** A decoded {@link ActionDigest}. */
-export type ActionDigest = typeof ActionDigest.Type;
+type ActionDigest = typeof ActionDigest.Type;
 
 // The schema writes each object's keys in its own order, so equal actions always read the same.
 const encodeAction = Schema.encodeSync(ToolAction);
@@ -66,7 +66,7 @@ export class ApprovalRequests extends Context.Service<
 >()("aobot/gateway/ApprovalRequests") {}
 
 /** How a question was answered, and by whom: the person, or the time limit, which answers no. */
-export interface Answered {
+interface Answered {
   readonly answer: ApprovalAnswer;
   readonly by: "person" | "time limit";
 }
@@ -98,7 +98,7 @@ export class LedgerFailed extends Schema.TaggedError<LedgerFailed>()("LedgerFail
   message: Schema.String,
 }) {}
 
-/** One question for a person, from {@link approvals}'s `open`. */
+/** One question for a person, from {@link approvalRequests}'s `open`. */
 export interface OpenApproval {
   readonly id: ApprovalId;
   /**
@@ -153,7 +153,7 @@ became of every one across restarts. The question waits in memory, inside one tu
 database, so a yes is spent once, a no holds for the rest of its run, and an action approved before a
 restart is never run again.
 */
-export const approvals = Effect.gen(function* () {
+export const approvalRequests = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const questions = yield* SubscriptionRef.make<Questions>(HashMap.empty());
 

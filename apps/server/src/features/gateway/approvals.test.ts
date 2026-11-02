@@ -8,7 +8,7 @@ import {
   AlreadySpent,
   AlreadyWaiting,
   type ApprovalRequests,
-  approvals,
+  approvalRequests,
   DeclinedEarlier,
   digestOf,
   type OpenApproval,
@@ -54,7 +54,7 @@ const asking = (approval: OpenApproval) =>
 
 /** Opens a question about removing notes.txt in `turn` and answers it `answer`, in a scope of its own. */
 const askAndAnswer = (
-  store: Effect.Success<typeof approvals>,
+  store: Effect.Success<typeof approvalRequests>,
   turn: typeof firstRun,
   answer: "yes" | "no",
 ) =>
@@ -98,13 +98,13 @@ describe("digestOf", () => {
   });
 });
 
-describe("approvals", () => {
+describe("approvalRequests", () => {
   it.effect(
     "shows a question only once it is recorded, and hands the person's yes to the wait",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const store = yield* approvals;
+          const store = yield* approvalRequests;
           const approval = yield* store.open(firstRun, rule, removeNotes);
 
           expect(yield* shownIn(store.requests)).toEqual(Option.none());
@@ -137,7 +137,7 @@ describe("approvals", () => {
   it.effect("holds one question per conversation, and refuses a second while it waits", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const store = yield* approvals;
+        const store = yield* approvalRequests;
         yield* store.open(firstRun, rule, removeNotes);
 
         expect(yield* Effect.flip(store.open(firstRun, "another-rule", removeNotes))).toEqual(
@@ -159,7 +159,7 @@ describe("approvals", () => {
   it.effect("answers no once the time limit passes, and takes no answer after it", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const store = yield* approvals;
+        const store = yield* approvalRequests;
         const approval = yield* store.open(firstRun, rule, removeNotes);
         const waiting = yield* asking(approval);
         yield* untilShown(store.requests);
@@ -177,7 +177,7 @@ describe("approvals", () => {
   it.effect("records no for a question whose wait was stopped, and withdraws it", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const store = yield* approvals;
+        const store = yield* approvalRequests;
         const waiting = yield* asking(yield* store.open(firstRun, rule, removeNotes));
         yield* untilShown(store.requests);
         yield* Fiber.interrupt(waiting);
@@ -190,7 +190,7 @@ describe("approvals", () => {
 
   it.effect("spends a yes once, and only on the action it was given for", () =>
     Effect.gen(function* () {
-      const store = yield* approvals;
+      const store = yield* approvalRequests;
 
       const asked = yield* askAndAnswer(store, firstRun, "yes");
       const otherCommand = digestOf(bot, { action: "run", command: "rm -r notes" }, "");
@@ -209,7 +209,7 @@ describe("approvals", () => {
 
   it.effect("refuses a no's rule again for the rest of its run, and asks again in the next", () =>
     Effect.gen(function* () {
-      const store = yield* approvals;
+      const store = yield* approvalRequests;
 
       expect((yield* askAndAnswer(store, firstRun, "no")).answered).toEqual({
         answer: "no",
@@ -227,12 +227,12 @@ describe("approvals", () => {
 
   it.effect("tells of a yes an earlier run spent and never finished once, then asks again", () =>
     Effect.gen(function* () {
-      const store = yield* approvals;
+      const store = yield* approvalRequests;
 
       const started = yield* askAndAnswer(store, firstRun, "yes");
       yield* started.approval.spend(removeNotes);
 
-      const restarted = yield* approvals;
+      const restarted = yield* approvalRequests;
 
       expect(
         yield* Effect.flip(Effect.scoped(restarted.open(secondRun, rule, removeNotes))),
@@ -248,7 +248,7 @@ describe("approvals", () => {
   it.effect("keeps every row moving forward only, and never deletes one", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const store = yield* approvals;
+      const store = yield* approvalRequests;
       yield* askAndAnswer(store, firstRun, "yes");
 
       const back = yield* Effect.flip(sql`UPDATE approvals SET state = 'asked'`);
@@ -269,7 +269,7 @@ describe("approvals", () => {
 
   it.effect("withdraws a question it held when the scope closes before it was shown", () =>
     Effect.gen(function* () {
-      const store = yield* approvals;
+      const store = yield* approvalRequests;
       const scope = yield* Scope.make();
       yield* Scope.provide(store.open(firstRun, rule, removeNotes), scope);
       yield* Scope.close(scope, Exit.void);
