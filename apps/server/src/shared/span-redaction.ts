@@ -1,12 +1,16 @@
-import { Effect, Layer, Tracer } from "effect";
-import { redact } from "./redact.ts";
+import { Effect, Layer, Option, Schema, Tracer } from "effect";
+import { isSensitiveKey, redact, redactField } from "./redact.ts";
+
+const decodeJson = Schema.decodeUnknownOption(Schema.Json);
 
 /**
-`effect/ai` writes each tool call's input onto the current span as `parameters`, and a tool input can hold
-what a Bot typed. This wraps the tracer in the context so that attribute keeps only its length, before any
-exporter sees it. Provide it above the tracer that exports.
+Wraps the tracer in the context so that every span attribute goes through {@link redactField} before any
+exporter sees it, whoever wrote it: our code or a library. A key that may hold a secret or a tool's input
+or output keeps only the value's length, such as the `parameters` `effect/ai` writes each tool call's
+input under, and every address keeps no query values, fragment or userinfo. Provide it above the tracer
+that exports.
 */
-export const toolInputsRedacted = Layer.effect(
+export const spanAttributesRedacted = Layer.effect(
   Tracer.Tracer,
   Effect.map(Effect.tracer, (tracer) =>
     Tracer.make({
@@ -17,7 +21,13 @@ export const toolInputsRedacted = Layer.effect(
 
         // Only this span's own method is replaced, so the exporter still gets the span it made.
         span.attribute = (key, value) =>
-          attribute(key, key === "parameters" ? redact(JSON.stringify(value) ?? "") : value);
+          attribute(
+            key,
+            Option.match(decodeJson(value), {
+              onNone: () => (isSensitiveKey(key) ? redact(String(value)) : value),
+              onSome: (json) => redactField(key, json),
+            }),
+          );
 
         return span;
       },

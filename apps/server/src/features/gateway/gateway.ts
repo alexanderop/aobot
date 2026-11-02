@@ -28,7 +28,7 @@ import {
   type ToolTimedOut,
   toolResult,
 } from "../../shared/tool-result.ts";
-import { redact } from "../../shared/redact.ts";
+import { redact, redactCommand, redactUrl } from "../../shared/redact.ts";
 import { actionFacts, hostOf } from "./action-facts.ts";
 import { ComputerControl, controlDoors } from "./control.ts";
 import { type ComputerFailure, failureOutcome, personAudit } from "./person-audit.ts";
@@ -257,17 +257,18 @@ address, whose query or fragment can carry a token, such as an OAuth `#access_to
 const refDetail = ({ ref, role, name, url }: RefTarget) => ({ ref, role, name, host: hostOf(url) });
 
 /**
-The audit row's `detail`. Text a Bot typed into a page goes through `redact()`; the address `navigate`
-opens is not typed text, and the command is what the audit row exists to show. A file is its path, name
-and extension, and for a write its size: never what it holds.
+The audit row's `detail`. Text a Bot typed into a page goes through `redact()`. The address `navigate`
+opens keeps its path, and the command what it does, since each is what the row exists to show; a secret
+in either, such as a query value or `API_TOKEN=…`, is redacted. A file is its path, name and extension,
+and for a write its size: never what it holds.
 */
 const auditDetail = ComputerAction.match({
-  navigate: ({ url }) => ({ url }),
+  navigate: ({ url }) => ({ url: redactUrl(url) }),
   snapshot: () => ({}),
   click: ({ target }) => refDetail(target),
   type: ({ target, text }) => ({ ...refDetail(target), text: redact(text) }),
   press: ({ target, key }) => ({ ...refDetail(target), key }),
-  run: ({ command }) => ({ command: capText(command, auditCommandLimit) }),
+  run: ({ command }) => ({ command: capText(redactCommand(command), auditCommandLimit) }),
   read_file: ({ path }) => ({ ...fileTarget(path) }),
   write_file: ({ path, contents }) => ({
     ...fileTarget(path),

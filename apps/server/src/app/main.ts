@@ -35,7 +35,7 @@ import {
   migrateGateway,
   screenHandlers,
 } from "../features/gateway/public.ts";
-import { toolInputsRedacted } from "../shared/span-redaction.ts";
+import { spanAttributesRedacted } from "../shared/span-redaction.ts";
 import { serverConfig } from "./config.ts";
 import { fileRoutes } from "./file-routes.ts";
 import { rpcSocket } from "./rpc-socket.ts";
@@ -153,7 +153,7 @@ const server = Layer.unwrap(
     return HttpRouter.serve(Layer.mergeAll(rpc, files, webApp, runtime.routes)).pipe(
       Layer.merge(runtime.beside),
       Layer.provide(listener),
-      Layer.provide([toolInputsRedacted.pipe(Layer.provide(telemetry)), untracedHttp]),
+      Layer.provide([spanAttributesRedacted.pipe(Layer.provide(telemetry)), untracedHttp]),
     );
   }),
 );

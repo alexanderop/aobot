@@ -33,12 +33,12 @@ import {
   Redacted,
   Semaphore,
   Stream,
-  Tracer,
 } from "effect";
 import { McpClient, McpProtocol } from "effect/ai";
 import { FetchHttpClient, HttpClient, HttpMiddleware, HttpRouter, HttpServer } from "effect/http";
 import { SqlClient } from "effect/sql";
 import { TestClock } from "effect/testing";
+import { recordedSpans } from "../../shared/testing/recorded-spans.ts";
 import { ToolFailed } from "../../shared/tool-result.ts";
 import { auditLogLayer, migrateAudit } from "../audit/public.ts";
 import { botToolkit } from "../bots/public.ts";
@@ -724,21 +724,6 @@ function shell(ran: Partial<Omit<CommandRan, "action">>) {
   });
 }
 
-function recordedSpans() {
-  const spans: Array<Tracer.NativeSpan> = [];
-
-  const tracer = Tracer.make({
-    span: (options) => {
-      const span = new Tracer.NativeSpan(options);
-      spans.push(span);
-
-      return span;
-    },
-  });
-
-  return { spans, layer: Layer.succeed(Tracer.Tracer, tracer) };
-}
-
 const makeNotes = { action: "run", command: "echo hello > notes.txt && ls" } as const;
 
 function pagesOverHttp(...snapshots: ReadonlyArray<string>) {
@@ -1082,6 +1067,23 @@ describe("Gateway run", () => {
     }).pipe(Effect.provide(database)),
   );
 
+  it.effect("redacts a secret in a command's audit row, and runs the command as written", () =>
+    Effect.gen(function* () {
+      const computer = shell({});
+      const command = "API_TOKEN=hunter2 curl -u ada:pw https://api.example/?key=abc";
+
+      yield* Gateway.use((gateway) => gateway.act(bot, { action: "run", command })).pipe(
+        Effect.provide(startGateway(computer.layer)),
+      );
+
+      const [allow] = yield* auditRows;
+      expect(JSON.parse(String(allow?.["detail"])).command).toBe(
+        "API_TOKEN=[7 chars] curl -u ada:[2 chars] https://api.example/?key=[3 chars]",
+      );
+      expect(computer.actions).toEqual([{ action: "run", command }]);
+    }).pipe(Effect.provide(database)),
+  );
+
   it.effect("caps a very long command in its audit row", () =>
     Effect.gen(function* () {
       const command = `echo ${"x".repeat(5_000)}`;
@@ -1094,6 +1096,21 @@ describe("Gateway run", () => {
       const recorded = JSON.parse(String(allow?.["detail"])).command;
       expect(recorded.length).toBeLessThan(2_100);
       expect(recorded).toMatch(/^echo x+\n\[truncated: \d+ characters\]$/u);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("redacts a secret the cap would cut before it caps the command", () =>
+    Effect.gen(function* () {
+      const flag = `${"x".repeat(1_960)} --token "`;
+      const command = `${flag}${"a1b2c3d4".repeat(5)}"`;
+
+      yield* Gateway.use((gateway) => gateway.act(bot, { action: "run", command })).pipe(
+        Effect.provide(startGateway(shell({}).layer)),
+      );
+
+      const [allow] = yield* auditRows;
+      const recorded = JSON.parse(String(allow?.["detail"])).command;
+      expect(recorded).toBe(`${flag}[40 chars]"`);
     }).pipe(Effect.provide(database)),
   );
 });
@@ -2312,6 +2329,48 @@ allow:
       expect(computer.actions.at(-1)).toMatchObject({
         target: { url: "https://shop.example/callback?code=abc#access_token=hunter2" },
       });
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("records the address navigate opens without its query values or fragment", () =>
+    Effect.gen(function* () {
+      const computer = fakeComputers({ browse: exampleDomain });
+      const url = "https://shop.example/callback?code=abc&state=x#access_token=hunter2";
+
+      yield* Gateway.use((gateway) => gateway.act(bot, { action: "navigate", url })).pipe(
+        Effect.provide(startGateway(computer.layer)),
+      );
+
+      const rows = yield* decodedTrail;
+      expect(rows[0]).toEqual([
+        "navigate · allow",
+        {
+          bot: "assistant",
+          url: "https://shop.example/callback?code=[3 chars]&state=[1 chars]#access_token=[7 chars]",
+          rule: "everything",
+        },
+      ]);
+      expect(JSON.stringify(rows)).not.toContain("hunter2");
+      expect(computer.actions).toEqual([{ action: "navigate", url }]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("shows the model the page's address without a secret it carries", () =>
+    Effect.gen(function* () {
+      const landed = "https://shop.example/login?page=2&password=hunter2#access_token=abc";
+
+      const computer = fakeComputers({
+        browse: (action) => Effect.map(exampleDomain(action), (read) => ({ ...read, url: landed })),
+      });
+
+      const answer = yield* Gateway.use((gateway) =>
+        gateway.act(bot, { action: "navigate", url: "https://shop.example/login" }),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(answer).toContain(
+        "URL: https://shop.example/login?page=2&password=[7 chars]#access_token=[3 chars]",
+      );
+      expect(answer).not.toContain("hunter2");
     }).pipe(Effect.provide(database)),
   );
 

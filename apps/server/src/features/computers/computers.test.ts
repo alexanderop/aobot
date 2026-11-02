@@ -15,9 +15,9 @@ import {
   type Schema,
   Stream,
   SubscriptionRef,
-  Tracer,
 } from "effect";
 import { FetchHttpClient, HttpClient } from "effect/http";
+import { recordedSpans } from "../../shared/testing/recorded-spans.ts";
 import {
   type Computer,
   ComputerActFailed,
@@ -244,17 +244,8 @@ describe("computerAt", () => {
 
   it.effect("keeps a file's path out of every span of a download and an upload", () =>
     Effect.gen(function* () {
-      const spans: Array<Tracer.NativeSpan> = [];
+      const tracing = recordedSpans();
       const path = "reports/salary-2026.csv";
-
-      const tracer = Tracer.make({
-        span: (options) => {
-          const span = new Tracer.NativeSpan(options);
-          spans.push(span);
-
-          return span;
-        },
-      });
 
       const { port } = yield* serve((request, response) =>
         request.method === "PUT"
@@ -269,9 +260,9 @@ describe("computerAt", () => {
           ),
           computer.upload(path, Stream.make(Uint8Array.from([1]))),
         ]),
-      ).pipe(Effect.provideService(Tracer.Tracer, tracer));
+      ).pipe(Effect.provide(tracing.layer));
 
-      const attributes = JSON.stringify(spans.map((span) => [...span.attributes]));
+      const attributes = JSON.stringify(tracing.spans.map((span) => [...span.attributes]));
       expect(attributes).toContain("url.full");
       expect(attributes).not.toContain("salary");
     }).pipe(Effect.scoped),

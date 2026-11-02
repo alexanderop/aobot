@@ -10,11 +10,15 @@ import {
   type PageRead,
 } from "@aobot/domain";
 import { Duration } from "effect";
+import { redactUrlSecrets } from "../../shared/redact.ts";
 
-/** A page the computer read, as the model reads it before it is marked untrusted. */
+/**
+A page the computer read, as the model reads it before it is marked untrusted. Its address keeps no
+secret, since a form sent by GET or an OAuth redirect writes one into it.
+*/
 export function presentPage({ url, title, snapshot, truncated }: PageRead): string {
   return [
-    `URL: ${url}`,
+    `URL: ${redactUrlSecrets(url)}`,
     `Title: ${title}`,
     "",
     snapshot,
