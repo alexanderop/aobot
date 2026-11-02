@@ -572,8 +572,9 @@ function settle(
 /**
 The {@link Gateway}: one audit row per decision, and one outcome row per allowed call. The same layer
 provides {@link ComputerControl}, so a person's take and every Bot's actions meet at the computer's one
-door, {@link FileTransfers}, so a person's files are audited in the same trail, and {@link SecretRequests},
-where a person answers the secret a Bot asked for.
+door, {@link FileTransfers}, so a person's files are audited in the same trail, {@link SecretRequests},
+where a person answers the secret a Bot asked for, and {@link ApprovalRequests}, where they answer an
+action a rule asks them about.
 */
 export const gatewayLayer = Layer.effectContext(
   Effect.gen(function* () {
@@ -839,6 +840,7 @@ export const gatewayLayer = Layer.effectContext(
         ...more,
       });
 
+    /** Marks the call's span as allowed by the allow rule `allowRule`. */
     const allowedByRule = (allowRule: string) =>
       Effect.annotateCurrentSpan({ "gateway.decision": "allow", "gateway.rule": allowRule });
 

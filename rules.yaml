@@ -60,7 +60,8 @@ allow:
     when: "true"
 
 # A no holds for the rest of the person's turn: the Bot cannot ask again under the same rule, by
-# another spelling or with request_secret, until the person writes again.
+# another spelling or with request_secret, until the person writes again. request_secret under an ask
+# rule is asked on its own card, and declining it, or not answering, is that no too.
 ask:
   - name: ask-before-delete
     when: tool.name == "run" && command.contains("delete")

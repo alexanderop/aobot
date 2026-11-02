@@ -42,7 +42,8 @@ export type ApprovalId = typeof ApprovalId.Type;
 
 /**
 An action a rule asks the person about, as they are shown it: the tool, and the question, which the server
-words from the action as it resolved it, with what it redacts redacted, never as the Bot words it.
+words from the action as it resolved it, showing the command, address or text as the Bot wrote it. Only
+the person's own page sees it, never an audit row, a log, a span or the conversation.
 */
 export const PendingApproval = Schema.Struct({
   approval: ApprovalId,

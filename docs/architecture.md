@@ -471,7 +471,7 @@ as `ask` when one holds. The action leaves the door before any row is written, a
    the server stopped while the action ran, refuses it once with `outcome unknown`; the action is never
    run again, and the next one gets a card.
 3. Writes `<tool> · ask` with the action's audit detail, `rule` (the ask rule), `allowedBy` and the
-   `approval` id, then the ledger row `asked`, then shows the card. `Approval.pending { conversation }`
+   `approval` id, and the ledger row `asked`, in one transaction, then shows the card. `Approval.pending { conversation }`
    streams it as `{ approval, tool, question }`. The server words the question from the action as it
    resolved, and shows what the person approves as the Bot wrote it: the whole command, the address and
    the text it would type (``Run `rm notes.txt`?``, `Click the button "Delete" on shop.example?`). The
@@ -483,35 +483,46 @@ as `ask` when one holds. The action leaves the door before any row is written, a
    `approval.answer` and `approval.by`. `Approval.answer { conversation, approval, answer }` answers it;
    an answer for another question, or one after the wait ended, fails with `NoApprovalWaiting`. Whoever
    takes the card down first answers: the person, or the time limit, which answers no. A stopped turn
-   answers no too. `approval.answered · answered` records `{ bot, approval, answer, by }`, with `by` one of
-   `ApprovalAnsweredBy` in the domain package: `person`, `time limit`, `the turn was stopped` or `the
-   server stopped`.
+   answers no too. `approval.answered · answered` records `{ bot, approval, answer, by }`, in one
+   transaction with the ledger's `yes` or `no`, with `by` one of `ApprovalAnsweredBy` in the domain
+   package: `person`, `time limit`, `the turn was stopped` or `the server stopped`.
 5. On no, writes `<tool> · deny` with `reason: "declined"` or `"no answer"`, and the model reads that its
    person said no and not to try it another way until they write.
 6. On yes, resolves the request again through the door. The approval is bound to a digest of the action
    as it resolved, the element a ref names and a file's contents included, so a ref that names another
    element by now is refused with `action changed`. It then spends the approval and writes `<tool> ·
-   allow` naming the allow rule as `rule`, the ask rule as `asked` and the approval, as one step a
-   stopped turn cannot split, and forwards it once. An asked `run` waits for the command queue before it
+   allow` naming the allow rule as `rule`, the ask rule as `asked` and the approval, in one transaction
+   a stopped turn cannot split, and forwards it once. An asked `run` waits for the command queue before it
    is judged, so its card shows only once the commands asked for before it ran.
 
 **Every asked action closes in the trail.** From its `ask` row on, an asked action ends in one row that
 names its `approval`: its `allow` row, which an outcome row settles, or a `deny` row. A refusal after a
 yes (`action changed`, `a person has control`, a ref that no longer resolves) keeps the action as it
 resolves now. A turn stopped before the action ran, while the card was up or while the approved command
-waited its turn, writes a `deny` row with `reason: "the turn was stopped"`. A server that stopped while a
-question was open closes it at the next start-up, beside the sweep of `allow` rows without an outcome:
-an `asked` question gets `approval.answered` with `by: "the server stopped"`, and the question, or a yes
-never spent, a `deny` row with the same reason, both written by the deployment. A second start finds
-nothing left to close.
+waited its turn, writes a `deny` row with `reason: "the turn was stopped"`. Each `deny` row after the
+`ask` row is written in one transaction with lapsing the question when it is still `asked` or a `yes`
+not spent. A row that cannot be written once the person was asked, its answer or its `allow` row, is
+refused as `not recorded` the same way. A server that stopped while a question was open closes it at
+the next start-up, beside the sweep of `allow` rows without an outcome: an `asked` question gets
+`approval.answered` with `by: "the server stopped"`, and the question, or a yes never spent, a `deny` row
+with the same reason, both written by the deployment in one transaction with the ledger's move. A
+second start finds nothing left to close.
+
+**The ledger never runs ahead of the trail.** The ledger and the audit trail share one SQLite client, so
+every move of a ledger row commits in one `sql.withTransaction` with the audit rows that record it, or
+neither does: `approvalRequests` takes each move's rows as an argument, so no move can be written
+without them. A failed write leaves the row where it was. A question whose closing rows failed stays
+`asked` or `yes`, and the next start-up's sweep closes it with its own rows; one whose rows fail there
+too stays for the start after.
 
 The ledger is the `approvals` table, one row per question:
 `(id, conversation_id, run_id, bot_id, tool, rule, state)`, no action, digest or typed text; the Bot and
 the tool are kept only so a question a stopped server left open can be closed in the trail. A row only
-moves forward, each move one compare-and-set `UPDATE`: `asked → yes | no`, `yes → spent | lapsed`,
-`spent → finished | told`. A trigger refuses any other change, and any delete. A yes is spent by moving it
-to `spent`, so a second spend finds nothing to move and is refused with `already spent`. A yes not spent
-by the time its question closes, as after `action changed` or a stopped turn, moves to `lapsed`. The row
+moves forward, each move one compare-and-set `UPDATE`: `asked → yes | no | lapsed`, `yes → spent |
+lapsed`, `spent → finished | told`. A trigger refuses any other change, and any delete. A yes is spent by
+moving it to `spent`, so a second spend finds nothing to move and is refused with `already spent`. A
+yes not spent when its question is refused, as after `action changed` or a stopped turn, moves to
+`lapsed` with the `deny` row, and so does a question still `asked` whose answer could not be recorded. The row
 moves to `finished` once the Bot was told what became of the action. A row left `spent` belongs to a run
 that stopped before that, and the next run's equivalent action moves it to `told` and is refused, once.
 
@@ -520,9 +531,14 @@ that stopped before that, and the next run's equivalent action moves it to `told
 spelling, and the person writing again starts a new run.
 
 `request_secret` under an ask rule is not asked twice: the secret card already asks the person, so its
-`allow` row only names the ask rule as `asked`. It is still refused as an asked action would be, with
-`already waiting` while another question waits in the conversation and `declined earlier` after a no to
-that rule in this run, so a Bot told no to typing into a field cannot put a secret card up for it.
+`allow` row only names the ask rule as `asked`. The card is that rule's question in both directions. It
+holds the conversation's one question while it waits, so it is refused with `already waiting` while an
+approval card waits there, and an action under the same rule gets no approval card beside it, only
+`already waiting`. A no to that rule earlier in this run refuses it with `declined earlier`, so a Bot told
+no to typing into a field cannot put a secret card up for it. And declining the secret card, or not
+answering it within ten minutes, is a no to that rule: a ledger row `no` for the conversation, run and
+rule, written in one transaction with the request's `failed` outcome row, so a second secret card or an
+action under the rule is refused with `declined earlier` for the rest of the run.
 
 The wait is as long as a secret's, so `longestToolCall` covers both and the stall limit does not end the
 turn. The known gap is the same as for secrets: Codex stops waiting on an MCP call after two minutes
