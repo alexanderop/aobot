@@ -527,10 +527,13 @@ describe("Gateway refs", () => {
         expect(computer.actions.slice(1)).toEqual([
           {
             action: "type",
-            target: { ref: "e2", role: "textbox", name: "Name" },
+            target: { ref: "e2", role: "textbox", name: "Name", url: "https://example.com/form" },
             text: "hunter2 is my password",
           },
-          { action: "click", target: { ref: "e3", role: "button", name: "Send" } },
+          {
+            action: "click",
+            target: { ref: "e3", role: "button", name: "Send", url: "https://example.com/form" },
+          },
         ]);
 
         const rows = yield* auditRows;
@@ -545,6 +548,7 @@ describe("Gateway refs", () => {
               ref: "e2",
               role: "textbox",
               name: "Name",
+              url: "https://example.com/form",
               text: "[22 chars]",
               rule: "everything",
             }),
@@ -556,6 +560,7 @@ describe("Gateway refs", () => {
               ref: "e3",
               role: "button",
               name: "Send",
+              url: "https://example.com/form",
               rule: "everything",
             }),
           ],
@@ -577,7 +582,7 @@ describe("Gateway refs", () => {
       expect(answer).toContain('heading "Thank you"');
       expect(computer.actions.at(-1)).toEqual({
         action: "press",
-        target: { ref: "e2", role: "textbox", name: "Name" },
+        target: { ref: "e2", role: "textbox", name: "Name", url: "https://example.com/form" },
         key: "Enter",
       });
       expect((yield* auditRows).find((row) => row["action"] === "press")).toMatchObject({
@@ -587,6 +592,7 @@ describe("Gateway refs", () => {
           ref: "e2",
           role: "textbox",
           name: "Name",
+          url: "https://example.com/form",
           key: "Enter",
           rule: "everything",
         }),
@@ -648,7 +654,7 @@ describe("Gateway refs", () => {
       ]);
       expect(computer.actions.at(-1)).toEqual({
         action: "click",
-        target: { ref: "e4", role: "heading", name: "Thank you" },
+        target: { ref: "e4", role: "heading", name: "Thank you", url: "https://example.com/form" },
       });
       expect((yield* auditRows).find((row) => row["decision"] === "deny")).toMatchObject({
         action: "click",
@@ -1066,7 +1072,7 @@ describe("Gateway run", () => {
 
       expect(computer.actions.at(-1)).toEqual({
         action: "click",
-        target: { ref: "e1", role: "heading", name: "Example Domain" },
+        target: { ref: "e1", role: "heading", name: "Example Domain", url: "https://example.com/" },
       });
     }).pipe(Effect.provide(database)),
   );
@@ -2231,6 +2237,7 @@ allow:
               ref: "e3",
               role: "button",
               name: "Send",
+              url: "https://example.com/form",
               rule: "no-send-on-example",
               reason: "denied by rule",
             },

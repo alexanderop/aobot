@@ -269,6 +269,7 @@ describe("a tool call in an api turn", () => {
           ref: "e1",
           role: "searchbox",
           name: "Search",
+          url: "https://example.com/",
           text: "[21 chars]",
           rule: "everything",
         }),

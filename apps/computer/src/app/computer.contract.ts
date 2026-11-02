@@ -214,11 +214,14 @@ function processes(computer: Computer): Promise<string> {
   return docker("exec", computer.name, "ps", "-eo", "args");
 }
 
-function target(snapshot: string, role: string, name: string): RefTarget {
-  return Option.getOrThrowWith(
-    findRef(snapshot, { role, name }),
-    () => new Error(`no ${role} "${name}" in:\n${snapshot}`),
+/** The element with this role and name on the page `read` read, as the gateway would send it. */
+function target(read: PageRead, role: string, name: string): RefTarget {
+  const shown = Option.getOrThrowWith(
+    findRef(read.snapshot, { role, name }),
+    () => new Error(`no ${role} "${name}" in:\n${read.snapshot}`),
   );
+
+  return { ...shown, url: read.url };
 }
 
 /** The status `/stream` answers a WebSocket handshake with, without a token: 101 means it upgraded. */
@@ -280,6 +283,9 @@ beforeAll(async () => {
     `${suite}-fixture`,
     "--network",
     suite,
+    // The same fixture on a second origin, for a ref read on one site and sent to another.
+    "--network-alias",
+    `${suite}-other`,
     "--entrypoint",
     "node",
     image,
@@ -331,7 +337,7 @@ describe("the docker computer", () => {
 
     it("types into a field by its ref, replacing what it held, without submitting", async () => {
       const opened = await result(await act(local, { action: "navigate", url: formUrl }));
-      const name = target(opened.snapshot, "textbox", "Name");
+      const name = target(opened, "textbox", "Name");
 
       await result(await act(local, { action: "type", target: name, text: "Ada" }));
 
@@ -347,7 +353,7 @@ describe("the docker computer", () => {
 
     it("clicks a button by its ref and answers with the page it changed", async () => {
       const opened = await result(await act(local, { action: "snapshot" }));
-      const button = target(opened.snapshot, "button", "Press me");
+      const button = target(opened, "button", "Press me");
 
       const clicked = await result(await act(local, { action: "click", target: button }));
 
@@ -368,13 +374,17 @@ describe("the docker computer", () => {
     // can also start again at `e1`, so a ref from before a navigation may name something else.
     it("refuses a ref from before a navigation", async () => {
       const opened = await result(await act(local, { action: "navigate", url: formUrl }));
-      const name = target(opened.snapshot, "textbox", "Name");
+      const name = target(opened, "textbox", "Name");
 
       const elsewhere = await result(
         await act(local, { action: "navigate", url: `http://${suite}-fixture:${fixturePort}/` }),
       );
 
-      expect(snapshotRefs(elsewhere.snapshot).get(name.ref)).not.toEqual(name);
+      expect(snapshotRefs(elsewhere.snapshot).get(name.ref)).not.toEqual({
+        ref: name.ref,
+        role: name.role,
+        name: name.name,
+      });
 
       const typed = await act(local, { action: "type", target: name, text: "Ada" });
       expect(typed.status).toBe(403);
@@ -387,16 +397,41 @@ describe("the docker computer", () => {
     it("refuses a ref that names nothing on the page", async () => {
       const response = await act(local, {
         action: "click",
-        target: { ref: "e999", role: "button", name: "Press me" },
+        target: { ref: "e999", role: "button", name: "Press me", url: formUrl },
       });
 
       expect(response.status).toBe(403);
       expect(await response.json()).toMatchObject({ reason: "refused" });
     });
 
+    it("refuses a ref read on another site, though the page now shows the same element", async () => {
+      const there = await result(
+        await act(local, { action: "navigate", url: `http://${suite}-other:${fixturePort}/form` }),
+      );
+
+      const here = await result(await act(local, { action: "navigate", url: formUrl }));
+      const button = target(here, "button", "Press me");
+
+      const clicked = await act(local, { action: "click", target: { ...button, url: there.url } });
+      expect(clicked.status).toBe(403);
+      expect(await clicked.json()).toEqual({
+        reason: "refused",
+        message: expect.stringContaining("The page is on another site than your latest snapshot"),
+      });
+
+      const sameSite = await result(
+        await act(local, {
+          action: "click",
+          target: { ...button, url: `${formUrl}?from=elsewhere#top` },
+        }),
+      );
+
+      expect(sameSite.action).toBe("click");
+    });
+
     it("presses a key on an element by its ref: Enter in the field submits its form", async () => {
       const opened = await result(await act(local, { action: "navigate", url: formUrl }));
-      const name = target(opened.snapshot, "textbox", "Name");
+      const name = target(opened, "textbox", "Name");
 
       await result(await act(local, { action: "type", target: name, text: "Ada" }));
 
@@ -413,7 +448,7 @@ describe("the docker computer", () => {
 
     it("presses Space on a button by its ref, as a click would", async () => {
       const opened = await result(await act(local, { action: "navigate", url: formUrl }));
-      const button = target(opened.snapshot, "button", "Press me");
+      const button = target(opened, "button", "Press me");
 
       const pressed = await result(
         await act(local, { action: "press", target: button, key: "Space" }),

@@ -367,13 +367,13 @@ export const gatewayLayer = Layer.effectContext(
         return yield* new UnknownRef({ ref, reason: readByAnother });
       }
 
-      const target = snapshotRefs(latest.value.snapshot).get(ref);
+      const shown = snapshotRefs(latest.value.snapshot).get(ref);
 
-      if (target === undefined) {
+      if (shown === undefined) {
         return yield* new UnknownRef({ ref, reason: "not in the latest snapshot" });
       }
 
-      return { target, host: hostOf(latest.value.url) };
+      return { ...shown, url: latest.value.url };
     });
 
     /** The host of the page the latest snapshot read, whichever Bot read it, or `""` before any. */
@@ -442,7 +442,10 @@ export const gatewayLayer = Layer.effectContext(
       const offThePage = (action: ComputerAction) => Effect.succeed({ action, host: "" });
 
       const onElement = (ref: string, act: (target: RefTarget) => PageAction) =>
-        Effect.map(targetOf(bot, ref), ({ target, host }) => ({ action: act(target), host }));
+        Effect.map(targetOf(bot, ref), (target) => ({
+          action: act(target),
+          host: hostOf(target.url),
+        }));
 
       return BotRequest.match(request, {
         navigate: (navigate) => Effect.succeed({ action: navigate, host: hostOf(navigate.url) }),

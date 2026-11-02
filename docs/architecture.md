@@ -323,17 +323,17 @@ copies the action, and its `detail` says why for `failed` and `unknown`. An `all
 included, starts with `bot`: the id of the Bot the call was made for, or `null` when it named none by its
 id. The `Gateway.act` span records it as `gateway.bot`.
 
-| Tool         | Parameters         | Computer action                                               | Audit rows                                                                                                                                                                    |
-| ------------ | ------------------ | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `navigate`   | `url`              | `POST /act {"action":"navigate","url"}`                       | `navigate · allow` with `{ bot, url }`, then `succeeded`, `failed` or `unknown`                                                                                               |
-| `snapshot`   | none               | `POST /act {"action":"snapshot"}`                             | `snapshot · allow` with `{ bot }`, then `succeeded`, `failed` or `unknown`                                                                                                    |
-| `click`      | `ref`              | `POST /act {"action":"click","target":{ref,role,name}}`       | `click · allow` with `{ bot, ref, role, name }`, then `succeeded`, `failed` or `unknown`; `click · deny` with `{ bot, ref, reason }`                                          |
-| `type`       | `ref`, `text`      | `POST /act {"action":"type","target":{ref,role,name},"text"}` | `type · allow` with `{ bot, ref, role, name, text: "[N chars]" }`, then `succeeded`, `failed` or `unknown`; `type · deny` with `{ bot, ref, reason }`                         |
-| `press`      | `ref`, `key`       | `POST /act {"action":"press","target":{ref,role,name},"key"}` | `press · allow` with `{ bot, ref, role, name, key }`, then `succeeded`, `failed` or `unknown`; `press · deny` with `{ bot, ref, reason }`                                     |
-| `run`        | `command`          | `POST /act {"action":"run","command"}`                        | `run · allow` with `{ bot, command }` (capped at 2,000 characters), then `succeeded`, `failed` or `unknown`                                                                   |
-| `read_file`  | `path`             | `POST /act {"action":"read_file","path"}`                     | `read_file · allow` with `{ bot, path, name, extension }`, then `succeeded`, `failed` or `unknown`; `read_file · deny` with `{ bot, path, name, extension, reason }`          |
-| `write_file` | `path`, `contents` | `POST /act {"action":"write_file","path","contents"}`         | `write_file · allow` with `{ bot, path, name, extension, bytes }`, then `succeeded`, `failed` or `unknown`; `write_file · deny` with `{ bot, path, name, extension, reason }` |
-| `list_files` | `path`             | `POST /act {"action":"list_files","path"}`                    | `list_files · allow` with `{ bot, path, name, extension }`, then `succeeded`, `failed` or `unknown`; `list_files · deny` with `{ bot, path, name, extension, reason }`        |
+| Tool         | Parameters         | Computer action                                                   | Audit rows                                                                                                                                                                    |
+| ------------ | ------------------ | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `navigate`   | `url`              | `POST /act {"action":"navigate","url"}`                           | `navigate · allow` with `{ bot, url }`, then `succeeded`, `failed` or `unknown`                                                                                               |
+| `snapshot`   | none               | `POST /act {"action":"snapshot"}`                                 | `snapshot · allow` with `{ bot }`, then `succeeded`, `failed` or `unknown`                                                                                                    |
+| `click`      | `ref`              | `POST /act {"action":"click","target":{ref,role,name,url}}`       | `click · allow` with `{ bot, ref, role, name, url }`, then `succeeded`, `failed` or `unknown`; `click · deny` with `{ bot, ref, reason }`                                     |
+| `type`       | `ref`, `text`      | `POST /act {"action":"type","target":{ref,role,name,url},"text"}` | `type · allow` with `{ bot, ref, role, name, url, text: "[N chars]" }`, then `succeeded`, `failed` or `unknown`; `type · deny` with `{ bot, ref, reason }`                    |
+| `press`      | `ref`, `key`       | `POST /act {"action":"press","target":{ref,role,name,url},"key"}` | `press · allow` with `{ bot, ref, role, name, url, key }`, then `succeeded`, `failed` or `unknown`; `press · deny` with `{ bot, ref, reason }`                                |
+| `run`        | `command`          | `POST /act {"action":"run","command"}`                            | `run · allow` with `{ bot, command }` (capped at 2,000 characters), then `succeeded`, `failed` or `unknown`                                                                   |
+| `read_file`  | `path`             | `POST /act {"action":"read_file","path"}`                         | `read_file · allow` with `{ bot, path, name, extension }`, then `succeeded`, `failed` or `unknown`; `read_file · deny` with `{ bot, path, name, extension, reason }`          |
+| `write_file` | `path`, `contents` | `POST /act {"action":"write_file","path","contents"}`             | `write_file · allow` with `{ bot, path, name, extension, bytes }`, then `succeeded`, `failed` or `unknown`; `write_file · deny` with `{ bot, path, name, extension, reason }` |
+| `list_files` | `path`             | `POST /act {"action":"list_files","path"}`                        | `list_files · allow` with `{ bot, path, name, extension }`, then `succeeded`, `failed` or `unknown`; `list_files · deny` with `{ bot, path, name, extension, reason }`        |
 
 While a person holds the computer, every granted tool of every Bot is refused before its ref is resolved: `<tool> · deny`
 with `{ bot, reason: "a person has control" }` (see [Taking control](#taking-control)).
@@ -393,7 +393,8 @@ A ref such as `e12` names one element of the latest snapshot of the page. Every 
 browser on the computer they share, so the gateway stores one snapshot for that computer in the database
 (`computer_snapshot`), with the Bot whose browser action read it (`read_by`), replacing both after every
 browser action that answered, whichever Bot asked. Any replica resolves a ref the same way. Before any
-rule runs, `click` and `type` resolve their ref to the element's role and name. A ref resolves only for
+rule runs, `click`, `type` and `press` resolve their ref to the element's role and name, and the
+address the snapshot was read at. A ref resolves only for
 the Bot that read the latest snapshot: another Bot's refs name a page it saw before the page changed, and
 the same ref can name a different element on the new page, which the computer's own check would not
 catch. Such a ref is a `deny` row with `another Bot read the page since`, the computer never hears of it,
@@ -405,9 +406,17 @@ A ref that is not in the snapshot its Bot read is a `deny` row too, and the mode
 
 > click did not run: e12 is not a ref in the page's latest snapshot. Take a snapshot and use a ref from it.
 
-The computer sends the resolved element, not just its ref, and reads the page afresh before acting. When
-the element at that ref is gone or no longer has that role and name (the page changed, or a navigation
-started Playwright's ref counter again), it refuses with:
+The gateway sends the computer the resolved element and that address, not just the ref. The rules judged
+the action by that page's host, so when the page is on another origin by now (a parallel call navigated,
+or the page moved by itself) the computer refuses it, even when the new page shows the same element:
+
+> The page is on another site than your latest snapshot read, so e12 is not the button you saw. Take a
+> snapshot again and use a ref from it.
+
+The origin is compared, not the whole address, so a single-page app that changes its query or hash keeps
+its refs. Then the computer reads the page afresh. When the element at that ref is gone or no longer has
+that role and name (the page changed, or a navigation started Playwright's ref counter again), it refuses
+with:
 
 > The page changed since your latest snapshot, so e12 is not the button it was. Take a snapshot again and
 > use a ref from it.

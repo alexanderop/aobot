@@ -73,10 +73,18 @@ export const RefTarget = Schema.Struct({
   role: Schema.String,
   /** Its accessible name, or `""` when the snapshot shows none. */
   name: Schema.String,
+  /**
+  The address that snapshot was read at, whose host the rules judged the action by. The computer refuses
+  the action when its page is on another origin by now.
+  */
+  url: Schema.String,
 });
 
 /** A decoded {@link RefTarget}. */
 export type RefTarget = typeof RefTarget.Type;
+
+/** An element as a snapshot shows it: a {@link RefTarget} without the address the snapshot was read at. */
+export type SnapshotElement = Omit<RefTarget, "url">;
 
 /** The keys `press` can press, by the names Playwright gives them. */
 export const PressKey = Schema.Literals([
