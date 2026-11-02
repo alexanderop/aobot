@@ -15,61 +15,48 @@ export function ApprovalCard(props: {
 }) {
   const { prompt, choose } = useApproval(props.conversationId, props.turn);
   const shown = useRef<HTMLElement>(null);
-
-  const showing = Option.match(prompt, {
-    onNone: () => "",
-    onSome: ApprovalPrompt.$match({
-      Asking: ({ pending }) => pending.approval,
-      Answered: () => "answered",
-    }),
-  });
+  const current = Option.getOrUndefined(prompt);
 
   useEffect(() => {
     shown.current?.scrollIntoView({ block: "end" });
-  }, [showing]);
+  }, [current?._tag, current?.approval]);
 
-  return Option.match(prompt, {
-    onNone: () => null,
-    onSome: (current) => (
-      <section ref={shown} className="approval" aria-label="Approval">
-        <p className="approval__question">
-          {ApprovalPrompt.$match(current, {
-            Asking: ({ pending }) => pending.question,
-            Answered: ({ question }) => question,
-          })}
-        </p>
-        {ApprovalPrompt.$match(current, {
-          Asking: ({ pending, sending, problem }) => (
-            <>
-              {ApprovalAnswer.literals.map((answer) => (
-                <button
-                  key={answer}
-                  type="button"
-                  className="approval__answer"
-                  onClick={() => choose(pending, answer)}
-                  disabled={sending}
-                >
-                  <span className="approval__key" aria-hidden="true">
-                    {answerLabels[answer].key}
-                  </span>
-                  {answerLabels[answer].label}
-                </button>
-              ))}
-              {Option.match(problem, {
-                onNone: () => null,
-                onSome: (message) => (
-                  <p className="approval__problem" role="alert">
-                    {message}
-                  </p>
-                ),
-              })}
-            </>
-          ),
-          Answered: ({ answer }) => (
-            <p className="approval__answered">You answered {answerLabels[answer].label}</p>
-          ),
-        })}
-      </section>
-    ),
-  });
+  if (current === undefined) return null;
+
+  return (
+    <section ref={shown} className="approval" aria-label="Approval">
+      <p className="approval__question">{current.question}</p>
+      {ApprovalPrompt.$match(current, {
+        Asking: ({ approval, question, sending, problem }) => (
+          <>
+            {ApprovalAnswer.literals.map((answer) => (
+              <button
+                key={answer}
+                type="button"
+                className="approval__answer"
+                onClick={() => choose({ approval, question }, answer)}
+                disabled={sending}
+              >
+                <span className="approval__key" aria-hidden="true">
+                  {answerLabels[answer].key}
+                </span>
+                {answerLabels[answer].label}
+              </button>
+            ))}
+            {Option.match(problem, {
+              onNone: () => null,
+              onSome: (message) => (
+                <p className="approval__problem" role="alert">
+                  {message}
+                </p>
+              ),
+            })}
+          </>
+        ),
+        Answered: ({ answer }) => (
+          <p className="approval__answered">You answered {answerLabels[answer].label}</p>
+        ),
+      })}
+    </section>
+  );
 }

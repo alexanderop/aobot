@@ -16,18 +16,26 @@ export type ApprovalReply = Data.TaggedEnum<{
 /** Constructors and matchers for {@link ApprovalReply}. */
 export const ApprovalReply = Data.taggedEnum<ApprovalReply>();
 
+/** The question a card asks, as the server worded it, and the server's id for it. */
+export type AskedQuestion = Pick<PendingApproval, "approval" | "question">;
+
 /**
-What the approval card shows. `Asking` while the Bot waits for the person, with the question as the server
-shows it, their answer on its way or why the last one was refused. `Answered` once the server took it, for
-the rest of the turn.
+What the approval card shows: the question, as the server worded it. `Asking` while the Bot waits for the
+person, with their answer on its way or why the last one was refused. `Answered` once the server took it,
+for the rest of the turn.
 */
 export type ApprovalPrompt = Data.TaggedEnum<{
   Asking: {
-    readonly pending: PendingApproval;
+    readonly approval: ApprovalId;
+    readonly question: string;
     readonly sending: boolean;
     readonly problem: Option.Option<string>;
   };
-  Answered: { readonly question: string; readonly answer: ApprovalAnswer };
+  Answered: {
+    readonly approval: ApprovalId;
+    readonly question: string;
+    readonly answer: ApprovalAnswer;
+  };
 }>;
 
 /** Constructors and matchers for {@link ApprovalPrompt}. */
@@ -47,8 +55,8 @@ export function approvalPrompt(
   const taken = Option.filter(reply, ApprovalReply.$is("Taken"));
   const refused = Option.filter(reply, ApprovalReply.$is("Refused"));
 
-  const answered = Option.map(taken, ({ question, answer }) =>
-    ApprovalPrompt.Answered({ question, answer }),
+  const answered = Option.map(taken, ({ approval, question, answer }) =>
+    ApprovalPrompt.Answered({ approval, question, answer }),
   );
 
   return Option.match(pending, {
@@ -63,7 +71,8 @@ export function approvalPrompt(
         ? answered
         : Option.some(
             ApprovalPrompt.Asking({
-              pending: shown,
+              approval: shown.approval,
+              question: shown.question,
               sending: last.waiting,
               problem: Option.map(
                 Option.filter(refused, ({ approval }) => approval === shown.approval),

@@ -39,8 +39,18 @@ const earlier = ApprovalId.make("approval-0");
 
 const asking = (more: Partial<{ sending: boolean; problem: Option.Option<string> }> = {}) =>
   Option.some(
-    ApprovalPrompt.Asking({ pending: shown, sending: false, problem: Option.none(), ...more }),
+    ApprovalPrompt.Asking({
+      approval: shown.approval,
+      question: shown.question,
+      sending: false,
+      problem: Option.none(),
+      ...more,
+    }),
   );
+
+const answeredNo = Option.some(
+  ApprovalPrompt.Answered({ approval: shown.approval, question: shown.question, answer: "no" }),
+);
 
 describe("approvalPrompt", () => {
   it.each([
@@ -66,14 +76,14 @@ describe("approvalPrompt", () => {
       Option.none(),
       taken(shown.approval),
       thisTurn,
-      Option.some(ApprovalPrompt.Answered({ question: shown.question, answer: "no" })),
+      answeredNo,
     ],
     [
       "says what the person answered before the server withdrew the question",
       waits,
       taken(shown.approval),
       thisTurn,
-      Option.some(ApprovalPrompt.Answered({ question: shown.question, answer: "no" })),
+      answeredNo,
     ],
     ["asks a new question after an earlier answer", waits, taken(earlier), thisTurn, asking()],
     [

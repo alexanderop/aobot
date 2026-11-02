@@ -102,7 +102,7 @@ describe("given a Bot waiting for its person's answer", () => {
       registry.set(approvalAnswer(conversation), {
         conversation,
         turn,
-        pending: shown,
+        asked: shown,
         answer: "yes",
       });
 
@@ -131,7 +131,7 @@ describe("given a Bot waiting for its person's answer", () => {
       registry.set(approvalAnswer(conversation), {
         conversation,
         turn,
-        pending: shown,
+        asked: shown,
         answer: "no",
       });
 
@@ -155,7 +155,7 @@ describe("given the person answered a question in an earlier turn", () => {
       registry.set(approvalAnswer(conversation), {
         conversation,
         turn,
-        pending: shown,
+        asked: shown,
         answer: "no",
       });
       await replyTo(registry, approvalAnswer);

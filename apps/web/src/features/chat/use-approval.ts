@@ -1,16 +1,16 @@
-import type { ApprovalAnswer, ConversationId, MessageId, PendingApproval } from "@aobot/domain";
+import type { ApprovalAnswer, ConversationId, MessageId } from "@aobot/domain";
 import { useAtom, useAtomValue } from "@effect/atom-react";
 import { Option } from "effect";
 import { AsyncResult } from "effect/reactivity";
 import { useCallback } from "react";
-import { type ApprovalPrompt, approvalPrompt } from "./approval-prompt.ts";
+import { type ApprovalPrompt, approvalPrompt, type AskedQuestion } from "./approval-prompt.ts";
 import { approvalAnswer, approvalPending } from "./approvals.ts";
 
 /** What a conversation's approval card shows, and how the person answers it. */
 export interface UseApproval {
   readonly prompt: Option.Option<ApprovalPrompt>;
-  /** Sends `answer` to the question `pending`, the one the card asks. */
-  readonly choose: (pending: PendingApproval, answer: ApprovalAnswer) => void;
+  /** Sends `answer` to the question `asked`, the one the card asks. */
+  readonly choose: (asked: AskedQuestion, answer: ApprovalAnswer) => void;
 }
 
 /**
@@ -27,8 +27,7 @@ export function useApproval(
   return {
     prompt: approvalPrompt(pending, last, turn),
     choose: useCallback(
-      (shown: PendingApproval, answer: ApprovalAnswer) =>
-        send({ conversation, turn, pending: shown, answer }),
+      (asked: AskedQuestion, answer: ApprovalAnswer) => send({ conversation, turn, asked, answer }),
       [conversation, turn, send],
     ),
   };

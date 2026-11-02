@@ -1,14 +1,14 @@
-import type { ApprovalAnswer, ConversationId, MessageId, PendingApproval } from "@aobot/domain";
+import type { ApprovalAnswer, ConversationId, MessageId } from "@aobot/domain";
 import { Effect, type Option, Schedule, Stream } from "effect";
 import { Atom } from "effect/reactivity";
 import { ApprovalClient } from "./approval-client.ts";
-import { ApprovalReply } from "./approval-prompt.ts";
+import { type AskedQuestion, ApprovalReply } from "./approval-prompt.ts";
 
 /** A person's answer to the question they were shown in a conversation, during the turn `turn`. */
 export interface Choice {
   readonly conversation: ConversationId;
   readonly turn: Option.Option<MessageId>;
-  readonly pending: PendingApproval;
+  readonly asked: AskedQuestion;
   readonly answer: ApprovalAnswer;
 }
 
@@ -32,24 +32,24 @@ export function makeApprovals(runtime: Atom.AtomRuntime<ApprovalClient>) {
   const approvalAnswer = Atom.family((_conversation: ConversationId) =>
     Atom.keepAlive(
       runtime.fn(
-        Effect.fnUntraced(function* ({ conversation, turn, pending, answer }: Choice) {
+        Effect.fnUntraced(function* ({ conversation, turn, asked, answer }: Choice) {
           const client = yield* ApprovalClient;
 
           return yield* client("Approval.answer", {
             conversation,
-            approval: pending.approval,
+            approval: asked.approval,
             answer,
           }).pipe(
             Effect.match({
               onSuccess: () =>
                 ApprovalReply.Taken({
-                  approval: pending.approval,
+                  approval: asked.approval,
                   turn,
-                  question: pending.question,
+                  question: asked.question,
                   answer,
                 }),
               onFailure: ({ message }) =>
-                ApprovalReply.Refused({ approval: pending.approval, message }),
+                ApprovalReply.Refused({ approval: asked.approval, message }),
             }),
           );
         }),
