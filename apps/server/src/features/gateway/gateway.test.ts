@@ -2239,7 +2239,11 @@ allow:
       }).pipe(Effect.provide(database)),
   );
 
-  it.effect("judges navigate by the host it opens, lower-cased and without its port", () =>
+  it.effect.each([
+    "https://Shop.Example:8443/cart",
+    "https://shop.example./cart",
+    "https://SHOP.example%2e/cart",
+  ])("judges navigate to %s by the host shop.example, however it is spelt", (url) =>
     Effect.gen(function* () {
       const computer = fakeComputers({ browse: exampleDomain });
 
@@ -2251,16 +2255,58 @@ allow:
     when: "true"
 `);
 
-      const [shop, unparsed] = yield* Gateway.use((gateway) =>
-        Effect.all([
-          Effect.flip(
-            gateway.act(bot, { action: "navigate", url: "https://Shop.Example:8443/cart" }),
-          ),
-          gateway.act(bot, { action: "navigate", url: "shop.example" }),
-        ]),
+      const shop = yield* Gateway.use((gateway) =>
+        Effect.flip(gateway.act(bot, { action: "navigate", url })),
       ).pipe(Effect.provide(startGateway(computer.layer, policy)));
 
       expect(shop.message).toContain("the rule not-the-shop refuses it");
+      expect(computer.actions).toEqual([]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("judges navigate to an IPv6 address by the address without brackets", () =>
+    Effect.gen(function* () {
+      const computer = fakeComputers({ browse: exampleDomain });
+
+      const policy = policyFrom(`deny:
+  - name: not-loopback
+    when: page.host == "::1" || page.host == "127.0.0.1"
+allow:
+  - name: granted-tools
+    when: "true"
+`);
+
+      const refused = yield* Gateway.use((gateway) =>
+        Effect.all([
+          Effect.flip(gateway.act(bot, { action: "navigate", url: "http://[::1]:8080/" })),
+          Effect.flip(gateway.act(bot, { action: "navigate", url: "http://[::ffff:127.0.0.1]/" })),
+        ]),
+      ).pipe(Effect.provide(startGateway(computer.layer, policy)));
+
+      expect(refused.map((error) => error.message)).toEqual([
+        expect.stringContaining("the rule not-loopback refuses it"),
+        expect.stringContaining("the rule not-loopback refuses it"),
+      ]);
+      expect(computer.actions).toEqual([]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect('judges navigate to an address that does not parse on the host ""', () =>
+    Effect.gen(function* () {
+      const computer = fakeComputers({ browse: exampleDomain });
+
+      const policy = policyFrom(`deny:
+  - name: not-the-shop
+    when: page.host == "shop.example"
+allow:
+  - name: only-no-host
+    when: page.host == ""
+`);
+
+      const unparsed = yield* Gateway.use((gateway) =>
+        gateway.act(bot, { action: "navigate", url: "shop.example" }),
+      ).pipe(Effect.provide(startGateway(computer.layer, policy)));
+
       expect(unparsed).toContain("Example Domain");
       expect(computer.actions).toEqual([{ action: "navigate", url: "shop.example" }]);
     }).pipe(Effect.provide(database)),

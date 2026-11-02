@@ -154,8 +154,10 @@ CEL environment is built from the same declaration so the two cannot drift:
 | `file.path`, `file.name`, `file.extension` | The file a file tool names, as its audit row records it                                                       |
 
 Every field is bound on every action, `""` where the action has none, so a rule naming `element.name`
-answers false for `run` instead of failing. `page.host` is the host as the computer parses it,
-lower-cased and without its port, and `""` for an address it would refuse as no web address. The latest
+answers false for `run` instead of failing. `page.host` is the host in the one spelling the computer's egress
+checks it in (`canonicalHost` in `@aobot/domain`): lower-cased, without its port, brackets or a trailing
+dot, so `SHOP.example.` and `shop.example%2e` are `shop.example` and `[::1]` is `::1`; `""` for an
+address that does not parse. The latest
 snapshot keeps the address it was read at for this; a snapshot stored before E2-2 has none, so its host is
 `""` until a Bot reads the page again.
 

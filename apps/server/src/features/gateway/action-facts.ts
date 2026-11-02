@@ -1,14 +1,14 @@
-import { type BotId, ComputerAction, type RefTarget } from "@aobot/domain";
+import { type BotId, canonicalHost, ComputerAction, type RefTarget } from "@aobot/domain";
 import type { Facts } from "../policy/public.ts";
 import { fileTarget } from "./file-target.ts";
 import { singleUser } from "./person-audit.ts";
 
 /**
-The host of `url` as the computer reads it when it opens it, lower-cased and without its port, or `""` for
-an address the computer would refuse as no web address.
+The host of `url` in the one spelling the computer's egress checks it in, without its port: `SHOP.example.`
+and `shop.example%2e` are `shop.example`, `[::1]` is `::1`. `""` for an address that does not parse.
 */
 export function hostOf(url: string): string {
-  return URL.canParse(url) ? new URL(url).hostname : "";
+  return URL.canParse(url) ? canonicalHost(new URL(url).hostname) : "";
 }
 
 const element = ({ role, name }: RefTarget) => ({ element: { role, name } });

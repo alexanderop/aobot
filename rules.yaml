@@ -16,8 +16,8 @@
 #   bot.id         the Bot's id from bots.yaml
 #   actor.id       the person it acts for: single-user until sign-in arrives
 #   computer.kind  cloud
-#   page.host      the host navigate opens, or the host of the page the latest snapshot read, lower-cased
-#                  and without its port
+#   page.host      the host navigate opens, or the host of the page the latest snapshot read: lower-cased,
+#                  without its port, brackets or trailing dot, so SHOP.example. is shop.example
 #   element.role   the element a ref names, as the server's own snapshot shows it, never as the Bot says
 #   element.name
 #   key            the key press presses: Enter, Tab, Escape, Backspace, Space or an arrow key

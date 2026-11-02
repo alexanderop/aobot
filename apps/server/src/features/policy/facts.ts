@@ -15,7 +15,7 @@ export interface Facts {
   readonly computer: { readonly kind: "cloud" };
   /**
   The host `navigate` opens, or for the other browser actions the host of the page the latest snapshot
-  read, lower-cased and without its port. `""` when there is none.
+  read, spelt as `canonicalHost` spells it and without its port. `""` when there is none.
   */
   readonly page: { readonly host: string };
   /** The element a ref names in the latest snapshot. */

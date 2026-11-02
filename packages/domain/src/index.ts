@@ -65,6 +65,8 @@ export { ControlRpcs } from "./control-rpcs.ts";
 
 export { ScreenRpcs } from "./screen-rpcs.ts";
 
+export { canonicalHost } from "./host.ts";
+
 export { keepFirst, keepLast } from "./text.ts";
 
 export { tokensMatch } from "./token.ts";
