@@ -10,7 +10,7 @@ import { Atom, AsyncResult, AtomRegistry } from "effect/reactivity";
 import { type Rpc, type RpcGroup, RpcTest } from "effect/rpc";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { ApprovalClient } from "./approval-client.ts";
-import { ApprovalReply } from "./approval-card.ts";
+import { ApprovalReply } from "./approval-prompt.ts";
 import { makeApprovals } from "./approvals.ts";
 
 type Answered = Rpc.Payload<Rpc.ExtractTag<RpcGroup.Rpcs<typeof ApprovalRpcs>, "Approval.answer">>;

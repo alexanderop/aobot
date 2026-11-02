@@ -2,7 +2,7 @@ import { ApprovalId } from "@aobot/domain";
 import { Option } from "effect";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
-import { ApprovalCard, approvalCard, ApprovalReply } from "./approval-card.ts";
+import { ApprovalPrompt, approvalPrompt, ApprovalReply } from "./approval-prompt.ts";
 
 const shown = {
   approval: ApprovalId.make("approval-1"),
@@ -31,10 +31,10 @@ const earlier = ApprovalId.make("approval-0");
 
 const asking = (more: Partial<{ sending: boolean; problem: Option.Option<string> }> = {}) =>
   Option.some(
-    ApprovalCard.Asking({ pending: shown, sending: false, problem: Option.none(), ...more }),
+    ApprovalPrompt.Asking({ pending: shown, sending: false, problem: Option.none(), ...more }),
   );
 
-describe("approvalCard", () => {
+describe("approvalPrompt", () => {
   it.each([
     ["shows nothing while nothing is asked", Option.none(), notYet, true, Option.none()],
     ["asks the question the server shows", waits, notYet, true, asking()],
@@ -52,14 +52,14 @@ describe("approvalCard", () => {
       Option.none(),
       taken(shown.approval),
       true,
-      Option.some(ApprovalCard.Answered({ question: shown.question, answer: "no" })),
+      Option.some(ApprovalPrompt.Answered({ question: shown.question, answer: "no" })),
     ],
     [
       "says what the person answered before the server withdrew the question",
       waits,
       taken(shown.approval),
       true,
-      Option.some(ApprovalCard.Answered({ question: shown.question, answer: "no" })),
+      Option.some(ApprovalPrompt.Answered({ question: shown.question, answer: "no" })),
     ],
     ["asks a new question after an earlier answer", waits, taken(earlier), true, asking()],
     [
@@ -69,7 +69,7 @@ describe("approvalCard", () => {
       false,
       Option.none(),
     ],
-  ])("%s", (_case, pending, last, running, card) => {
-    expect(approvalCard(pending, last, running)).toEqual(card);
+  ])("%s", (_case, pending, last, running, prompt) => {
+    expect(approvalPrompt(pending, last, running)).toEqual(prompt);
   });
 });

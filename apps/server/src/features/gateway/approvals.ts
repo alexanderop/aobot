@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   type ApprovalAnswer,
+  type ApprovalAnsweredBy,
   ApprovalId,
   BotId,
   type ConversationId,
@@ -76,7 +77,7 @@ export class ApprovalRequests extends Context.Service<
 /** How a question was answered, and by whom: the person, or the time limit, which answers no. */
 interface Answered {
   readonly answer: ApprovalAnswer;
-  readonly by: "person" | "time limit";
+  readonly by: Extract<ApprovalAnsweredBy, "person" | "time limit">;
 }
 
 /** Another question waits for the person in this conversation. */

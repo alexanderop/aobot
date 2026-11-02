@@ -2,7 +2,7 @@ import type { ApprovalAnswer, ConversationId, PendingApproval } from "@aobot/dom
 import { Effect, Schedule, Stream } from "effect";
 import { Atom } from "effect/reactivity";
 import { ApprovalClient } from "./approval-client.ts";
-import { ApprovalReply } from "./approval-card.ts";
+import { ApprovalReply } from "./approval-prompt.ts";
 
 /** A person's answer to the question they were shown in a conversation. */
 export interface Choice {

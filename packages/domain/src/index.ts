@@ -28,7 +28,9 @@ export {
 } from "./audit.ts";
 
 export {
+  answerLabels,
   ApprovalAnswer,
+  ApprovalAnsweredBy,
   ApprovalId,
   ApprovalRpcs,
   NoApprovalWaiting,

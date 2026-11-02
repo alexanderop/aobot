@@ -9,6 +9,31 @@ export const ApprovalAnswer = Schema.Literals(["yes", "no"]);
 /** A decoded {@link ApprovalAnswer}. */
 export type ApprovalAnswer = typeof ApprovalAnswer.Type;
 
+/**
+How each answer reads, on the approval card and the audit page, and the key the card letters it by. The
+card shows them in {@link ApprovalAnswer}'s order.
+*/
+export const answerLabels: Readonly<
+  Record<ApprovalAnswer, { readonly label: string; readonly key: string }>
+> = {
+  yes: { label: "Yes", key: "A" },
+  no: { label: "No", key: "B" },
+};
+
+/**
+Who answered a question a rule put to the person, as its `approval.answered` row says: the person, or no
+on their behalf once the time limit passed, their turn was stopped, or the server stopped while it waited.
+*/
+export const ApprovalAnsweredBy = Schema.Literals([
+  "person",
+  "time limit",
+  "the turn was stopped",
+  "the server stopped",
+]);
+
+/** A decoded {@link ApprovalAnsweredBy}. */
+export type ApprovalAnsweredBy = typeof ApprovalAnsweredBy.Type;
+
 /** The id the server gives one question about one action, so an answer reaches only that question. */
 export const ApprovalId = Schema.String.pipe(Schema.brand("ApprovalId"));
 

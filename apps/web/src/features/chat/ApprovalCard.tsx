@@ -1,16 +1,8 @@
-import type { ApprovalAnswer, ConversationId } from "@aobot/domain";
+import { answerLabels, ApprovalAnswer, type ConversationId } from "@aobot/domain";
 import { Option } from "effect";
 import { useEffect, useRef } from "react";
-import { ApprovalCard as Card } from "./approval-card.ts";
+import { ApprovalPrompt } from "./approval-prompt.ts";
 import { useApproval } from "./use-approval.ts";
-
-/** The answers a person can give, each with the key the card letters it by. */
-const choices: ReadonlyArray<{ readonly key: string; readonly answer: ApprovalAnswer }> = [
-  { key: "A", answer: "yes" },
-  { key: "B", answer: "no" },
-];
-
-const answerLabels: Readonly<Record<ApprovalAnswer, string>> = { yes: "Yes", no: "No" };
 
 /**
 The question a Bot waits on before an action a rule asks about, as a card in the chat: the question the
@@ -21,54 +13,63 @@ export function ApprovalCard(props: {
   readonly conversationId: ConversationId;
   readonly isRunning: boolean;
 }) {
-  const { card, choose } = useApproval(props.conversationId, props.isRunning);
+  const { prompt, choose } = useApproval(props.conversationId, props.isRunning);
   const shown = useRef<HTMLElement>(null);
 
-  const showing = Option.match(card, {
+  const showing = Option.match(prompt, {
     onNone: () => "",
-    onSome: Card.$match({ Asking: ({ pending }) => pending.approval, Answered: () => "answered" }),
+    onSome: ApprovalPrompt.$match({
+      Asking: ({ pending }) => pending.approval,
+      Answered: () => "answered",
+    }),
   });
 
   useEffect(() => {
     shown.current?.scrollIntoView({ block: "end" });
   }, [showing]);
 
-  return Option.match(card, {
+  return Option.match(prompt, {
     onNone: () => null,
-    onSome: Card.$match({
-      Asking: ({ pending, sending, problem }) => (
-        <section ref={shown} className="approval" aria-label="Approval">
-          <p className="approval__question">{pending.question}</p>
-          {choices.map(({ key, answer }) => (
-            <button
-              key={answer}
-              type="button"
-              className="approval__answer"
-              onClick={() => choose(answer)}
-              disabled={sending}
-            >
-              <span className="approval__key" aria-hidden="true">
-                {key}
-              </span>
-              {answerLabels[answer]}
-            </button>
-          ))}
-          {Option.match(problem, {
-            onNone: () => null,
-            onSome: (message) => (
-              <p className="approval__problem" role="alert">
-                {message}
-              </p>
-            ),
+    onSome: (current) => (
+      <section ref={shown} className="approval" aria-label="Approval">
+        <p className="approval__question">
+          {ApprovalPrompt.$match(current, {
+            Asking: ({ pending }) => pending.question,
+            Answered: ({ question }) => question,
           })}
-        </section>
-      ),
-      Answered: ({ question, answer }) => (
-        <section ref={shown} className="approval" aria-label="Approval">
-          <p className="approval__question">{question}</p>
-          <p className="approval__answered">You answered {answerLabels[answer]}</p>
-        </section>
-      ),
-    }),
+        </p>
+        {ApprovalPrompt.$match(current, {
+          Asking: ({ pending, sending, problem }) => (
+            <>
+              {ApprovalAnswer.literals.map((answer) => (
+                <button
+                  key={answer}
+                  type="button"
+                  className="approval__answer"
+                  onClick={() => choose(pending, answer)}
+                  disabled={sending}
+                >
+                  <span className="approval__key" aria-hidden="true">
+                    {answerLabels[answer].key}
+                  </span>
+                  {answerLabels[answer].label}
+                </button>
+              ))}
+              {Option.match(problem, {
+                onNone: () => null,
+                onSome: (message) => (
+                  <p className="approval__problem" role="alert">
+                    {message}
+                  </p>
+                ),
+              })}
+            </>
+          ),
+          Answered: ({ answer }) => (
+            <p className="approval__answered">You answered {answerLabels[answer].label}</p>
+          ),
+        })}
+      </section>
+    ),
   });
 }

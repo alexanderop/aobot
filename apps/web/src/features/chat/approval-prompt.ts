@@ -20,7 +20,7 @@ What the approval card shows. `Asking` while the Bot waits for the person, with 
 shows it, their answer on its way or why the last one was refused. `Answered` once the server took it, for
 the rest of the turn.
 */
-export type ApprovalCard = Data.TaggedEnum<{
+export type ApprovalPrompt = Data.TaggedEnum<{
   Asking: {
     readonly pending: PendingApproval;
     readonly sending: boolean;
@@ -29,24 +29,24 @@ export type ApprovalCard = Data.TaggedEnum<{
   Answered: { readonly question: string; readonly answer: ApprovalAnswer };
 }>;
 
-/** Constructors and matchers for {@link ApprovalCard}. */
-export const ApprovalCard = Data.taggedEnum<ApprovalCard>();
+/** Constructors and matchers for {@link ApprovalPrompt}. */
+export const ApprovalPrompt = Data.taggedEnum<ApprovalPrompt>();
 
 /**
 The card of a conversation whose Bot waits on `pending`, whose person's last answer is `last`, while its
 turn is `running` or not. None while nothing is asked and nothing was answered in this turn.
 */
-export function approvalCard(
+export function approvalPrompt(
   pending: Option.Option<PendingApproval>,
   last: AsyncResult.AsyncResult<ApprovalReply>,
   running: boolean,
-): Option.Option<ApprovalCard> {
+): Option.Option<ApprovalPrompt> {
   const reply = last.waiting ? Option.none() : AsyncResult.value(last);
   const taken = Option.filter(reply, ApprovalReply.$is("Taken"));
   const refused = Option.filter(reply, ApprovalReply.$is("Refused"));
 
   const answered = Option.map(taken, ({ question, answer }) =>
-    ApprovalCard.Answered({ question, answer }),
+    ApprovalPrompt.Answered({ question, answer }),
   );
 
   return Option.match(pending, {
@@ -55,7 +55,7 @@ export function approvalCard(
       Option.exists(taken, ({ approval }) => approval === shown.approval)
         ? answered
         : Option.some(
-            ApprovalCard.Asking({
+            ApprovalPrompt.Asking({
               pending: shown,
               sending: last.waiting,
               problem: Option.map(

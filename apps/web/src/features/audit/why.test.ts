@@ -29,6 +29,7 @@ describe("whyOf", () => {
   it.each([
     [{ answer: "yes", by: "person" }, "Yes (person)"],
     [{ answer: "no", by: "time limit" }, "No (time limit)"],
+    [{ answer: "no", by: "the server stopped" }, "No (the server stopped)"],
   ])("reads the person's answer %j as %j", (detail, reason) => {
     expect(whyOf(rowWith({ approval: "approval-1", ...detail }))).toEqual({
       rule: Option.none(),
@@ -36,7 +37,10 @@ describe("whyOf", () => {
     });
   });
 
-  it("reads an answer that is neither yes nor no as no reason", () => {
-    expect(whyOf(rowWith({ answer: "maybe", by: "person" })).reason).toEqual(Option.none());
+  it.each([
+    ["neither yes nor no", { answer: "maybe", by: "person" }],
+    ["by no one the server names", { answer: "no", by: "someone" }],
+  ])("reads an answer %s as no reason", (_case, detail) => {
+    expect(whyOf(rowWith(detail)).reason).toEqual(Option.none());
   });
 });

@@ -1,6 +1,7 @@
 import {
   type AcpClientMethod,
   type ApprovalAnswer,
+  type ApprovalAnsweredBy,
   type AuditAction,
   BotId,
   ComputerAction,
@@ -355,14 +356,11 @@ export const secretWaitLimit = Duration.minutes(10);
 /** How long an action a rule asks the person about waits for their answer, which is no after it. */
 export const approvalWaitLimit = Duration.minutes(10);
 
-/** Who answered a question a rule put to the person, as its `approval.answered` row says. */
-type AnsweredBy = "person" | "time limit" | "the turn was stopped" | "the server stopped";
-
 /** Why a call ended early: the person stopped the turn it was made in. */
-const turnStopped = "the turn was stopped";
+const turnStopped = "the turn was stopped" satisfies ApprovalAnsweredBy;
 
 /** Why a question an earlier run left open was answered no and refused at start-up. */
-const serverStopped = "the server stopped";
+const serverStopped = "the server stopped" satisfies ApprovalAnsweredBy;
 
 /** What a Bot is told after its person, or the time limit, said no. */
 const holdOff =
@@ -401,7 +399,7 @@ const notAsked = {
 } as const;
 
 /** What the model reads when its person, or the time limit, said no to `tool`. */
-function declinedApprovalAnswer(tool: ToolName, by: AnsweredBy): string {
+function declinedApprovalAnswer(tool: ToolName, by: ApprovalAnsweredBy): string {
   return by === "person"
     ? `${tool} did not run: your person said no. ${holdOff}`
     : `${tool} did not run: your person did not answer within ${Duration.format(approvalWaitLimit)}, which counts as no. ${holdOff}`;
@@ -1001,7 +999,7 @@ export const gatewayLayer = Layer.effectContext(
       bot: BotId,
       approval: OpenApproval,
       answer: ApprovalAnswer,
-      by: AnsweredBy,
+      by: ApprovalAnsweredBy,
     ) => record(tool, "answered", "approval.answered", { bot, approval: approval.id, answer, by });
 
     /**
