@@ -25,6 +25,7 @@ export const botToolHandlers = botToolkit.toLayer(
       snapshot: () => act({ action: "snapshot" }),
       click: ({ ref }) => act({ action: "click", ref }),
       type: ({ ref, text }) => act({ action: "type", ref, text }),
+      press: ({ ref, key }) => act({ action: "press", ref, key }),
       run: ({ command }) => act({ action: "run", command }),
       read_file: ({ path }) => act({ action: "read_file", path }),
       write_file: ({ path, contents }) => act({ action: "write_file", path, contents }),

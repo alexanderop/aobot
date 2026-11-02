@@ -261,6 +261,7 @@ id. The `Gateway.act` span records it as `gateway.bot`.
 | `snapshot`   | none               | `POST /act {"action":"snapshot"}`                             | `snapshot · allow` with `{ bot }`, then `succeeded`, `failed` or `unknown`                                                                                                    |
 | `click`      | `ref`              | `POST /act {"action":"click","target":{ref,role,name}}`       | `click · allow` with `{ bot, ref, role, name }`, then `succeeded`, `failed` or `unknown`; `click · deny` with `{ bot, ref, reason }`                                          |
 | `type`       | `ref`, `text`      | `POST /act {"action":"type","target":{ref,role,name},"text"}` | `type · allow` with `{ bot, ref, role, name, text: "[N chars]" }`, then `succeeded`, `failed` or `unknown`; `type · deny` with `{ bot, ref, reason }`                         |
+| `press`      | `ref`, `key`       | `POST /act {"action":"press","target":{ref,role,name},"key"}` | `press · allow` with `{ bot, ref, role, name, key }`, then `succeeded`, `failed` or `unknown`; `press · deny` with `{ bot, ref, reason }`                                     |
 | `run`        | `command`          | `POST /act {"action":"run","command"}`                        | `run · allow` with `{ bot, command }` (capped at 2,000 characters), then `succeeded`, `failed` or `unknown`                                                                   |
 | `read_file`  | `path`             | `POST /act {"action":"read_file","path"}`                     | `read_file · allow` with `{ bot, path, name, extension }`, then `succeeded`, `failed` or `unknown`; `read_file · deny` with `{ bot, path, name, extension, reason }`          |
 | `write_file` | `path`, `contents` | `POST /act {"action":"write_file","path","contents"}`         | `write_file · allow` with `{ bot, path, name, extension, bytes }`, then `succeeded`, `failed` or `unknown`; `write_file · deny` with `{ bot, path, name, extension, reason }` |
@@ -270,7 +271,9 @@ While a person holds the computer, every granted tool of every Bot is refused be
 with `{ bot, reason: "a person has control" }` (see [Taking control](#taking-control)).
 
 Every browser action answers with the page read afresh: its URL, title and snapshot, capped at 12,000
-characters. `type` replaces what the field holds and never presses Enter.
+characters. `type` replaces what the field holds and never presses Enter. `press` presses one key on an element:
+`Enter`, `Tab`, `Escape`, `Backspace`, `Space` or an arrow key, and like `click` reads the page once what it led
+to has loaded, so Enter in a field reads the page its form submitted to.
 
 `run` answers how the command ended and the last 8,000 characters of each of stdout and stderr, each with
 a note when its start was dropped. It ended `Exited` with bash's exit code, `Signalled` when a signal the

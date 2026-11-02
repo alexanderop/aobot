@@ -41,6 +41,7 @@ export {
   fileWriteLimit,
   PageAction,
   PageRead,
+  PressKey,
   RefTarget,
   RunCommand,
   Screen,

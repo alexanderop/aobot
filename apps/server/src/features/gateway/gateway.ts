@@ -5,6 +5,7 @@ import {
   escapesWorkspace,
   FileAction,
   type PageAction,
+  PressKey,
   RunCommand,
   snapshotRefs,
   workspaceRoot,
@@ -58,6 +59,7 @@ export const BotRequest = Schema.Union([
   Schema.Struct({ action: Schema.Literal("snapshot") }),
   Schema.Struct({ action: Schema.Literal("click"), ref: Schema.String }),
   Schema.Struct({ action: Schema.Literal("type"), ref: Schema.String, text: Schema.String }),
+  Schema.Struct({ action: Schema.Literal("press"), ref: Schema.String, key: PressKey }),
   RunCommand,
   FileAction,
 ]).pipe(Schema.toTaggedUnion("action"));
@@ -177,6 +179,7 @@ const forwarding = {
   snapshot: { timeout: Duration.seconds(20), source: "web page", whenUnknown: onAPage },
   click: { timeout: Duration.seconds(60), source: "web page", whenUnknown: onAPage },
   type: { timeout: Duration.seconds(30), source: "web page", whenUnknown: onAPage },
+  press: { timeout: Duration.seconds(60), source: "web page", whenUnknown: onAPage },
   run: {
     timeout: pastTheComputersLimit,
     source: "command output",
@@ -199,6 +202,7 @@ const auditDetail = ComputerAction.match({
   snapshot: () => ({}),
   click: ({ target }) => ({ ...target }),
   type: ({ target, text }) => ({ ...target, text: redact(text) }),
+  press: ({ target, key }) => ({ ...target, key }),
   run: ({ command }) => ({ command: capText(command, auditCommandLimit) }),
   read_file: ({ path }) => ({ ...fileTarget(path) }),
   write_file: ({ path, contents }) => ({
@@ -344,6 +348,7 @@ export const gatewayLayer = Layer.effectContext(
         snapshot: browse,
         click: browse,
         type: browse,
+        press: browse,
         run: (command) =>
           computer.run(command).pipe(
             Effect.tap(({ end }) => Effect.annotateCurrentSpan(endAttributes(end))),
@@ -372,6 +377,8 @@ export const gatewayLayer = Layer.effectContext(
           Effect.map(targetOf(bot, ref), (target) => ({ action: "click", target }) as const),
         type: ({ ref, text }) =>
           Effect.map(targetOf(bot, ref), (target) => ({ action: "type", target, text }) as const),
+        press: ({ ref, key }) =>
+          Effect.map(targetOf(bot, ref), (target) => ({ action: "press", target, key }) as const),
         run: (run) => Effect.succeed(run),
         read_file: inWorkspace,
         write_file: inWorkspace,

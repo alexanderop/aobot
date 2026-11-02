@@ -544,6 +544,35 @@ describe("Gateway refs", () => {
       }).pipe(Effect.provide(database)),
   );
 
+  it.effect("presses a key on the element the ref names, and records the key", () =>
+    Effect.gen(function* () {
+      const computer = pages(form, sent);
+
+      const answer = yield* Gateway.use((gateway) =>
+        gateway
+          .act(bot, { action: "snapshot" })
+          .pipe(Effect.andThen(gateway.act(bot, { action: "press", ref: "e2", key: "Enter" }))),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(answer).toContain('heading "Thank you"');
+      expect(computer.actions.at(-1)).toEqual({
+        action: "press",
+        target: { ref: "e2", role: "textbox", name: "Name" },
+        key: "Enter",
+      });
+      expect((yield* auditRows).find((row) => row["action"] === "press")).toMatchObject({
+        decision: "allow",
+        detail: JSON.stringify({
+          bot: "assistant",
+          ref: "e2",
+          role: "textbox",
+          name: "Name",
+          key: "Enter",
+        }),
+      });
+    }).pipe(Effect.provide(database)),
+  );
+
   it.effect("resolves the next ref against the page the last action answered with", () =>
     Effect.gen(function* () {
       const computer = pages(form, sent);

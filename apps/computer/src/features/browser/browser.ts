@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   PageAction,
   type PageRead,
+  type PressKey,
   PersonInput,
   type RefTarget,
   type ScreenPoint,
@@ -46,7 +47,7 @@ const navigationTimeoutMs = 30_000;
 
 const snapshotTimeoutMs = 10_000;
 
-/** How long a click or a fill may wait for its element to be ready. A ref that names nothing is refused first. */
+/** How long a click, a fill or a key press may wait for its element to be ready. A ref that names nothing is refused first. */
 const elementTimeoutMs = 5_000;
 
 /** How long a Playwright call that takes no time limit of its own may run, such as a click on the screen. */
@@ -262,6 +263,19 @@ export const browserLayer = (home: string) =>
         return current;
       });
 
+      // Enter in a field can submit its form, so the page is read once whatever it led to has loaded.
+      const press = Effect.fn("Browser.press")(function* (target: RefTarget, key: PressKey) {
+        const current = yield* currentPage(context, page);
+        const found = yield* element(current, target);
+
+        yield* playwright("Pressing a key", () => found.press(key, { timeout: elementTimeoutMs }));
+        yield* playwright("Waiting for the page", () =>
+          current.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs }),
+        );
+
+        return current;
+      });
+
       // `fill` replaces what the field holds and never presses Enter, so typing submits nothing.
       const type = Effect.fn("Browser.type")(function* (target: RefTarget, text: string) {
         const current = yield* currentPage(context, page);
@@ -290,6 +304,7 @@ export const browserLayer = (home: string) =>
             snapshot: () => currentPage(context, page),
             click: ({ target }) => click(target),
             type: ({ target, text }) => type(target, text),
+            press: ({ target, key }) => press(target, key),
           }).pipe(
             Effect.flatMap(readPage),
             Effect.map((read): PageRead => ({ action: action.action, ...read })),

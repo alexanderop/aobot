@@ -21,6 +21,17 @@ function running(command: string): Facts {
 
 const { Allowed, Denied, Broke, NoneAllowed } = Verdict.cases;
 
+/** The facts of a browser action on an element of a page on shop.example, pressing `key` when it is `press`. */
+function onTheShop(tool: "click" | "press", role: string, name: string, key = ""): Facts {
+  return {
+    ...running(""),
+    tool: { name: tool },
+    page: { host: "shop.example" },
+    element: { role, name },
+    key,
+  };
+}
+
 /** A deny rule named `rule` failed, with an error that says `why`. */
 function brokeWith(rule: string, why: string) {
   return {
@@ -152,4 +163,40 @@ allow:
       );
     },
   );
+});
+
+describe("a rule against submitting the shop's form", () => {
+  const rules = rulesFrom(`deny:
+  - name: no-submit
+    when: tool.name == "click" && element.name == "Submit"
+  - name: no-enter-on-the-shop
+    when: tool.name == "press" && key == "Enter" && page.host == "shop.example"
+allow:
+  - name: granted-tools
+    when: "true"`);
+
+  it.each([
+    [
+      "refuses clicking Submit",
+      onTheShop("click", "button", "Submit"),
+      Denied.make({ rule: RuleName.make("no-submit") }),
+    ],
+    [
+      "refuses pressing Enter in the form's field, which would submit it as well",
+      onTheShop("press", "textbox", "Name", "Enter"),
+      Denied.make({ rule: RuleName.make("no-enter-on-the-shop") }),
+    ],
+    [
+      "allows clicking Cancel",
+      onTheShop("click", "button", "Cancel"),
+      Allowed.make({ rule: RuleName.make("granted-tools"), broken: [] }),
+    ],
+    [
+      "allows pressing Tab in the field",
+      onTheShop("press", "textbox", "Name", "Tab"),
+      Allowed.make({ rule: RuleName.make("granted-tools"), broken: [] }),
+    ],
+  ])("%s", (_case, facts, verdict) => {
+    expect(judge(rules, facts)).toEqual(verdict);
+  });
 });

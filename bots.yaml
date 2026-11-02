@@ -2,7 +2,7 @@
 #
 # Each Bot has an id (lowercase letters, digits and dashes), a name, its instructions, and the tools it is
 # granted. The gateway refuses any other tool with "not granted to <id>" before anything else it does. The
-# tools are: navigate, snapshot, click, type, run, read_file, write_file, list_files.
+# tools are: navigate, snapshot, click, type, press, run, read_file, write_file, list_files.
 #
 # pinned: true shows a Bot in the grid at the top of the sidebar; group lists it under that heading.
 # A Bot is one or the other, never both.
@@ -12,7 +12,7 @@ bots:
     name: Assistant
     pinned: true
     instructions: You are Assistant, a helpful coworker. Answer briefly and plainly. If you do not know, say so.
-    tools: [navigate, snapshot, click, type, run, read_file, write_file, list_files]
+    tools: [navigate, snapshot, click, type, press, run, read_file, write_file, list_files]
 
   - id: scribe
     name: Scribe

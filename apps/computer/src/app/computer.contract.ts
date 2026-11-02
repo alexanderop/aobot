@@ -393,6 +393,36 @@ describe("the docker computer", () => {
       expect(response.status).toBe(403);
       expect(await response.json()).toMatchObject({ reason: "refused" });
     });
+
+    it("presses a key on an element by its ref: Enter in the field submits its form", async () => {
+      const opened = await result(await act(local, { action: "navigate", url: formUrl }));
+      const name = target(opened.snapshot, "textbox", "Name");
+
+      await result(await act(local, { action: "type", target: name, text: "Ada" }));
+
+      const pressed = await result(
+        await act(local, { action: "press", target: name, key: "Enter" }),
+      );
+
+      expect(pressed).toMatchObject({
+        action: "press",
+        url: `http://${suite}-fixture:${fixturePort}/submitted?name=Ada`,
+        title: "Contract Fixture",
+      });
+    });
+
+    it("presses Space on a button by its ref, as a click would", async () => {
+      const opened = await result(await act(local, { action: "navigate", url: formUrl }));
+      const button = target(opened.snapshot, "button", "Press me");
+
+      const pressed = await result(
+        await act(local, { action: "press", target: button, key: "Space" }),
+      );
+
+      expect(Option.isSome(findRef(pressed.snapshot, { role: "button", name: "Pressed" }))).toBe(
+        true,
+      );
+    });
   });
 
   it.each([
