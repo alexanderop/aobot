@@ -1159,9 +1159,9 @@ export const gatewayLayer = Layer.effectContext(
     action, and its `secret.requested` row written; only then is it shown to the person, as its field on
     the host of its page, and it waits for their answer outside the door, so a person can take the
     computer meanwhile. Its row's outcome says how the person answered, and what they typed is forwarded
-    as `type_secret`, through the door again. Under an ask rule, the secret card is the person's question,
-    so it is refused as an asked action would be while another question waits in the conversation of
-    `turn`, or after a no to that rule earlier in its run.
+    as `type_secret`, through the door again. Under an ask rule, the secret card is the person's question
+    in the conversation of `turn`: it holds that conversation as an approval card would, and is refused
+    after a no to that rule earlier in its run.
     */
     const askForSecret = (bot: BotId, turn: Option.Option<TurnRef>, ref: string, field: string) =>
       Effect.scoped(
@@ -1186,7 +1186,7 @@ export const gatewayLayer = Layer.effectContext(
               const askRule = Option.map(allowed.ask, ({ rule }) => rule);
 
               if (Option.isSome(askRule) && Option.isSome(turn)) {
-                yield* approvals.mayAsk(turn.value, askRule.value).pipe(
+                yield* approvals.hold(turn.value, askRule.value).pipe(
                   denyRefusals("request_secret", {
                     bot,
                     ...auditDetail(asked.action),

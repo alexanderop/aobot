@@ -338,17 +338,26 @@ describe("approvalRequests", () => {
     }).pipe(Effect.provide(database)),
   );
 
-  it.effect("lets another card ask only while no question waits and no no holds", () =>
+  it.effect("holds the conversation for another card while no question waits and no no holds", () =>
     Effect.gen(function* () {
       const store = yield* approvalRequests;
 
-      yield* store.mayAsk(firstRun, rule);
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* store.hold(firstRun, rule);
+
+          expect(yield* Effect.flip(opened(store, firstRun, "another-rule"))).toEqual(
+            new AlreadyWaiting(),
+          );
+          expect(yield* shownIn(store.requests)).toEqual(Option.none());
+        }),
+      );
 
       yield* Effect.scoped(
         Effect.gen(function* () {
           yield* opened(store, firstRun);
 
-          expect(yield* Effect.flip(store.mayAsk(firstRun, "another-rule"))).toEqual(
+          expect(yield* Effect.flip(store.hold(firstRun, "another-rule"))).toEqual(
             new AlreadyWaiting(),
           );
         }),
@@ -356,9 +365,9 @@ describe("approvalRequests", () => {
 
       yield* askAndAnswer(store, secondRun, "no");
 
-      expect(yield* Effect.flip(store.mayAsk(secondRun, rule))).toEqual(new DeclinedEarlier());
-
-      yield* store.mayAsk(firstRun, rule);
+      expect(yield* Effect.flip(Effect.scoped(store.hold(secondRun, rule)))).toEqual(
+        new DeclinedEarlier(),
+      );
     }).pipe(Effect.provide(database)),
   );
 

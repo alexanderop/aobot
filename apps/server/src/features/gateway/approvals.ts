@@ -170,7 +170,10 @@ const decodeLeftOpen = Schema.decodeUnknownEffect(
   ),
 );
 
-/** A question held for its conversation: its answer, and the card while the person may answer it. */
+/**
+A question held for its conversation: its answer, and the card while the person may answer it. A card
+that asks in place of an approval card, as a secret's does, holds the conversation without one.
+*/
 interface Waiting {
   readonly id: ApprovalId;
   readonly answer: Deferred.Deferred<ApprovalAnswer>;
@@ -326,17 +329,15 @@ export const approvalRequests = Effect.gen(function* () {
   });
 
   /**
-  Whether the person may be asked, in `turn`'s conversation, about an action the ask rule `rule` holds for
-  that another card asks instead, as a secret's does: not while a question waits there, nor after a no to
-  that rule earlier in its run. Shows and records nothing.
+  Holds `turn`'s conversation until the scope closes for a card that asks the person under the ask rule
+  `rule` in place of an approval card, as a secret's does, so no approval card shows beside it. Refused
+  while a question waits there, or after a no to that rule earlier in its run.
   */
-  const mayAsk = Effect.fnUntraced(function* (turn: TurnRef, rule: string) {
-    if (HashMap.has(yield* SubscriptionRef.get(questions), turn.conversation)) {
-      return yield* new AlreadyWaiting();
-    }
-
-    yield* notDeclined(turn, rule);
-  });
+  const hold = (
+    turn: TurnRef,
+    rule: string,
+  ): Effect.Effect<void, AlreadyWaiting | DeclinedEarlier | LedgerFailed, Scope.Scope> =>
+    Effect.andThen(holdConversation(turn.conversation), notDeclined(turn, rule));
 
   /**
   Holds a question about `asked`, which the ask rule `rule` asks about, for `turn`'s conversation until the
@@ -507,5 +508,5 @@ export const approvalRequests = Effect.gen(function* () {
       return closed.flatMap(Option.toArray);
     });
 
-  return { open, mayAsk, closeLeftOpen, requests: ApprovalRequests.of({ pending, answer }) };
+  return { open, hold, closeLeftOpen, requests: ApprovalRequests.of({ pending, answer }) };
 });

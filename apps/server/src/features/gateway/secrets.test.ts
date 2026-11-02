@@ -105,6 +105,32 @@ const shownNow = SecretRequests.use((secrets) =>
   secrets.pending(assistant.id).pipe(Stream.runHead, Effect.map(Option.flatten)),
 );
 
+const conversation = ConversationId.make("conversation-1");
+
+/** The assistant's call in run `run` of the conversation. */
+const inRun = (run: string) =>
+  Claim.cases.Named.make({ bot: assistant.id, turn: { conversation, run: RunId.make(run) } });
+
+const inTurn = inRun("run-1");
+
+const askBeforePassword = policyFrom(`deny: []
+allow:
+  - name: granted-tools
+    when: "true"
+ask:
+  - name: ask-before-password
+    when: element.name == "Password"
+`);
+
+/** The approval card the person is shown in the conversation now, if any. */
+const approvalShownNow = ApprovalRequests.use((approvals) =>
+  approvals.pending(conversation).pipe(Stream.runHead, Effect.map(Option.flatten)),
+);
+
+/** What the model reads of a call under `ask-before-password` after a no to that rule in its run. */
+const declinedEarlier = (tool: string) =>
+  `${tool} did not run: your person already said no to this in this conversation. Do not ask again until they write to you.`;
+
 describe("request_secret", () => {
   it.effect("types what the person supplied into the field, and no row or span holds it", () =>
     Effect.gen(function* () {
@@ -197,21 +223,6 @@ ask:
   it.effect("refuses a secret for a field its person said no to typing into, in that run", () =>
     Effect.gen(function* () {
       const computer = signInComputer();
-      const conversation = ConversationId.make("conversation-1");
-
-      const inTurn = Claim.cases.Named.make({
-        bot: assistant.id,
-        turn: { conversation, run: RunId.make("run-1") },
-      });
-
-      const policy = policyFrom(`deny: []
-allow:
-  - name: granted-tools
-    when: "true"
-ask:
-  - name: ask-before-password
-    when: element.name == "Password"
-`);
 
       const [refused, shownAfter] = yield* Effect.gen(function* () {
         yield* Gateway.use((gateway) => gateway.act(inTurn, { action: "snapshot" }));
@@ -242,11 +253,9 @@ ask:
         );
 
         return [refused, yield* shownNow] as const;
-      }).pipe(Effect.provide(startGateway(computer.layer, policy)));
+      }).pipe(Effect.provide(startGateway(computer.layer, askBeforePassword)));
 
-      expect(refused.message).toBe(
-        "request_secret did not run: your person already said no to this in this conversation. Do not ask again until they write to you.",
-      );
+      expect(refused.message).toBe(declinedEarlier("request_secret"));
       expect(shownAfter).toEqual(Option.none());
       expect((yield* trail).at(-1)).toEqual([
         "secret.requested · deny",
@@ -262,6 +271,39 @@ ask:
         },
       ]);
       expect(computer.actions.map((action) => action.action)).toEqual(["snapshot"]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("shows no approval card beside a secret card an ask rule holds for", () =>
+    Effect.gen(function* () {
+      const computer = signInComputer();
+
+      const [refused, cardShown] = yield* Effect.gen(function* () {
+        yield* Gateway.use((gateway) => gateway.act(inTurn, { action: "snapshot" }));
+
+        const asking = yield* Gateway.use((gateway) =>
+          Effect.forkChild(gateway.act(inTurn, askForPassword)),
+        );
+
+        yield* untilShown;
+
+        const refused = yield* Gateway.use((gateway) =>
+          Effect.flip(gateway.act(inTurn, { action: "type", ref: "e3", text: "guess" })),
+        );
+
+        const cardShown = yield* approvalShownNow;
+
+        yield* answerOnceShown(supplied);
+        yield* Fiber.join(asking);
+
+        return [refused, cardShown] as const;
+      }).pipe(Effect.provide(startGateway(computer.layer, askBeforePassword)));
+
+      expect(refused.message).toBe(
+        "type did not run: you already asked your person and they have not answered. Wait for that answer.",
+      );
+      expect(cardShown).toEqual(Option.none());
+      expect(computer.actions.map(({ action }) => action)).toEqual(["snapshot", "type_secret"]);
     }).pipe(Effect.provide(database)),
   );
 
