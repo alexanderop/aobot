@@ -1,13 +1,8 @@
-import {
-  type BotId,
-  canonicalHost,
-  ComputerAction,
-  type FileAction,
-  type RefTarget,
-} from "@aobot/domain";
+import { type BotId, canonicalHost, type FileAction, type RefTarget } from "@aobot/domain";
 import { blankFacts, type Facts } from "../policy/public.ts";
 import { fileTarget } from "./file-target.ts";
 import { singleUser } from "./person-audit.ts";
+import { ToolAction } from "./tool-action.ts";
 
 /**
 The host of the origin `url` is on, in the one spelling the computer's egress checks it in, without its
@@ -29,7 +24,7 @@ const element = ({ role, name }: RefTarget): OwnFacts => ({ element: { role, nam
 const file = ({ path }: FileAction): OwnFacts => ({ file: fileTarget(path) });
 
 /** The facts only some actions have: the element a ref names, the key, the command, the file. */
-const ownFacts = ComputerAction.match({
+const ownFacts = ToolAction.match({
   navigate: (): OwnFacts => ({}),
   snapshot: (): OwnFacts => ({}),
   click: ({ target }) => element(target),
@@ -45,7 +40,7 @@ const ownFacts = ComputerAction.match({
 What the rules see of `action`, which `bot` asked for on a page at `host`: its own facts, and `""` for every
 fact it has none of.
 */
-export function actionFacts(bot: BotId, action: ComputerAction, host: string): Facts {
+export function actionFacts(bot: BotId, action: ToolAction, host: string): Facts {
   return {
     ...blankFacts,
     tool: { name: action.action },

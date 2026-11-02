@@ -74,8 +74,9 @@ export const RefTarget = Schema.Struct({
   /** Its accessible name, or `""` when the snapshot shows none. */
   name: Schema.String,
   /**
-  The address that snapshot was read at, whose host the rules judged the action by. The computer refuses
-  the action when its page is on another origin by now.
+  The origin that snapshot was read at, whose host the rules judged the action by, or the whole address
+  for an opaque origin such as `about:blank`'s. The computer refuses the action when its page is on
+  another origin by now.
   */
   url: Schema.String,
 });
@@ -102,13 +103,27 @@ export const PressKey = Schema.Literals([
 /** A decoded {@link PressKey}. */
 export type PressKey = typeof PressKey.Type;
 
-/** Something a Bot asks its computer's browser to do. Each answers with a {@link PageRead}. */
+/**
+A secret a person typed for a Bot, such as a password: a plain string on the wire, and `Redacted` once
+decoded, so a log, an error or a span that prints it shows `<redacted>`. Never empty.
+*/
+export const SecretValue = Schema.RedactedFromValue(Schema.String.check(Schema.isMinLength(1)));
+
+/** A decoded {@link SecretValue}. */
+export type SecretValue = typeof SecretValue.Type;
+
+/**
+Something a Bot asks its computer's browser to do. Each answers with a {@link PageRead}. `type_secret`
+types what a person gave for a Bot's `request_secret`, and marks the field, so no later read of the page
+shows its value.
+*/
 export const PageAction = Schema.Union([
   Schema.Struct({ action: Schema.Literal("navigate"), url: Schema.String }),
   Schema.Struct({ action: Schema.Literal("snapshot") }),
   Schema.Struct({ action: Schema.Literal("click"), target: RefTarget }),
   Schema.Struct({ action: Schema.Literal("type"), target: RefTarget, text: Schema.String }),
   Schema.Struct({ action: Schema.Literal("press"), target: RefTarget, key: PressKey }),
+  Schema.Struct({ action: Schema.Literal("type_secret"), target: RefTarget, secret: SecretValue }),
 ]).pipe(Schema.toTaggedUnion("action"));
 
 /** A decoded {@link PageAction}. */
@@ -148,10 +163,11 @@ export type ComputerAction = typeof ComputerAction.Type;
 
 /**
 The page as it is after a {@link PageAction}, read afresh, so the Bot's refs always come from the page it
-is looking at.
+is looking at. A field that holds a password, a one-time code or a secret a person typed shows
+`"[hidden]"` in place of what it holds.
 */
 export const PageRead = Schema.Struct({
-  action: Schema.Literals(["navigate", "snapshot", "click", "type", "press"]),
+  action: Schema.Literals(["navigate", "snapshot", "click", "type", "press", "type_secret"]),
   url: Schema.String,
   title: Schema.String,
   snapshot: Schema.String,

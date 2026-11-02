@@ -75,3 +75,14 @@ export function sameOrigin(now: string, read: string): boolean {
 
   return here.origin === "null" ? here.href === there.href : here.origin === there.origin;
 }
+
+/**
+What {@link sameOrigin} needs of the address a page was read at: its origin, or the address itself when
+the origin is opaque. Kept in place of the address, whose path, query or fragment can hold a secret, such
+as a form sent by GET or an OAuth redirect's `#access_token=…`.
+*/
+export function originOf(read: string): string {
+  const origin = URL.parse(read)?.origin ?? "null";
+
+  return origin === "null" ? read : origin;
+}

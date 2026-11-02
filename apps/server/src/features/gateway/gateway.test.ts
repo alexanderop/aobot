@@ -517,6 +517,37 @@ describe("Gateway refs", () => {
     }).pipe(Effect.provide(database)),
   );
 
+  it.effect("keeps the latest page without what was typed into it, or its address's query", () =>
+    Effect.gen(function* () {
+      const computer = fakeComputers({
+        browse: (action) =>
+          Effect.succeed({
+            action: action.action,
+            url: "https://example.com/form?q=hunter2",
+            title: "Form",
+            snapshot:
+              action.action === "type" ? form.replace("[ref=e2]", "[ref=e2]: hunter2") : form,
+            truncated: false,
+          }),
+      });
+
+      yield* Gateway.use((gateway) =>
+        Effect.all([
+          gateway.act(bot, { action: "snapshot" }),
+          gateway.act(bot, { action: "type", ref: "e2", text: "hunter2" }),
+        ]),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      const stored = yield* SqlClient.SqlClient.pipe(
+        Effect.flatMap((sql) => sql`SELECT snapshot, url FROM computer_snapshot`),
+      );
+
+      expect(stored).toEqual([
+        { snapshot: form.replace("[ref=e2]", '[ref=e2]: "[hidden]"'), url: "https://example.com" },
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
   it.effect(
     "sends the computer the element the ref names, and records its role and name with the typed text redacted",
     () =>
@@ -534,12 +565,12 @@ describe("Gateway refs", () => {
         expect(computer.actions.slice(1)).toEqual([
           {
             action: "type",
-            target: { ref: "e2", role: "textbox", name: "Name", url: "https://example.com/form" },
+            target: { ref: "e2", role: "textbox", name: "Name", url: "https://example.com" },
             text: "hunter2 is my password",
           },
           {
             action: "click",
-            target: { ref: "e3", role: "button", name: "Send", url: "https://example.com/form" },
+            target: { ref: "e3", role: "button", name: "Send", url: "https://example.com" },
           },
         ]);
 
@@ -589,7 +620,7 @@ describe("Gateway refs", () => {
       expect(answer).toContain('heading "Thank you"');
       expect(computer.actions.at(-1)).toEqual({
         action: "press",
-        target: { ref: "e2", role: "textbox", name: "Name", url: "https://example.com/form" },
+        target: { ref: "e2", role: "textbox", name: "Name", url: "https://example.com" },
         key: "Enter",
       });
       expect((yield* auditRows).find((row) => row["action"] === "press")).toMatchObject({
@@ -661,7 +692,7 @@ describe("Gateway refs", () => {
       ]);
       expect(computer.actions.at(-1)).toEqual({
         action: "click",
-        target: { ref: "e4", role: "heading", name: "Thank you", url: "https://example.com/form" },
+        target: { ref: "e4", role: "heading", name: "Thank you", url: "https://example.com" },
       });
       expect((yield* auditRows).find((row) => row["decision"] === "deny")).toMatchObject({
         action: "click",
@@ -1062,7 +1093,7 @@ describe("Gateway run", () => {
 
       expect(computer.actions.at(-1)).toEqual({
         action: "click",
-        target: { ref: "e1", role: "heading", name: "Example Domain", url: "https://example.com/" },
+        target: { ref: "e1", role: "heading", name: "Example Domain", url: "https://example.com" },
       });
     }).pipe(Effect.provide(database)),
   );
@@ -2297,39 +2328,41 @@ allow:
     }).pipe(Effect.provide(database)),
   );
 
-  it.effect("records the host of a ref's page in its audit row, never its address", () =>
-    Effect.gen(function* () {
-      const computer = fakeComputers({
-        browse: (action) =>
-          Effect.succeed({
-            action: action.action,
-            url: "https://shop.example/callback?code=abc#access_token=hunter2",
-            title: "Signed in",
-            snapshot: form,
-            truncated: false,
-          }),
-      });
+  it.effect(
+    "records the host of a ref's page in its audit row, and sends the computer only its origin",
+    () =>
+      Effect.gen(function* () {
+        const computer = fakeComputers({
+          browse: (action) =>
+            Effect.succeed({
+              action: action.action,
+              url: "https://shop.example/callback?code=abc#access_token=hunter2",
+              title: "Signed in",
+              snapshot: form,
+              truncated: false,
+            }),
+        });
 
-      yield* Gateway.use((gateway) =>
-        gateway
-          .act(bot, { action: "snapshot" })
-          .pipe(Effect.andThen(gateway.act(bot, { action: "click", ref: "e3" }))),
-      ).pipe(Effect.provide(startGateway(computer.layer)));
+        yield* Gateway.use((gateway) =>
+          gateway
+            .act(bot, { action: "snapshot" })
+            .pipe(Effect.andThen(gateway.act(bot, { action: "click", ref: "e3" }))),
+        ).pipe(Effect.provide(startGateway(computer.layer)));
 
-      const rows = yield* decodedTrail;
-      expect(rows.find(([row]) => row === "click · allow")?.[1]).toEqual({
-        bot: "assistant",
-        ref: "e3",
-        role: "button",
-        name: "Send",
-        host: "shop.example",
-        rule: "everything",
-      });
-      expect(JSON.stringify(rows)).not.toContain("hunter2");
-      expect(computer.actions.at(-1)).toMatchObject({
-        target: { url: "https://shop.example/callback?code=abc#access_token=hunter2" },
-      });
-    }).pipe(Effect.provide(database)),
+        const rows = yield* decodedTrail;
+        expect(rows.find(([row]) => row === "click · allow")?.[1]).toEqual({
+          bot: "assistant",
+          ref: "e3",
+          role: "button",
+          name: "Send",
+          host: "shop.example",
+          rule: "everything",
+        });
+        expect(JSON.stringify(rows)).not.toContain("hunter2");
+        expect(computer.actions.at(-1)).toMatchObject({
+          target: { url: "https://shop.example" },
+        });
+      }).pipe(Effect.provide(database)),
   );
 
   it.effect("records the address navigate opens without its query values or fragment", () =>

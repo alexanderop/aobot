@@ -1,4 +1,4 @@
-import { BotId, type PageRead } from "@aobot/domain";
+import { BotId, hideValues, originOf, type PageRead } from "@aobot/domain";
 import { Array, Effect, Option, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 
@@ -7,9 +7,12 @@ const decodeSnapshots = Schema.decodeUnknownEffect(
 );
 
 /**
-The latest snapshot of the page on the one computer every Bot shares, the address it was read at, and the
+The latest snapshot of the page on the one computer every Bot shares, the origin it was read at, and the
 Bot whose action read it, so a ref resolves only for the Bot that saw the page it names. In the database
-rather than in memory, so whichever replica handles the next call resolves it the same way.
+rather than in memory, so whichever replica handles the next call resolves it the same way. Nothing a Bot
+or a person typed stays there at rest: no field's value, a search box's text included, since a ref
+resolves by its role and name, and of the address only what the computer's origin check and the rules'
+host need, since a form sent by GET writes its fields into the query.
 */
 export const snapshotStore = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -29,7 +32,7 @@ export const snapshotStore = Effect.gen(function* () {
   const save = Effect.fn("SnapshotStore.save")(function* (read: PageRead, readBy: BotId) {
     yield* sql`
       INSERT INTO computer_snapshot (id, snapshot, url, read_by)
-      VALUES (1, ${read.snapshot}, ${read.url}, ${readBy})
+      VALUES (1, ${hideValues(read.snapshot, () => true)}, ${originOf(read.url)}, ${readBy})
       ON CONFLICT (id) DO UPDATE
       SET snapshot = excluded.snapshot, url = excluded.url, read_by = excluded.read_by,
         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')

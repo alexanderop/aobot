@@ -1,5 +1,5 @@
 import {
-  type ComputerAction,
+  ComputerAction,
   ComputerActError,
   CommandRan,
   type FileAction,
@@ -7,7 +7,7 @@ import {
   FileSaved,
   type PageAction,
   PageRead,
-  type PersonInput,
+  PersonInput,
   type RunCommand,
   Screen,
   ScreenFrame,
@@ -128,12 +128,6 @@ function lost(error: { readonly message: string }) {
   return new ComputerLost({ message: error.message });
 }
 
-/** What each of the computer's JSON routes takes. */
-interface JsonRoutes {
-  readonly "/act": ComputerAction;
-  readonly "/input": PersonInput;
-}
-
 /** The status each route answers when the computer carried the request out. */
 const done = { "/act": 200, "/input": 204, "/files": 200 } as const;
 
@@ -219,23 +213,33 @@ export function computerAt(address: ComputerAddress, client: HttpClient.HttpClie
   // A download's answer is aborted with the scope, so one nobody reads to its end does not hold the computer.
   const sendScoped = sendOver(HttpClient.withScope(client));
 
-  /** Posts `body` as JSON to `path`. */
-  const post = <Path extends keyof JsonRoutes, A>(
-    path: Path,
-    body: JsonRoutes[Path],
+  /**
+  Posts `body` to `path`, encoded by `schema`, so a person's secret, `Redacted` on the server, goes out as
+  the string the computer types. Our own bodies always encode, so one that does not is a defect.
+  */
+  const post = <S extends Schema.Constraint & { readonly EncodingServices: never }, A>(
+    path: "/act" | "/input",
+    schema: S,
+    body: S["Type"],
     read: ReadAnswer<A>,
   ) =>
-    send(path, HttpClientRequest.post(at(path)).pipe(HttpClientRequest.bodyJsonUnsafe(body)), read);
+    HttpClientRequest.schemaBodyJson(schema)(HttpClientRequest.post(at(path)), body).pipe(
+      Effect.orDie,
+      Effect.flatMap((request) => send(path, request, read)),
+    );
+
+  const act = <A>(action: ComputerAction, read: ReadAnswer<A>) =>
+    post("/act", ComputerAction, action, read);
 
   return {
     browse: Effect.fn("Computer.act")(function* (action: PageAction) {
-      return yield* post("/act", action, decodePage);
+      return yield* act(action, decodePage);
     }),
     run: Effect.fn("Computer.act")(function* (command: RunCommand) {
-      return yield* post("/act", command, decodeCommand);
+      return yield* act(command, decodeCommand);
     }),
     files: Effect.fn("Computer.act")(function* (action: FileAction) {
-      return yield* post("/act", action, (answer) =>
+      return yield* act(action, (answer) =>
         decodeFile(answer).pipe(
           Effect.filterOrFail(
             (file) => file.action === action.action,
@@ -278,7 +282,7 @@ export function computerAt(address: ComputerAddress, client: HttpClient.HttpClie
       );
     }),
     input: Effect.fn("Computer.input")(function* (input: PersonInput) {
-      return yield* post("/input", input, () => Effect.void);
+      return yield* post("/input", PersonInput, input, () => Effect.void);
     }),
   };
 }

@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import {
   CommandEnd,
   CommandRan,
-  type ComputerAction,
+  ComputerAction,
   commandOutputLimit,
   FileAnswer,
   FileSaved,
@@ -19,7 +19,7 @@ import {
   snapshotRefs,
 } from "@aobot/domain";
 import { NodeWS } from "@effect/platform-node";
-import { Effect, Option, Schema, Stream } from "effect";
+import { Effect, Option, Redacted, Schema, Stream } from "effect";
 import { Socket } from "effect/socket";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
@@ -53,6 +53,15 @@ const formPage = `<!doctype html><title>Form Fixture</title><form action="/submi
 <label>Name <input name="name"></label>
 <button type="button" onclick="this.textContent = 'Pressed'">Press me</button></form>`;
 
+// A sign-in form: what a password or one-time code field holds is never read back. Enter submits it to
+// `/signed-in` with every field in the query, and that page echoes the note in its title and text.
+const signInPage = `<!doctype html><title>Sign In Fixture</title><form action="/signed-in">
+<label>User <input name="user"></label>
+<label>Password <input type="password" name="password"></label>
+<label>Code <input name="code" autocomplete="one-time-code"></label>
+<label>Note <input name="note"></label><button>Sign in</button></form>
+<div contenteditable role="textbox" aria-label="Bio"></div>`;
+
 // One link over the whole viewport, so a click anywhere on the screen follows it.
 const linkPage = `<!doctype html><title>Link Fixture</title><style>body { margin: 0 }</style>
 <a href="/followed" style="display: block; width: 100vw; height: 100vh">Follow me</a>`;
@@ -66,7 +75,10 @@ const busyPage = `<!doctype html><title>Busy Fixture</title><style>body { margin
 
 const fixtureServer = `require("node:http").createServer((req, res) => {
   res.setHeader("content-type", "text/html");
+  const note = (new URL(req.url, "http://fixture").searchParams.get("note") ?? "").replace(/[<&]/g, "");
   const page = req.url.startsWith("/form") ? ${JSON.stringify(formPage)}
+    : req.url.startsWith("/signed-in") ? "<!doctype html><title>Signed in: " + note + "</title><p>Your note: " + note + "</p>"
+    : req.url.startsWith("/sign-in") ? ${JSON.stringify(signInPage)}
     : req.url.startsWith("/link") ? ${JSON.stringify(linkPage)}
     : req.url.startsWith("/slow") ? ${JSON.stringify(slowPage)}
     : req.url.startsWith("/busy") ? ${JSON.stringify(busyPage)}
@@ -141,7 +153,7 @@ function act(computer: Computer, body: ComputerAction, { authorization, signal }
   return fetch(`${computer.url}/act`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization },
-    body: JSON.stringify(body),
+    body: JSON.stringify(Schema.encodeSync(ComputerAction)(body)),
     signal,
   });
 }
@@ -444,6 +456,92 @@ describe("the docker computer", () => {
         url: `http://${suite}-fixture:${fixturePort}/submitted?name=Ada`,
         title: "Contract Fixture",
       });
+    });
+
+    it("never reads back what a password or a one-time code field holds", async () => {
+      const signIn = `http://${suite}-fixture:${fixturePort}/sign-in`;
+      const opened = await result(await act(local, { action: "navigate", url: signIn }));
+
+      await result(
+        await act(local, {
+          action: "type",
+          target: target(opened, "textbox", "User"),
+          text: "ada",
+        }),
+      );
+      await result(
+        await act(local, {
+          action: "type",
+          target: target(opened, "textbox", "Password"),
+          text: "hunter2",
+        }),
+      );
+
+      const typed = await result(
+        await act(local, {
+          action: "type",
+          target: target(opened, "textbox", "Code"),
+          text: "123456",
+        }),
+      );
+
+      expect(typed.snapshot).not.toContain("hunter2");
+      expect(typed.snapshot).not.toContain("123456");
+      expect(typed.snapshot).toMatch(
+        /textbox "Password" (\[active\] )?\[ref=[^\]]+\]: "\[hidden\]"$/mu,
+      );
+      expect(typed.snapshot).toMatch(/textbox "User" \[ref=[^\]]+\]: ada$/mu);
+    });
+
+    it("refuses a person's secret for an element that is no text input", async () => {
+      const signIn = `http://${suite}-fixture:${fixturePort}/sign-in`;
+      const opened = await result(await act(local, { action: "navigate", url: signIn }));
+
+      const typed = await act(local, {
+        action: "type_secret",
+        target: target(opened, "textbox", "Bio"),
+        secret: Redacted.make("s3cret-value"),
+      });
+
+      expect(typed.status).toBe(403);
+      expect(await typed.json()).toMatchObject({ reason: "refused" });
+
+      const again = await result(await act(local, { action: "snapshot" }));
+      expect(again.snapshot).not.toContain("s3cret-value");
+    });
+
+    it("types a person's secret into a field, and no read of the page shows it", async () => {
+      const secret = "s3cret-value";
+      const signIn = `http://${suite}-fixture:${fixturePort}/sign-in`;
+      const opened = await result(await act(local, { action: "navigate", url: signIn }));
+      const note = target(opened, "textbox", "Note");
+
+      const typed = await result(
+        await act(local, { action: "type_secret", target: note, secret: Redacted.make(secret) }),
+      );
+
+      expect(typed.action).toBe("type_secret");
+      expect(typed.snapshot).toMatch(
+        /textbox "Note" (\[active\] )?\[ref=[^\]]+\]: "\[hidden\]"$/mu,
+      );
+
+      const again = await result(await act(local, { action: "snapshot" }));
+      expect(again.snapshot).not.toContain(secret);
+
+      const submitted = await result(
+        await act(local, {
+          action: "press",
+          target: target(again, "textbox", "Note"),
+          key: "Enter",
+        }),
+      );
+
+      expect(submitted).toMatchObject({
+        url: `http://${suite}-fixture:${fixturePort}/signed-in?user=&password=&code=&note=[hidden]`,
+        title: "Signed in: [hidden]",
+      });
+      expect(submitted.snapshot).toContain("Your note: [hidden]");
+      expect(JSON.stringify(submitted)).not.toContain(secret);
     });
 
     it("presses Space on a button by its ref, as a click would", async () => {

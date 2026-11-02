@@ -9,6 +9,7 @@ import {
   type RefTarget,
   RunCommand,
   snapshotRefs,
+  type ToolName,
   workspaceRoot,
 } from "@aobot/domain";
 import { Context, Duration, Effect, Layer, Match, Option, Result, Schema } from "effect";
@@ -42,6 +43,7 @@ import {
 } from "./present.ts";
 import { snapshotStore } from "./snapshot-store.ts";
 import { spanEvent } from "./span-event.ts";
+import { ToolAction } from "./tool-action.ts";
 import { FileTransfers, fileTransfers } from "./transfers.ts";
 
 /** Something an agent asked for that the gateway turned down. `detail` is already redacted. */
@@ -99,6 +101,7 @@ export class Gateway extends Context.Service<
   }
 >()("aobot/gateway/Gateway") {}
 
+/** What the computer is sent, by its action. */
 type ActionName = ComputerAction["action"];
 
 /** The Bot a call claims was not granted the tool, or is no Bot the server knows, so it is denied. */
@@ -148,7 +151,7 @@ class UnknownPage extends Schema.TaggedError<UnknownPage>()("UnknownPage", {}) {
 
 /** The rules refused the action, as `verdict` says. */
 class RuleRefused extends Schema.TaggedError<RuleRefused>()("RuleRefused", {
-  action: ComputerAction,
+  action: ToolAction,
   verdict: Refused,
 }) {}
 
@@ -193,29 +196,29 @@ function outsideWorkspaceAnswer({ action, path }: FileAction): string {
 }
 
 /** What the model reads when its ref does not resolve. */
-function unknownRefAnswer(action: ActionName, { ref, reason }: UnknownRef): string {
+function unknownRefAnswer(action: ToolName, { ref, reason }: UnknownRef): string {
   return reason === readByAnother
     ? `${action} did not run: the page changed since you last read it. Take a snapshot and use a ref from it.`
     : `${action} did not run: ${ref} is not a ref in the page's latest snapshot. Take a snapshot and use a ref from it.`;
 }
 
 /** What the model reads when no rule can tell which page its `snapshot` would read. */
-function unknownPageAnswer(action: ActionName): string {
+function unknownPageAnswer(action: ToolName): string {
   return `${action} did not run: the server could not tell which page it would read, so no rule could judge it. Try again.`;
 }
 
 /** What the model reads when the rules refuse what it asked for. */
-function ruleRefusedAnswer(action: ActionName, why: string): string {
+function ruleRefusedAnswer(action: ToolName, why: string): string {
   return `${action} did not run: ${why}. Tell your person what was refused; do not try another way around it.`;
 }
 
 /** What the model reads when it asks for a tool it was not granted. */
-function notGrantedAnswer(action: ActionName, claim: Claim): string {
+function notGrantedAnswer(action: ToolName, claim: Claim): string {
   return `${action} did not run: it is not granted to ${claimedName(claim)}. Use only the tools your instructions name.`;
 }
 
 /** What the model reads, whatever it asked for, while a person holds its computer. */
-function personHasControlAnswer(action: ActionName): string {
+function personHasControlAnswer(action: ToolName): string {
   return `${action} did not run: a person has control of your computer. Wait until they hand it back, then take a snapshot.`;
 }
 
@@ -238,6 +241,7 @@ const forwarding = {
   click: { timeout: Duration.seconds(60), source: "web page", whenUnknown: onAPage },
   type: { timeout: Duration.seconds(30), source: "web page", whenUnknown: onAPage },
   press: { timeout: Duration.seconds(60), source: "web page", whenUnknown: onAPage },
+  type_secret: { timeout: Duration.seconds(30), source: "web page", whenUnknown: onAPage },
   run: {
     timeout: pastTheComputersLimit,
     source: "command output",
@@ -262,7 +266,7 @@ opens keeps its path, and the command what it does, since each is what the row e
 in either, such as a query value or `API_TOKEN=…`, is redacted. A file is its path, name and extension,
 and for a write its size: never what it holds.
 */
-const auditDetail = ComputerAction.match({
+const auditDetail = ToolAction.match({
   navigate: ({ url }) => ({ url: redactUrl(url) }),
   snapshot: () => ({}),
   click: ({ target }) => refDetail(target),
@@ -419,6 +423,7 @@ export const gatewayLayer = Layer.effectContext(
         click: browse,
         type: browse,
         press: browse,
+        type_secret: browse,
         run: (command) =>
           computer.run(command).pipe(
             Effect.tap(({ end }) => Effect.annotateCurrentSpan(endAttributes(end))),
@@ -441,12 +446,12 @@ export const gatewayLayer = Layer.effectContext(
       bot: BotId,
       request: BotRequest,
     ): Effect.Effect<
-      { readonly action: ComputerAction; readonly host: string },
+      { readonly action: ToolAction; readonly host: string },
       UnknownRef | UnknownPage | OutsideWorkspace
     > => {
-      const offThePage = (action: ComputerAction) => Effect.succeed({ action, host: "" });
+      const offThePage = (action: ToolAction) => Effect.succeed({ action, host: "" });
 
-      const onElement = (ref: string, act: (target: RefTarget) => PageAction) =>
+      const onElement = (ref: string, act: (target: RefTarget) => ToolAction) =>
         Effect.map(targetOf(bot, ref), (target) => ({
           action: act(target),
           host: hostOf(target.url),
@@ -470,7 +475,7 @@ export const gatewayLayer = Layer.effectContext(
     and list only, never its error, which can echo what the action holds. A refusal's deny row keeps the
     error of every rule that failed, capped; an allowed action's allow rules that failed are only logged.
     */
-    const allowedBy = (action: ComputerAction, verdict: Verdict) => {
+    const allowedBy = (action: ToolAction, verdict: Verdict) => {
       const failed = (list: "deny" | "allow") => (rule: string) =>
         Effect.logWarning("A rule failed while it was checked").pipe(
           Effect.annotateLogs({ rule, list, action: action.action }),
@@ -491,7 +496,7 @@ export const gatewayLayer = Layer.effectContext(
 
     /** Records a `deny` row for `action` and tells the model `answer`. */
     const deny = Effect.fnUntraced(function* (
-      action: ActionName,
+      action: ToolName,
       detail: Schema.JsonObject,
       answer: string,
     ) {
@@ -546,7 +551,7 @@ export const gatewayLayer = Layer.effectContext(
     });
 
     /** The Bot `claim` names, when the server knows it and it was granted `tool`. */
-    const grant = (claim: Claim, tool: ActionName): Effect.Effect<BotId, NotGranted> => {
+    const grant = (claim: Claim, tool: ToolName): Effect.Effect<BotId, NotGranted> => {
       const known = Claim.guards.Named(claim) ? bots.get(claim.bot) : Option.none();
 
       return Option.match(

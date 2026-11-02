@@ -2,6 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  hideValues,
   PageAction,
   type PageRead,
   type PressKey,
@@ -9,15 +10,28 @@ import {
   type RefTarget,
   sameOrigin,
   type ScreenPoint,
+  type SecretValue,
   snapshotLimit,
   snapshotRefs,
 } from "@aobot/domain";
 import { chromium, type BrowserContext, type Locator, type Page } from "playwright";
-import { Context, Effect, Layer, Option, Semaphore, Stream, SubscriptionRef } from "effect";
+import {
+  Context,
+  Effect,
+  Layer,
+  Option,
+  Redacted,
+  Ref,
+  Semaphore,
+  Stream,
+  SubscriptionRef,
+} from "effect";
 import { Destinations, refusedHeader, startEgressProxy } from "../egress/public.ts";
 import { ActionFailed, ActionRefused } from "./errors.ts";
 import { checkNavigation } from "./navigation.ts";
+import { markSecret, sensitiveRefs, takesSecret } from "./secret-fields.ts";
 import { capSnapshot } from "./snapshot.ts";
+import { hideTyped, hideTypedInAddress } from "./typed-secrets.ts";
 import { virtualDisplay } from "./virtual-display.ts";
 
 /** What watching the Bot's page may do with it. Nothing here acts on the page: that goes through `act`. */
@@ -64,6 +78,11 @@ function otherSite(target: RefTarget): string {
   return `The page is on another site than your latest snapshot read, so ${target.ref} is not the ${target.role} you saw. Take a snapshot again and use a ref from it.`;
 }
 
+/** What the Bot reads when the element its secret was for takes no typed text the computer can hide. */
+function noSecretField(target: RefTarget): string {
+  return `${target.ref} is no text field, so the secret was not typed. Ask for a secret only for a text input.`;
+}
+
 /** Where `at` lands in a viewport of `width` by `height` pixels, kept inside it at the far edges. */
 function pixelAt(at: ScreenPoint, width: number, height: number) {
   return { x: Math.min(at.x * width, width - 1), y: Math.min(at.y * height, height - 1) };
@@ -97,15 +116,30 @@ function bounded<A>(what: string, run: () => Promise<A>): Effect.Effect<A, Actio
   );
 }
 
-/** The page as the Bot reads it after any action: its address, title and capped snapshot. */
-const readPage = Effect.fn("Browser.readPage")(function* (current: Page) {
+/**
+The page as the Bot reads it after any action: its address, title and capped snapshot, with the value of
+every password, one-time code and secret field hidden, and every place the page shows one of `typed`,
+the secrets typed into it, before anything is cut.
+*/
+const readPage = Effect.fn("Browser.readPage")(function* (
+  current: Page,
+  typed: ReadonlyArray<SecretValue>,
+) {
   const tree = yield* playwright("Reading the page", () =>
     current.ariaSnapshot({ mode: "ai", timeout: snapshotTimeoutMs }),
   );
 
+  const sensitive = yield* sensitiveRefs(current, tree);
   const title = yield* bounded("Reading the title", () => current.title());
+  const secrets = typed.map(Redacted.value);
 
-  return { url: current.url(), title, ...capSnapshot(tree, snapshotLimit) };
+  const shown = hideValues(hideTyped(tree, secrets), (ref) => sensitive.has(ref));
+
+  return {
+    url: hideTypedInAddress(current.url(), secrets),
+    title: hideTyped(title, secrets),
+    ...capSnapshot(shown, snapshotLimit),
+  };
 });
 
 /**
@@ -231,6 +265,9 @@ export const browserLayer = (home: string) =>
 
       const page = yield* SubscriptionRef.make(first);
       const oneAtATime = yield* Semaphore.make(1);
+      // Every secret typed with type_secret while the computer runs, in memory only, so a page that
+      // shows one again, in its address or its text, is read without it.
+      const typedSecrets = yield* Ref.make<ReadonlyArray<SecretValue>>([]);
 
       const navigate = Effect.fn("Browser.navigate")(function* (url: string) {
         const target = yield* checkNavigation(url).pipe(
@@ -306,6 +343,31 @@ export const browserLayer = (home: string) =>
       });
 
       /**
+      Types a person's secret into the field `target` names, marked first, so that no read of the page,
+      the one this answers with included, shows it. Like `type`, it presses no key. Refused for any element
+      but a text input or a textarea, since no read hides what another one holds.
+      */
+      const typeSecret = Effect.fn("Browser.typeSecret")(function* (
+        target: RefTarget,
+        secret: SecretValue,
+      ) {
+        const current = yield* currentPage(context, page);
+        const found = yield* element(current, target);
+
+        if (!(yield* playwright("Reading the field", () => takesSecret(found)))) {
+          return yield* new ActionRefused({ message: noSecretField(target) });
+        }
+
+        yield* playwright("Hiding the field", () => markSecret(found));
+        yield* Ref.update(typedSecrets, (typed) => [...typed, secret]);
+        yield* playwright("Typing the secret", () =>
+          found.fill(Redacted.value(secret), { timeout: elementTimeoutMs }),
+        );
+
+        return current;
+      });
+
+      /**
       Runs `effect` once nothing else runs on the page, and keeps the page until it settles. A caller that
       hangs up interrupts the request, never the Playwright call already under way, so the next one would
       otherwise start beside it: a person's click while the Bot's navigate still lands. Every Playwright
@@ -324,8 +386,11 @@ export const browserLayer = (home: string) =>
             click: ({ target }) => click(target),
             type: ({ target, text }) => type(target, text),
             press: ({ target, key }) => press(target, key),
+            type_secret: ({ target, secret }) => typeSecret(target, secret),
           }).pipe(
-            Effect.flatMap(readPage),
+            Effect.flatMap((current) =>
+              Effect.flatMap(Ref.get(typedSecrets), (typed) => readPage(current, typed)),
+            ),
             Effect.map((read): PageRead => ({ action: action.action, ...read })),
           ),
         );
