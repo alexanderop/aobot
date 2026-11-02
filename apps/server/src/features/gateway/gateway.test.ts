@@ -555,7 +555,7 @@ describe("Gateway refs", () => {
               ref: "e2",
               role: "textbox",
               name: "Name",
-              url: "https://example.com/form",
+              host: "example.com",
               text: "[22 chars]",
               rule: "everything",
             }),
@@ -567,7 +567,7 @@ describe("Gateway refs", () => {
               ref: "e3",
               role: "button",
               name: "Send",
-              url: "https://example.com/form",
+              host: "example.com",
               rule: "everything",
             }),
           ],
@@ -599,7 +599,7 @@ describe("Gateway refs", () => {
           ref: "e2",
           role: "textbox",
           name: "Name",
-          url: "https://example.com/form",
+          host: "example.com",
           key: "Enter",
           rule: "everything",
         }),
@@ -2239,7 +2239,7 @@ allow:
               ref: "e3",
               role: "button",
               name: "Send",
-              url: "https://example.com/form",
+              host: "example.com",
               rule: "no-send-on-example",
               reason: "denied by rule",
             },
@@ -2277,6 +2277,41 @@ allow:
 
       expect(refused.message).toContain("the rule not-on-the-shop refuses it");
       expect(computer.actions.map((action) => action.action)).toEqual(["snapshot"]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("records the host of a ref's page in its audit row, never its address", () =>
+    Effect.gen(function* () {
+      const computer = fakeComputers({
+        browse: (action) =>
+          Effect.succeed({
+            action: action.action,
+            url: "https://shop.example/callback?code=abc#access_token=hunter2",
+            title: "Signed in",
+            snapshot: form,
+            truncated: false,
+          }),
+      });
+
+      yield* Gateway.use((gateway) =>
+        gateway
+          .act(bot, { action: "snapshot" })
+          .pipe(Effect.andThen(gateway.act(bot, { action: "click", ref: "e3" }))),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      const rows = yield* decodedTrail;
+      expect(rows.find(([row]) => row === "click · allow")?.[1]).toEqual({
+        bot: "assistant",
+        ref: "e3",
+        role: "button",
+        name: "Send",
+        host: "shop.example",
+        rule: "everything",
+      });
+      expect(JSON.stringify(rows)).not.toContain("hunter2");
+      expect(computer.actions.at(-1)).toMatchObject({
+        target: { url: "https://shop.example/callback?code=abc#access_token=hunter2" },
+      });
     }).pipe(Effect.provide(database)),
   );
 

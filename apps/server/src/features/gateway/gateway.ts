@@ -251,16 +251,22 @@ const forwarding = {
 const auditCommandLimit = 2_000;
 
 /**
-The audit row's `detail`. Text a Bot typed into a page goes through `redact()`; a URL is not typed text,
-and the command is what the audit row exists to show. A file is its path, name and extension, and for a
-write its size: never what it holds.
+The element a ref named, and the host of the page it was on: what a rule judged. Never the page's whole
+address, whose query or fragment can carry a token, such as an OAuth `#access_token=…`.
+*/
+const refDetail = ({ ref, role, name, url }: RefTarget) => ({ ref, role, name, host: hostOf(url) });
+
+/**
+The audit row's `detail`. Text a Bot typed into a page goes through `redact()`; the address `navigate`
+opens is not typed text, and the command is what the audit row exists to show. A file is its path, name
+and extension, and for a write its size: never what it holds.
 */
 const auditDetail = ComputerAction.match({
   navigate: ({ url }) => ({ url }),
   snapshot: () => ({}),
-  click: ({ target }) => ({ ...target }),
-  type: ({ target, text }) => ({ ...target, text: redact(text) }),
-  press: ({ target, key }) => ({ ...target, key }),
+  click: ({ target }) => refDetail(target),
+  type: ({ target, text }) => ({ ...refDetail(target), text: redact(text) }),
+  press: ({ target, key }) => ({ ...refDetail(target), key }),
   run: ({ command }) => ({ command: capText(command, auditCommandLimit) }),
   read_file: ({ path }) => ({ ...fileTarget(path) }),
   write_file: ({ path, contents }) => ({
