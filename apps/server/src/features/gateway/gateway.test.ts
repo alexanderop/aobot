@@ -50,6 +50,8 @@ import {
   ComputerUnavailable,
 } from "../computers/public.ts";
 import { fakeComputer } from "../computers/testing/fake-computer.ts";
+import type { Policy } from "../policy/public.ts";
+import { allowEverything, policyFrom } from "../policy/testing/test-policy.ts";
 import { ComputerControl } from "./control.ts";
 import { Claim, Gateway, gatewayLayer } from "./gateway.ts";
 import { FileTransfers } from "./transfers.ts";
@@ -117,12 +119,16 @@ const database = Layer.effectDiscard(Effect.andThen(migrateAudit, migrateGateway
   Layer.fresh,
 );
 
-/** A gateway on the database in the context, as one server start would build it. */
-function startGateway(computers: Layer.Layer<Computers>) {
+/** A gateway on the database in the context, as one server start would build it, judging by `policy`. */
+function startGateway(
+  computers: Layer.Layer<Computers>,
+  policy: Layer.Layer<Policy> = allowEverything,
+) {
   return gatewayLayer.pipe(
     Layer.provide(auditLogLayer),
     Layer.provide(computers),
     Layer.provide(testBots),
+    Layer.provide(policy),
   );
 }
 
@@ -204,7 +210,11 @@ describe("Gateway", () => {
           initiator_kind: "person",
           decision: "allow",
           action: "navigate",
-          detail: JSON.stringify({ bot: "assistant", url: "https://example.com" }),
+          detail: JSON.stringify({
+            bot: "assistant",
+            url: "https://example.com",
+            rule: "everything",
+          }),
           outcome_of: null,
         });
         expect(outcome).toMatchObject({
@@ -527,7 +537,7 @@ describe("Gateway refs", () => {
         const allowed = rows.filter((row) => row["decision"] === "allow");
 
         expect(allowed.map((row) => [row["action"], row["detail"]])).toEqual([
-          ["snapshot", JSON.stringify({ bot: "assistant" })],
+          ["snapshot", JSON.stringify({ bot: "assistant", rule: "everything" })],
           [
             "type",
             JSON.stringify({
@@ -536,9 +546,19 @@ describe("Gateway refs", () => {
               role: "textbox",
               name: "Name",
               text: "[22 chars]",
+              rule: "everything",
             }),
           ],
-          ["click", JSON.stringify({ bot: "assistant", ref: "e3", role: "button", name: "Send" })],
+          [
+            "click",
+            JSON.stringify({
+              bot: "assistant",
+              ref: "e3",
+              role: "button",
+              name: "Send",
+              rule: "everything",
+            }),
+          ],
         ]);
         expect(JSON.stringify(rows)).not.toContain("hunter2");
       }).pipe(Effect.provide(database)),
@@ -568,6 +588,7 @@ describe("Gateway refs", () => {
           role: "textbox",
           name: "Name",
           key: "Enter",
+          rule: "everything",
         }),
       });
     }).pipe(Effect.provide(database)),
@@ -654,7 +675,9 @@ describe("Gateway refs", () => {
           ('assistant', ${form}, '2026-10-01T09:00:00.000Z'),
           ('researcher', ${sent}, '2026-10-01T09:05:00.000Z')
       `;
-        yield* sql`DELETE FROM gateway_migrations WHERE name = 'share_computer_snapshot'`;
+        yield* sql`
+          DELETE FROM gateway_migrations WHERE name IN ('share_computer_snapshot', 'keep_snapshot_url')
+        `;
 
         yield* migrateGateway;
 
@@ -777,7 +800,11 @@ describe("Gateway run", () => {
         expect(
           (yield* auditRows).map((row) => [row["decision"], row["action"], row["detail"]]),
         ).toEqual([
-          ["allow", "run", JSON.stringify({ bot: "assistant", command: makeNotes.command })],
+          [
+            "allow",
+            "run",
+            JSON.stringify({ bot: "assistant", command: makeNotes.command, rule: "everything" }),
+          ],
           ["succeeded", "run", JSON.stringify({ bot: "assistant" })],
         ]);
 
@@ -1395,7 +1422,8 @@ describe("Gateway control", () => {
         CREATE TABLE bot_snapshots (bot_id text PRIMARY KEY, snapshot text NOT NULL, updated_at text NOT NULL)
       `;
       yield* sql`
-        DELETE FROM gateway_migrations WHERE name IN ('share_computer_control', 'share_computer_snapshot')
+        DELETE FROM gateway_migrations
+        WHERE name IN ('share_computer_control', 'share_computer_snapshot', 'keep_snapshot_url')
       `;
 
       yield* migrateGateway;
@@ -1726,6 +1754,7 @@ describe("Gateway files", () => {
             name: "expenses-total.csv",
             extension: "csv",
             bytes: totalledBytes,
+            rule: "everything",
           }),
         ],
         ["succeeded", "write_file", JSON.stringify({ bot: "assistant" })],
@@ -2085,6 +2114,243 @@ describe("a person's file transfers", () => {
 
       expect(error.message).toBe("No computer is running.");
       expect(yield* auditTrail).toEqual(["file.downloaded · allow", "file.downloaded · failed"]);
+    }).pipe(Effect.provide(database)),
+  );
+});
+
+const shippedRules = `deny:
+  - name: no-rm-rf
+    when: tool.name == "run" && command.contains("rm -rf")
+allow:
+  - name: granted-tools
+    when: "true"
+`;
+
+const removeX = { action: "run", command: "rm -rf /tmp/x" } as const;
+
+/** The detail of each audit row, decoded, as `action · decision` with it, oldest first. */
+const decodedTrail = Effect.map(auditRows, (rows) =>
+  rows.map((row) => [
+    `${String(row["action"])} · ${String(row["decision"])}`,
+    JSON.parse(String(row["detail"])),
+  ]),
+);
+
+describe("Gateway rules", () => {
+  it.effect("refuses a command a deny rule names, records the rule, and never runs it", () =>
+    Effect.gen(function* () {
+      const computer = shell({});
+      const tracing = recordedSpans();
+
+      const error = yield* Gateway.use((gateway) => Effect.flip(gateway.act(bot, removeX))).pipe(
+        Effect.provide(startGateway(computer.layer, policyFrom(shippedRules))),
+        Effect.provide(tracing.layer),
+      );
+
+      expect(error.message).toBe(
+        "run did not run: the rule no-rm-rf refuses it. Tell your person what was refused; do not try another way around it.",
+      );
+      expect(computer.actions).toEqual([]);
+      expect(yield* decodedTrail).toEqual([
+        [
+          "run · deny",
+          {
+            bot: "assistant",
+            command: "rm -rf /tmp/x",
+            rule: "no-rm-rf",
+            reason: "denied by rule",
+          },
+        ],
+      ]);
+
+      const span = tracing.spans.find((candidate) => candidate.name === "Gateway.act");
+      expect(span?.attributes.get("gateway.decision")).toBe("deny");
+      expect(span?.attributes.get("gateway.rule")).toBe("no-rm-rf");
+      expect(span?.attributes.get("gateway.outcome")).toBe("deny");
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("names the allow rule that allowed a call in its allow row and its span", () =>
+    Effect.gen(function* () {
+      const computer = shell({});
+      const tracing = recordedSpans();
+
+      yield* Gateway.use((gateway) => gateway.act(bot, makeNotes)).pipe(
+        Effect.provide(startGateway(computer.layer, policyFrom(shippedRules))),
+        Effect.provide(tracing.layer),
+      );
+
+      expect(computer.actions).toEqual([makeNotes]);
+      expect((yield* decodedTrail)[0]).toEqual([
+        "run · allow",
+        { bot: "assistant", command: makeNotes.command, rule: "granted-tools" },
+      ]);
+
+      const span = tracing.spans.find((candidate) => candidate.name === "Gateway.act");
+      expect(span?.attributes.get("gateway.decision")).toBe("allow");
+      expect(span?.attributes.get("gateway.rule")).toBe("granted-tools");
+      expect(span?.attributes.get("gateway.outcome")).toBe("succeeded");
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect(
+    "judges a click by the element the server's snapshot names and the host of the page it read",
+    () =>
+      Effect.gen(function* () {
+        const computer = pages(form);
+
+        const policy = policyFrom(`deny:
+  - name: no-send-on-example
+    when: tool.name == "click" && element.role == "button" && element.name == "Send" && page.host == "example.com"
+  - name: no-send-elsewhere
+    when: element.name == "Send" && page.host == "elsewhere.example"
+allow:
+  - name: granted-tools
+    when: "true"
+`);
+
+        const [send, name] = yield* Gateway.use((gateway) =>
+          Effect.gen(function* () {
+            yield* gateway.act(bot, { action: "snapshot" });
+
+            return [
+              yield* Effect.flip(gateway.act(bot, { action: "click", ref: "e3" })),
+              yield* gateway.act(bot, { action: "click", ref: "e2" }),
+            ] as const;
+          }),
+        ).pipe(Effect.provide(startGateway(computer.layer, policy)));
+
+        expect(send.message).toContain("the rule no-send-on-example refuses it");
+        expect(name).toContain('textbox "Name"');
+        expect(computer.actions.map((action) => action.action)).toEqual(["snapshot", "click"]);
+        expect((yield* decodedTrail).filter(([row]) => row === "click · deny")).toEqual([
+          [
+            "click · deny",
+            {
+              bot: "assistant",
+              ref: "e3",
+              role: "button",
+              name: "Send",
+              rule: "no-send-on-example",
+              reason: "denied by rule",
+            },
+          ],
+        ]);
+      }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("judges navigate by the host it opens, lower-cased and without its port", () =>
+    Effect.gen(function* () {
+      const computer = fakeComputers({ browse: exampleDomain });
+
+      const policy = policyFrom(`deny:
+  - name: not-the-shop
+    when: tool.name == "navigate" && page.host == "shop.example"
+allow:
+  - name: granted-tools
+    when: "true"
+`);
+
+      const [shop, unparsed] = yield* Gateway.use((gateway) =>
+        Effect.all([
+          Effect.flip(
+            gateway.act(bot, { action: "navigate", url: "https://Shop.Example:8443/cart" }),
+          ),
+          gateway.act(bot, { action: "navigate", url: "shop.example" }),
+        ]),
+      ).pipe(Effect.provide(startGateway(computer.layer, policy)));
+
+      expect(shop.message).toContain("the rule not-the-shop refuses it");
+      expect(unparsed).toContain("Example Domain");
+      expect(computer.actions).toEqual([{ action: "navigate", url: "shop.example" }]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("denies a ref that does not resolve for that, before any rule judges it", () =>
+    Effect.gen(function* () {
+      const computer = pages(form);
+
+      const policy = policyFrom(`deny:
+  - name: no-clicks
+    when: tool.name == "click"
+allow: []
+`);
+
+      const error = yield* Gateway.use((gateway) =>
+        Effect.flip(gateway.act(bot, { action: "click", ref: "e3" })),
+      ).pipe(Effect.provide(startGateway(computer.layer, policy)));
+
+      expect(error.message).toContain("e3 is not a ref in the page's latest snapshot");
+      expect(yield* decodedTrail).toEqual([
+        ["click · deny", { bot: "assistant", ref: "e3", reason: "there is no snapshot yet" }],
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect(
+    "refuses when a deny rule fails, keeping its error in the deny row only, never the span",
+    () =>
+      Effect.gen(function* () {
+        const computer = shell({});
+        const tracing = recordedSpans();
+
+        const policy = policyFrom(`deny:
+  - name: own-pattern
+    when: command.matches(command)
+allow:
+  - name: granted-tools
+    when: "true"
+`);
+
+        const error = yield* Gateway.use((gateway) =>
+          Effect.flip(gateway.act(bot, { action: "run", command: "echo s3cret([" })),
+        ).pipe(Effect.provide(startGateway(computer.layer, policy)), Effect.provide(tracing.layer));
+
+        expect(error.message).toBe(
+          "run did not run: the rule own-pattern could not be checked, so it refuses. Tell your person what was refused; do not try another way around it.",
+        );
+        expect(computer.actions).toEqual([]);
+        expect(yield* decodedTrail).toEqual([
+          [
+            "run · deny",
+            {
+              bot: "assistant",
+              command: "echo s3cret([",
+              rule: "own-pattern",
+              reason: "rule failed",
+              error: expect.stringContaining("Invalid regular expression"),
+            },
+          ],
+        ]);
+
+        const span = tracing.spans.find((candidate) => candidate.name === "Gateway.act");
+        expect(span?.attributes.get("gateway.rule")).toBe("own-pattern");
+        expect(JSON.stringify([...(span?.attributes ?? [])])).not.toContain("s3cret");
+      }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("refuses what no allow rule allows, naming no rule", () =>
+    Effect.gen(function* () {
+      const computer = shell({});
+      const tracing = recordedSpans();
+
+      const error = yield* Gateway.use((gateway) => Effect.flip(gateway.act(bot, makeNotes))).pipe(
+        Effect.provide(startGateway(computer.layer, policyFrom("deny: []\nallow: []\n"))),
+        Effect.provide(tracing.layer),
+      );
+
+      expect(error.message).toContain("run did not run: no rule allows it.");
+      expect(computer.actions).toEqual([]);
+      expect(yield* decodedTrail).toEqual([
+        [
+          "run · deny",
+          { bot: "assistant", command: makeNotes.command, rule: null, reason: "no rule allows it" },
+        ],
+      ]);
+
+      const span = tracing.spans.find((candidate) => candidate.name === "Gateway.act");
+      expect(span?.attributes.get("gateway.decision")).toBe("deny");
+      expect(span?.attributes.has("gateway.rule")).toBe(false);
     }).pipe(Effect.provide(database)),
   );
 });

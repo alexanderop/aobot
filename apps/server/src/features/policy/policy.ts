@@ -18,7 +18,7 @@ class RulesFileInvalid extends Schema.TaggedError<RulesFileInvalid>()("RulesFile
 }) {}
 
 /** {@link Policy} judging by `rules`. */
-function policyLayer(rules: Rules): Layer.Layer<Policy> {
+export function policyLayer(rules: Rules): Layer.Layer<Policy> {
   return Layer.succeed(Policy, Policy.of({ judge: (facts) => judge(rules, facts) }));
 }
 

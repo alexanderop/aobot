@@ -25,6 +25,7 @@ import {
 import { auditLogLayer, migrateAudit } from "../features/audit/public.ts";
 import { botHandlers, botsFileLayer, botToolkit } from "../features/bots/public.ts";
 import { chatLayer, migrateChat } from "../features/chat/public.ts";
+import { policyFileLayer } from "../features/policy/public.ts";
 import { computersLayer } from "../features/computers/public.ts";
 import {
   botToolHandlers,
@@ -64,6 +65,8 @@ const server = Layer.unwrap(
     // Read once, so the chat and the gateway know the same Bots with the same grants.
     const bots = botsFileLayer(config.botsFile).pipe(Layer.provide(NodeFileSystem.layer));
 
+    const policy = policyFileLayer(config.rulesFile).pipe(Layer.provide(NodeFileSystem.layer));
+
     // One Computers for the gateway and the screen: two would start two containers with two tokens.
     const computers = computersLayer(config.computers, { otlpEndpoint: config.otlpEndpoint }).pipe(
       Layer.provide([FetchHttpClient.layer, NodeWS.layerWebSocketConstructor]),
@@ -75,6 +78,7 @@ const server = Layer.unwrap(
       Layer.provide(auditLogLayer),
       Layer.provide(computers),
       Layer.provide(bots),
+      Layer.provide(policy),
       Layer.provide(database),
     );
 

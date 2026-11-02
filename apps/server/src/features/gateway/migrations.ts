@@ -66,6 +66,14 @@ const shareComputerSnapshot = Effect.gen(function* () {
   yield* sql`DROP TABLE bot_snapshots`;
 });
 
+const keepSnapshotUrl = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+
+  // The rules judge a browser action by the host of the page its ref came from. A snapshot stored
+  // before this has no address, so its host is "" until a Bot reads the page again.
+  yield* sql`ALTER TABLE computer_snapshot ADD COLUMN url text NOT NULL DEFAULT ''`;
+});
+
 /** Brings the gateway's tables up to date. Safe to run at every boot. */
 export const migrateGateway = SqliteMigrator.run({
   table: "gateway_migrations",
@@ -74,5 +82,6 @@ export const migrateGateway = SqliteMigrator.run({
     "0002_create_bot_control": createBotControl,
     "0003_share_computer_control": shareComputerControl,
     "0004_share_computer_snapshot": shareComputerSnapshot,
+    "0005_keep_snapshot_url": keepSnapshotUrl,
   }),
 });

@@ -9,6 +9,7 @@ import { layerApi } from "../features/agent/public.ts";
 import { auditLogLayer, migrateAudit } from "../features/audit/public.ts";
 import { botToolkit } from "../features/bots/public.ts";
 import { assistant, researcher, testBots } from "../features/bots/testing/test-bots.ts";
+import { allowEverything } from "../features/policy/testing/test-policy.ts";
 import { chatLayer, migrateChat } from "../features/chat/public.ts";
 import { Computers } from "../features/computers/public.ts";
 import { fakeComputer } from "../features/computers/testing/fake-computer.ts";
@@ -124,7 +125,9 @@ describe("a tool call in an api turn", () => {
       const recorder = recordingTracer();
       const model = navigatingModel();
 
-      const gateway = gatewayLayer.pipe(Layer.provide([auditLogLayer, computers, testBots]));
+      const gateway = gatewayLayer.pipe(
+        Layer.provide([auditLogLayer, computers, testBots, allowEverything]),
+      );
 
       const agent = layerApi(botToolkit, { maxSteps: 4, stallTimeout: Duration.seconds(60) }).pipe(
         Layer.provide(botToolHandlers),
@@ -175,7 +178,9 @@ describe("a tool call in an api turn", () => {
       const model = navigatingModel();
 
       // As main.ts builds it: one gateway reference, provided to the agent's tools and the page's controls.
-      const gateway = gatewayLayer.pipe(Layer.provide([auditLogLayer, computers, testBots]));
+      const gateway = gatewayLayer.pipe(
+        Layer.provide([auditLogLayer, computers, testBots, allowEverything]),
+      );
 
       const agent = layerApi(botToolkit, { maxSteps: 4, stallTimeout: Duration.seconds(60) }).pipe(
         Layer.provide(botToolHandlers),
@@ -234,7 +239,9 @@ describe("a tool call in an api turn", () => {
       ],
     ]);
 
-    const gateway = gatewayLayer.pipe(Layer.provide([auditLogLayer, computers, testBots]));
+    const gateway = gatewayLayer.pipe(
+      Layer.provide([auditLogLayer, computers, testBots, allowEverything]),
+    );
 
     const agent = layerApi(botToolkit, { maxSteps: 4, stallTimeout: Duration.seconds(60) }).pipe(
       Layer.provide(botToolHandlers),
@@ -263,6 +270,7 @@ describe("a tool call in an api turn", () => {
           role: "searchbox",
           name: "Search",
           text: "[21 chars]",
+          rule: "everything",
         }),
       });
 
@@ -303,7 +311,9 @@ describe("a tool call in an api turn", () => {
         }),
       );
 
-      const gateway = gatewayLayer.pipe(Layer.provide([auditLogLayer, untouched, testBots]));
+      const gateway = gatewayLayer.pipe(
+        Layer.provide([auditLogLayer, untouched, testBots, allowEverything]),
+      );
 
       const agent = layerApi(botToolkit, { maxSteps: 4, stallTimeout: Duration.seconds(60) }).pipe(
         Layer.provide(botToolHandlers),

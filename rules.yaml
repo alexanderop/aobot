@@ -1,0 +1,46 @@
+# The rules every Bot action is judged by, read once at start-up (RULES_FILE points elsewhere).
+#
+# The gateway first refuses a tool a Bot was not granted in bots.yaml. Every other action is judged
+# here: each deny rule in order, and the first that holds refuses it. Then each allow rule in order,
+# and the first that holds allows it. Anything no allow rule allows is refused, so an empty allow list
+# refuses everything.
+#
+# It fails closed. A deny rule that fails while it is checked, such as a regular expression that is not
+# one, refuses; an allow rule that fails allows nothing. A file that does not parse, a rule that names a
+# field there is not, or a rule that does not answer true or false stops the server at start-up.
+#
+# Each rule has a name (lowercase letters, digits and dashes, unique across both lists), which the audit
+# row and the Bot's answer name, and a `when` in CEL (https://cel.dev). It can read:
+#
+#   tool.name      navigate, snapshot, click, type, press, run, read_file, write_file or list_files
+#   bot.id         the Bot's id from bots.yaml
+#   actor.id       the person it acts for: single-user until sign-in arrives
+#   computer.kind  cloud
+#   page.host      the host navigate opens, or the host of the page the latest snapshot read, lower-cased
+#                  and without its port
+#   element.role   the element a ref names, as the server's own snapshot shows it, never as the Bot says
+#   element.name
+#   key            the key press presses: Enter, Tab, Escape, Backspace, Space or an arrow key
+#   command        the command run runs, as the Bot wrote it
+#   file.path      the file a file action names, inside /workspace; file.name and file.extension
+#   file.name      (lower-case, without its dot) are split out of it
+#   file.extension
+#
+# Every field is there on every action, "" where it has none, so `element.name == "Submit"` is simply
+# false for run. A form submits on a click and on Enter, so a rule that must stop one names both:
+#
+#   - name: no-submit
+#     when: tool.name == "click" && element.name == "Submit"
+#   - name: no-enter-on-the-shop
+#     when: tool.name == "press" && key == "Enter" && page.host == "shop.example"
+#
+# Matching a command's text is a filter, not a boundary: a command can be written many ways. The
+# computer the command runs on is the boundary.
+deny:
+  - name: no-rm-rf
+    when: tool.name == "run" && command.contains("rm -rf")
+
+# The grants in bots.yaml already decide which tools a Bot has; rules narrow them.
+allow:
+  - name: granted-tools
+    when: "true"

@@ -6,6 +6,7 @@ import {
   FileAction,
   type PageAction,
   PressKey,
+  type RefTarget,
   RunCommand,
   snapshotRefs,
   workspaceRoot,
@@ -13,6 +14,7 @@ import {
 import { Context, Duration, Effect, Layer, Match, Option, Result, Schema } from "effect";
 import { AuditLog, type Outcome } from "../audit/public.ts";
 import { Bots, isGranted } from "../bots/public.ts";
+import { Policy, Verdict } from "../policy/public.ts";
 import {
   type Computer,
   type ComputerActFailed,
@@ -27,8 +29,14 @@ import {
   toolResult,
 } from "../../shared/tool-result.ts";
 import { redact } from "../../shared/redact.ts";
+import { actionFacts, hostOf } from "./action-facts.ts";
 import { ComputerControl, controlDoors } from "./control.ts";
-import { type ComputerFailure, failureOutcome, personAudit } from "./person-audit.ts";
+import {
+  type ComputerFailure,
+  computerMessageLimit,
+  failureOutcome,
+  personAudit,
+} from "./person-audit.ts";
 import { fileTarget } from "./file-target.ts";
 import {
   endAttributes,
@@ -134,6 +142,51 @@ class UnknownRef extends Schema.TaggedError<UnknownRef>()("UnknownRef", {
   reason: RefMiss,
 }) {}
 
+/** The latest snapshot could not be read, so no rule can tell which page a snapshot reads, and it is denied. */
+class UnknownPage extends Schema.TaggedError<UnknownPage>()("UnknownPage", {}) {}
+
+/** A verdict that refuses: every one but `Allowed`. */
+const Refusing = Schema.Union([
+  Verdict.cases.Denied,
+  Verdict.cases.Broke,
+  Verdict.cases.NoneAllowed,
+]);
+
+/** The rules refused the action, as `verdict` says. */
+class RuleRefused extends Schema.TaggedError<RuleRefused>()("RuleRefused", {
+  action: ComputerAction,
+  verdict: Refusing,
+}) {}
+
+/**
+What a refusing verdict puts in the deny row and on the span, and why the model reads the action did not
+run. A failed rule's error stays in the row: it can echo what the action holds.
+*/
+const ruleRefusal = Match.typeTags<
+  typeof Refusing.Type,
+  {
+    readonly detail: Readonly<Record<string, Schema.Json>>;
+    readonly attributes: Readonly<Record<string, string>>;
+    readonly why: string;
+  }
+>()({
+  Denied: ({ rule }) => ({
+    detail: { rule, reason: "denied by rule" },
+    attributes: { "gateway.rule": rule },
+    why: `the rule ${rule} refuses it`,
+  }),
+  Broke: ({ rule, error }) => ({
+    detail: { rule, reason: "rule failed", error: capText(error, computerMessageLimit) },
+    attributes: { "gateway.rule": rule },
+    why: `the rule ${rule} could not be checked, so it refuses`,
+  }),
+  NoneAllowed: () => ({
+    detail: { rule: null, reason: "no rule allows it" },
+    attributes: {},
+    why: "no rule allows it",
+  }),
+});
+
 /** A file action whose path leaves the workspace as it is written, so the call is denied. */
 class OutsideWorkspace extends Schema.TaggedError<OutsideWorkspace>()("OutsideWorkspace", {
   action: FileAction,
@@ -149,6 +202,11 @@ function unknownRefAnswer(action: ActionName, { ref, reason }: UnknownRef): stri
   return reason === readByAnother
     ? `${action} did not run: the page changed since you last read it. Take a snapshot and use a ref from it.`
     : `${action} did not run: ${ref} is not a ref in the page's latest snapshot. Take a snapshot and use a ref from it.`;
+}
+
+/** What the model reads when the rules refuse what it asked for. */
+function ruleRefusedAnswer(action: ActionName, why: string): string {
+  return `${action} did not run: ${why}. Tell your person what was refused; do not try another way around it.`;
 }
 
 /** What the model reads when it asks for a tool it was not granted. */
@@ -269,6 +327,7 @@ export const gatewayLayer = Layer.effectContext(
   Effect.gen(function* () {
     const audit = yield* AuditLog;
     const bots = yield* Bots;
+    const policy = yield* Policy;
     const rows = yield* personAudit;
     const computers = yield* Computers;
     const snapshots = yield* snapshotStore;
@@ -314,8 +373,14 @@ export const gatewayLayer = Layer.effectContext(
         return yield* new UnknownRef({ ref, reason: "not in the latest snapshot" });
       }
 
-      return target;
+      return { target, host: hostOf(latest.value.url) };
     });
+
+    /** The host of the page the latest snapshot read, whichever Bot read it, or `""` before any. */
+    const latestHost = snapshots.latest.pipe(
+      Effect.map(Option.match({ onNone: () => "", onSome: ({ url }) => hostOf(url) })),
+      Effect.mapError(() => new UnknownPage()),
+    );
 
     const forward = (
       computer: Computer,
@@ -325,7 +390,7 @@ export const gatewayLayer = Layer.effectContext(
       const browse = (page: PageAction) =>
         computer.browse(page).pipe(
           Effect.tap((read) =>
-            snapshots.save(read.snapshot, bot).pipe(
+            snapshots.save(read, bot).pipe(
               // Its refs then resolve against an older page, which the computer refuses as stale.
               Effect.catchTag("SqlError", (error) =>
                 Effect.logWarning("The latest snapshot could not be stored").pipe(
@@ -366,24 +431,60 @@ export const gatewayLayer = Layer.effectContext(
         ? Effect.fail(new OutsideWorkspace({ action: file }))
         : Effect.succeed(file);
 
+    /** `request` as the computer is sent it, and the host of the page it acts on, `""` for none. */
     const resolve = (
       bot: BotId,
       request: BotRequest,
-    ): Effect.Effect<ComputerAction, UnknownRef | OutsideWorkspace> =>
-      BotRequest.match(request, {
-        navigate: (navigate) => Effect.succeed(navigate),
-        snapshot: (snapshot) => Effect.succeed(snapshot),
-        click: ({ ref }) =>
-          Effect.map(targetOf(bot, ref), (target) => ({ action: "click", target }) as const),
-        type: ({ ref, text }) =>
-          Effect.map(targetOf(bot, ref), (target) => ({ action: "type", target, text }) as const),
-        press: ({ ref, key }) =>
-          Effect.map(targetOf(bot, ref), (target) => ({ action: "press", target, key }) as const),
-        run: (run) => Effect.succeed(run),
-        read_file: inWorkspace,
-        write_file: inWorkspace,
-        list_files: inWorkspace,
+    ): Effect.Effect<
+      { readonly action: ComputerAction; readonly host: string },
+      UnknownRef | UnknownPage | OutsideWorkspace
+    > => {
+      const offThePage = (action: ComputerAction) => Effect.succeed({ action, host: "" });
+
+      const onElement = (ref: string, act: (target: RefTarget) => PageAction) =>
+        Effect.map(targetOf(bot, ref), ({ target, host }) => ({ action: act(target), host }));
+
+      return BotRequest.match(request, {
+        navigate: (navigate) => Effect.succeed({ action: navigate, host: hostOf(navigate.url) }),
+        snapshot: (snapshot) => Effect.map(latestHost, (host) => ({ action: snapshot, host })),
+        click: ({ ref }) => onElement(ref, (target) => ({ action: "click", target })),
+        type: ({ ref, text }) => onElement(ref, (target) => ({ action: "type", target, text })),
+        press: ({ ref, key }) => onElement(ref, (target) => ({ action: "press", target, key })),
+        run: offThePage,
+        read_file: (file) => Effect.flatMap(inWorkspace(file), offThePage),
+        write_file: (file) => Effect.flatMap(inWorkspace(file), offThePage),
+        list_files: (file) => Effect.flatMap(inWorkspace(file), offThePage),
       });
+    };
+
+    /**
+    The allow rule that allows `action`, or a {@link RuleRefused}. A rule that failed is logged by its name
+    and list only: its error can echo what the action holds, so only the deny row keeps it.
+    */
+    const allowedBy = (action: ComputerAction, verdict: Verdict) => {
+      const failed = (rule: string, list: "deny" | "allow") =>
+        Effect.logWarning("A rule failed, so it counts against the action").pipe(
+          Effect.annotateLogs({ rule, list, action: action.action }),
+        );
+
+      const refused = (refusing: typeof Refusing.Type) =>
+        Effect.fail(new RuleRefused({ action, verdict: refusing }));
+
+      return Verdict.match(verdict, {
+        Allowed: ({ rule, broken }) =>
+          Effect.as(
+            Effect.forEach(broken, (name) => failed(name, "allow")),
+            rule,
+          ),
+        Denied: refused,
+        Broke: (broke) => Effect.andThen(failed(broke.rule, "deny"), refused(broke)),
+        NoneAllowed: (none) =>
+          Effect.andThen(
+            Effect.forEach(none.broken, (name) => failed(name, "allow")),
+            refused(none),
+          ),
+      });
+    };
 
     /** Records a `deny` row for `action` and tells the model `answer`. */
     const deny = Effect.fnUntraced(function* (
@@ -391,21 +492,23 @@ export const gatewayLayer = Layer.effectContext(
       detail: Schema.JsonObject,
       answer: string,
     ) {
-      yield* Effect.annotateCurrentSpan({ "gateway.outcome": "deny" });
+      yield* Effect.annotateCurrentSpan({ "gateway.decision": "deny", "gateway.outcome": "deny" });
       yield* rows.deny(action, detail);
 
       return yield* new ToolFailed({ message: answer });
     });
 
     const carryOut = Effect.fnUntraced(function* (bot: BotId, request: BotRequest) {
-      // A ref is resolved before any rule, so the rules E2 brings judge the element, not its ref.
-      // A path outside the workspace is denied here; the computer still confines every path itself.
-      const action = yield* resolve(bot, request);
+      // A ref is resolved before any rule, so the rules judge the element the server's snapshot names,
+      // and a ref that does not resolve is denied for that. A path outside the workspace is denied here;
+      // the computer still confines every path itself.
+      const { action, host } = yield* resolve(bot, request);
 
-      // The grant was checked before the door. Rules arrive with E2-2; until then a granted call is
-      // allowed, and still recorded first.
+      const rule = yield* allowedBy(action, policy.judge(actionFacts(bot, action, host)));
+      yield* Effect.annotateCurrentSpan({ "gateway.decision": "allow", "gateway.rule": rule });
+
       const allowRow = yield* rows
-        .decide("allow", action.action, { bot, ...auditDetail(action) })
+        .decide("allow", action.action, { bot, ...auditDetail(action), rule })
         .pipe(
           Effect.tapError((error) =>
             Effect.logError(
@@ -490,6 +593,24 @@ export const gatewayLayer = Layer.effectContext(
               { bot, ref: unknown.ref, reason: unknown.reason },
               unknownRefAnswer(request.action, unknown),
             ),
+          UnknownPage: () =>
+            deny(
+              request.action,
+              { bot, reason: "the latest snapshot could not be read" },
+              `${request.action} did not run: the server could not tell which page it would read, so no rule could judge it. Try again.`,
+            ),
+          RuleRefused: ({ action, verdict }) => {
+            const { detail, attributes, why } = ruleRefusal(verdict);
+
+            return Effect.andThen(
+              Effect.annotateCurrentSpan(attributes),
+              deny(
+                action.action,
+                { bot, ...auditDetail(action), ...detail },
+                ruleRefusedAnswer(action.action, why),
+              ),
+            );
+          },
           OutsideWorkspace: ({ action }) =>
             deny(
               action.action,
