@@ -11,7 +11,7 @@ const closing = (inFlight: number) => Door.Closing({ inFlight });
 
 const held = Door.Held({ since });
 
-describe("a Bot's door", () => {
+describe("the computer's door", () => {
   it.each([
     ["open and idle", "admitted", open(0), open(1)],
     ["open with an action running", "admitted", open(2), open(3)],

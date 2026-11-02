@@ -1,15 +1,18 @@
 export { ChatEvent, RunErrorCode, decodeChatEvent, encodeChatEvent } from "./chat-event.ts";
 
 export {
-  BotSummary,
   ChatRpcs,
   ConversationBusy,
+  ConversationOfAnotherBot,
   ConversationRef,
   ConversationSnapshot,
   Message,
   MessageAlreadySent,
+  OpenConversation,
   SendMessage,
 } from "./chat-rpcs.ts";
+
+export { BotRpcs, BotSummary, ToolName, UnknownBot } from "./bot.ts";
 
 export { BotId, ConversationId, MessageId, RunId, ToolCallId } from "./ids.ts";
 

@@ -38,7 +38,7 @@ export const featureDependencies: ReadonlyMap<
   [
     "web",
     new Map([
-      ["chat", []],
+      ["chat", ["bots"]],
       ["bots", []],
       ["screen", []],
       ["audit", []],

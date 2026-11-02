@@ -12,7 +12,8 @@ OpenTelemetry for traces, logs and metrics, from the first ticket.
   ```
 
   The `Chat.send` handler opens a root span, `Chat.turn`, around the whole answer stream, so one chat
-  turn is one trace. Every service method written with `Effect.fn("Domain.operation")` is a span inside
+  turn is one trace. It records the turn's Bot as `chat.bot`, and each `Gateway.act` span inside it the
+  Bot the call was made for as `gateway.bot`, so a trace and its audit rows name the same Bot. Every service method written with `Effect.fn("Domain.operation")` is a span inside
   it, without extra code:
 
   ```text

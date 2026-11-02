@@ -32,6 +32,10 @@
   background: var(--accent);
 }
 
+.pill__dot--failed {
+  background: var(--danger);
+}
+
 .conversation__messages {
   flex: 1;
   display: flex;

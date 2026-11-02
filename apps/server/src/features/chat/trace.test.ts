@@ -5,6 +5,7 @@ import { LanguageModel, type Response, Toolkit } from "effect/ai";
 import { RpcTest } from "effect/rpc";
 import { layerApi } from "../agent/public.ts";
 import { chatLayer } from "./public.ts";
+import { assistant, testBots } from "../bots/testing/test-bots.ts";
 import { testDatabase } from "./testing/test-database.ts";
 
 /** A tracer that keeps every span it starts, so a test can read the tree a turn produced. */
@@ -68,6 +69,7 @@ describe("Chat tracing", () => {
 
       yield* client["Chat.send"]({
         conversationId: ConversationId.make("conversation-1"),
+        botId: assistant.id,
         messageId: MessageId.make("user-1"),
         text: "Say hi",
       }).pipe(Stream.runCollect);
@@ -76,6 +78,7 @@ describe("Chat tracing", () => {
 
       const turns = named("Chat.turn");
       expect(turns.map((span) => Option.isNone(span.parent))).toEqual([true]);
+      expect(turns[0]?.attributes.get("chat.bot")).toBe(assistant.id);
       const traceId = turns[0]?.traceId;
 
       const setup = named("Chat.send").filter((span) => span.traceId === traceId);
@@ -87,7 +90,7 @@ describe("Chat tracing", () => {
         expect.arrayContaining(["Chat.turn", "AgentRuntime.run", "LanguageModel.streamText"]),
       ]);
     }).pipe(
-      Effect.provide(chatLayer.pipe(Layer.provide([agent, testDatabase]))),
+      Effect.provide(chatLayer.pipe(Layer.provide([agent, testDatabase, testBots]))),
       Effect.provide(recorder.layer),
     );
   });

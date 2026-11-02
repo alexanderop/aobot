@@ -11,16 +11,16 @@ export const ScreenPoint = Schema.Struct({ x: Fraction, y: Fraction });
 /** A decoded {@link ScreenPoint}. */
 export type ScreenPoint = typeof ScreenPoint.Type;
 
-/** What a person in control does on the Bot's screen. The body of the computer's `POST /input`. */
+/** What a person in control does on the computer's screen. The body of the computer's `POST /input`. */
 export const PersonInput = Schema.TaggedUnion({ Click: { at: ScreenPoint } });
 
 /** A decoded {@link PersonInput}. */
 export type PersonInput = typeof PersonInput.Type;
 
 /**
-Who holds a Bot's computer, as the page sees it. `Taking` while a person's take waits for the Bot's
-actions already running to finish, `waitingFor` of them. While `Taking` or `Person`, every Bot action is
-refused.
+Who holds the computer every Bot shares, as the page sees it. `Taking` while a person's take waits for the
+Bot actions already running to finish, `waitingFor` of them. While `Taking` or `Person`, every Bot action
+is refused.
 */
 export const Control = Schema.TaggedUnion({
   Bot: {},

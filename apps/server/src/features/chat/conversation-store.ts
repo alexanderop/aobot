@@ -1,15 +1,19 @@
-import { type BotId, type ConversationId, Message } from "@aobot/domain";
-import { Context, Effect, Layer, Schema } from "effect";
+import { BotId, type ConversationId, Message } from "@aobot/domain";
+import { Array, Context, Effect, Layer, Option, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 
 const decodeMessages = Schema.decodeUnknownEffect(Schema.Array(Message));
+
+const decodeBots = Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ bot_id: BotId })));
 
 /** What was said in each conversation, in order. */
 export class ConversationStore extends Context.Service<
   ConversationStore,
   {
-    /** Record that the conversation exists. Does nothing when it already does. */
+    /** Record that the conversation exists, with its Bot. Does nothing when it already does. */
     readonly ensure: (conversationId: ConversationId, botId: BotId) => Effect.Effect<void>;
+    /** The Bot the conversation belongs to. None for a conversation never written to. */
+    readonly bot: (conversationId: ConversationId) => Effect.Effect<Option.Option<BotId>>;
     /** Append a message. Returns false, storing nothing, when the message id was seen before. */
     readonly append: (conversationId: ConversationId, message: Message) => Effect.Effect<boolean>;
     /** Every message, oldest first. Empty for a conversation never written to. */
@@ -31,6 +35,17 @@ export const conversationStoreLayer = Layer.effect(
         INSERT INTO conversations (id, bot_id) VALUES (${conversationId}, ${botId})
         ON CONFLICT (id) DO NOTHING
       `.pipe(Effect.orDie);
+    });
+
+    const bot = Effect.fn("ConversationStore.bot")(function* (conversationId: ConversationId) {
+      const rows = yield* sql`SELECT bot_id FROM conversations WHERE id = ${conversationId}`.pipe(
+        Effect.orDie,
+      );
+
+      return Option.map(
+        Array.head(yield* decodeBots(rows).pipe(Effect.orDie)),
+        (row) => row.bot_id,
+      );
     });
 
     const append = Effect.fn("ConversationStore.append")(function* (
@@ -57,6 +72,6 @@ export const conversationStoreLayer = Layer.effect(
       return yield* decodeMessages(rows).pipe(Effect.orDie);
     });
 
-    return ConversationStore.of({ ensure, append, messages });
+    return ConversationStore.of({ ensure, bot, append, messages });
   }),
 );

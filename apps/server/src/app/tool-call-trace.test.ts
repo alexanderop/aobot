@@ -8,6 +8,7 @@ import { SqlClient } from "effect/sql";
 import { layerApi } from "../features/agent/public.ts";
 import { auditLogLayer, migrateAudit } from "../features/audit/public.ts";
 import { botToolkit } from "../features/bots/public.ts";
+import { assistant, researcher, testBots } from "../features/bots/testing/test-bots.ts";
 import { chatLayer, migrateChat } from "../features/chat/public.ts";
 import { Computers } from "../features/computers/public.ts";
 import { fakeComputer } from "../features/computers/testing/fake-computer.ts";
@@ -123,7 +124,7 @@ describe("a tool call in an api turn", () => {
       const recorder = recordingTracer();
       const model = navigatingModel();
 
-      const gateway = gatewayLayer.pipe(Layer.provide([auditLogLayer, computers]));
+      const gateway = gatewayLayer.pipe(Layer.provide([auditLogLayer, computers, testBots]));
 
       const agent = layerApi(botToolkit, { maxSteps: 4, stallTimeout: Duration.seconds(60) }).pipe(
         Layer.provide(botToolHandlers),
@@ -137,6 +138,7 @@ describe("a tool call in an api turn", () => {
 
         yield* client["Chat.send"]({
           conversationId: ConversationId.make("conversation-1"),
+          botId: assistant.id,
           messageId: MessageId.make("user-1"),
           text: "Open example.com and tell me the page title.",
         }).pipe(Stream.runCollect);
@@ -160,7 +162,7 @@ describe("a tool call in an api turn", () => {
         expect(toolResults).toContain("untrusted_data");
         expect(toolResults).toContain("Example Domain");
       }).pipe(
-        Effect.provide(chatLayer.pipe(Layer.provide(agent))),
+        Effect.provide(chatLayer.pipe(Layer.provide([agent, testBots]))),
         Effect.provide(database),
         Effect.provide(recorder.layer),
       );
@@ -173,7 +175,7 @@ describe("a tool call in an api turn", () => {
       const model = navigatingModel();
 
       // As main.ts builds it: one gateway reference, provided to the agent's tools and the page's controls.
-      const gateway = gatewayLayer.pipe(Layer.provide([auditLogLayer, computers]));
+      const gateway = gatewayLayer.pipe(Layer.provide([auditLogLayer, computers, testBots]));
 
       const agent = layerApi(botToolkit, { maxSteps: 4, stallTimeout: Duration.seconds(60) }).pipe(
         Layer.provide(botToolHandlers),
@@ -190,6 +192,7 @@ describe("a tool call in an api turn", () => {
 
         yield* chat["Chat.send"]({
           conversationId: ConversationId.make("conversation-1"),
+          botId: assistant.id,
           messageId: MessageId.make("user-1"),
           text: "Open example.com and tell me the page title.",
         }).pipe(Stream.runCollect);
@@ -203,7 +206,7 @@ describe("a tool call in an api turn", () => {
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
-            chatLayer.pipe(Layer.provide(agent)),
+            chatLayer.pipe(Layer.provide([agent, testBots])),
             controlHandlers.pipe(Layer.provide(gateway)),
           ),
         ),
@@ -231,7 +234,7 @@ describe("a tool call in an api turn", () => {
       ],
     ]);
 
-    const gateway = gatewayLayer.pipe(Layer.provide([auditLogLayer, computers]));
+    const gateway = gatewayLayer.pipe(Layer.provide([auditLogLayer, computers, testBots]));
 
     const agent = layerApi(botToolkit, { maxSteps: 4, stallTimeout: Duration.seconds(60) }).pipe(
       Layer.provide(botToolHandlers),
@@ -245,6 +248,7 @@ describe("a tool call in an api turn", () => {
 
       yield* client["Chat.send"]({
         conversationId: ConversationId.make("conversation-1"),
+        botId: assistant.id,
         messageId: MessageId.make("user-1"),
         text: "Type my password into the search box.",
       }).pipe(Stream.runCollect);
@@ -254,6 +258,7 @@ describe("a tool call in an api turn", () => {
         decision: "allow",
         action: "type",
         detail: JSON.stringify({
+          bot: "assistant",
           ref: "e1",
           role: "searchbox",
           name: "Search",
@@ -266,9 +271,71 @@ describe("a tool call in an api turn", () => {
       expect(JSON.stringify(attributes)).not.toContain(typed);
       expect(JSON.stringify(rows)).not.toContain(typed);
     }).pipe(
-      Effect.provide(chatLayer.pipe(Layer.provide(agent))),
+      Effect.provide(chatLayer.pipe(Layer.provide([agent, testBots]))),
       Effect.provide(database),
       Effect.provide(toolInputsRedacted.pipe(Layer.provide(recorder.layer))),
     );
   });
+
+  it.effect(
+    "refuses a tool the turn's Bot was not granted, before the computer hears of it",
+    () => {
+      const model = steppingModel([
+        [
+          { type: "tool-call", id: "call-1", name: "run", params: { command: "ls" } },
+          { type: "finish", reason: "tool-calls", usage },
+        ],
+        [
+          { type: "text-delta", id: "text-1", delta: "I may not run commands." },
+          { type: "finish", reason: "stop", usage },
+        ],
+      ]);
+
+      const untouched = Layer.succeed(
+        Computers,
+        Computers.of({
+          ensure: Effect.die("the computer is never asked"),
+          running: Effect.die("the computer is never asked"),
+          stop: Effect.void,
+          reset: Effect.void,
+          list: Effect.succeed([]),
+          screen: Stream.never,
+        }),
+      );
+
+      const gateway = gatewayLayer.pipe(Layer.provide([auditLogLayer, untouched, testBots]));
+
+      const agent = layerApi(botToolkit, { maxSteps: 4, stallTimeout: Duration.seconds(60) }).pipe(
+        Layer.provide(botToolHandlers),
+        Layer.provide(gateway),
+        Layer.provide(model.layer),
+      );
+
+      return Effect.gen(function* () {
+        const client = yield* RpcTest.makeClient(ChatRpcs);
+        const sql = yield* SqlClient.SqlClient;
+
+        yield* client["Chat.send"]({
+          conversationId: ConversationId.make("conversation-1"),
+          botId: researcher.id,
+          messageId: MessageId.make("user-1"),
+          text: "Run ls.",
+        }).pipe(Stream.runCollect);
+
+        expect(yield* sql`SELECT decision, action, detail FROM audit_rows ORDER BY seq`).toEqual([
+          {
+            decision: "deny",
+            action: "run",
+            detail: JSON.stringify({ bot: "researcher", reason: "not granted to researcher" }),
+          },
+        ]);
+        expect(JSON.stringify(model.prompts[1]?.content)).toContain(
+          "run did not run: it is not granted to researcher",
+        );
+      }).pipe(
+        Effect.provide(chatLayer.pipe(Layer.provide([agent, testBots]))),
+        Effect.provide(database),
+      );
+    },
+  );
 });

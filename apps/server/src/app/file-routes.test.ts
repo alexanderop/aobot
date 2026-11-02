@@ -10,6 +10,7 @@ import { auditLogLayer, migrateAudit } from "../features/audit/public.ts";
 import { ComputerActFailed, Computers } from "../features/computers/public.ts";
 import { fakeComputer } from "../features/computers/testing/fake-computer.ts";
 import { gatewayLayer, migrateGateway } from "../features/gateway/public.ts";
+import { testBots } from "../features/bots/testing/test-bots.ts";
 import { fileRoutes } from "./file-routes.ts";
 
 /** What the fake workspace holds, by path, and every upload it was asked to save. */
@@ -91,7 +92,7 @@ let served: Context.Context<SqlClient.SqlClient>;
 beforeAll(async () => {
   const server = HttpRouter.serve(
     fileRoutes(Option.none()).pipe(
-      Layer.provide(gatewayLayer.pipe(Layer.provide([auditLogLayer, computers]))),
+      Layer.provide(gatewayLayer.pipe(Layer.provide([auditLogLayer, computers, testBots]))),
     ),
     { disableLogger: true, disableListenLog: true },
   ).pipe(

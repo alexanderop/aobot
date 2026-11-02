@@ -11,7 +11,9 @@ import {
   initialState,
   isRunning,
   usesComputer,
+  refuseForAnotherBot,
   refuseMessage,
+  refuseUnknownBot,
   seedFromSnapshot,
 } from "./conversation-state.ts";
 import type { ConversationState } from "./conversation-state.ts";
@@ -88,9 +90,38 @@ describe("given a message the person just sent", () => {
     expect(refused.status).toMatchObject({ code: "busy" });
   });
 
+  it("takes the bubble back when the conversation is another Bot's or the Bot is unknown", () => {
+    const other = BotId.make("other");
+
+    expect(refuseForAnotherBot(asked, other, userId)).toMatchObject({
+      transcript: [],
+      status: { code: "another_bot" },
+    });
+    expect(refuseUnknownBot(asked, other, Option.some(userId))).toMatchObject({
+      transcript: [],
+      status: { code: "unknown_bot" },
+    });
+    expect(refuseUnknownBot(asked, other, Option.none()).transcript).toEqual(asked.transcript);
+  });
+
+  it("offers a message sent to the wrong Bot again, still after the conversation opens with its own", () => {
+    const refused = refuseForAnotherBot(asked, BotId.make("other"), userId);
+
+    const followed = seedFromSnapshot(refused, {
+      bot: { id: BotId.make("other"), name: "Other", group: Option.none(), pinned: false },
+      messages: [],
+      isRunning: false,
+    });
+
+    expect(followed.unsent).toEqual(Option.some({ id: userId, text: "Say hi in five words" }));
+    expect(appendUserMessage(followed, MessageId.make("u2"), "Say hi").unsent).toEqual(
+      Option.none(),
+    );
+  });
+
   it("keeps one bubble and goes idle when the server already had the message", () => {
-    const seeded = seedFromSnapshot({
-      bot: { id: BotId.make("bot"), name: "Chief" },
+    const seeded = seedFromSnapshot(initialState, {
+      bot: { id: BotId.make("bot"), name: "Chief", group: Option.none(), pinned: false },
       messages: [{ id: userId, role: "user", text: "Say hi in five words" }],
       isRunning: false,
     });
@@ -120,16 +151,16 @@ describe("given a message the person just sent", () => {
 
 /** A stored conversation in which the person asked the Bot to open a page. */
 const stored = ({ running }: { readonly running: boolean }) =>
-  seedFromSnapshot({
-    bot: { id: BotId.make("bot"), name: "Chief" },
+  seedFromSnapshot(initialState, {
+    bot: { id: BotId.make("bot"), name: "Chief", group: Option.none(), pinned: false },
     messages: [{ id: userId, role: "user", text: "Open example.com" }],
     isRunning: running,
   });
 
 describe("given a stored conversation", () => {
   it("opens with its messages, its Bot, and idle when nothing is running", () => {
-    const state = seedFromSnapshot({
-      bot: { id: BotId.make("bot"), name: "Chief" },
+    const state = seedFromSnapshot(initialState, {
+      bot: { id: BotId.make("bot"), name: "Chief", group: Option.none(), pinned: false },
       messages: [{ id: userId, role: "user", text: "hi" }],
       isRunning: false,
     });
@@ -140,8 +171,8 @@ describe("given a stored conversation", () => {
   });
 
   it("opens as running when a turn is still in flight", () => {
-    const state = seedFromSnapshot({
-      bot: { id: BotId.make("bot"), name: "Chief" },
+    const state = seedFromSnapshot(initialState, {
+      bot: { id: BotId.make("bot"), name: "Chief", group: Option.none(), pinned: false },
       messages: [],
       isRunning: true,
     });

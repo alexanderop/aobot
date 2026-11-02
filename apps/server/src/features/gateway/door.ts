@@ -2,9 +2,10 @@ import { Control } from "@aobot/domain";
 import { Data, type DateTime } from "effect";
 
 /**
-The door a Bot's actions go through, one per Bot. `Open` while the Bot holds its computer, with the
-actions it let in still running. `Closing` once a person starts taking control: nothing new gets in, and
-the take waits for `inFlight` to reach 0. `Held` while the person holds it; nothing of the Bot's runs then.
+The door every Bot's actions go through, one for the computer they share. `Open` while the Bots hold the
+computer, with the actions it let in still running. `Closing` once a person starts taking control: nothing
+new gets in, and the take waits for `inFlight` to reach 0. `Held` while the person holds it; nothing of any
+Bot's runs then.
 */
 export type Door = Data.TaggedEnum<{
   Open: { readonly inFlight: number };
@@ -41,7 +42,7 @@ export function close(door: Door): Door {
   return Door.$is("Open")(door) ? Door.Closing({ inFlight: door.inFlight }) : door;
 }
 
-/** The take could not be stored, so the Bot keeps its computer, with what it let in still running. */
+/** The take could not be stored, so the Bots keep the computer, with what it let in still running. */
 export function reopen(door: Door): Door {
   return Door.$is("Closing")(door) ? Door.Open({ inFlight: door.inFlight }) : door;
 }

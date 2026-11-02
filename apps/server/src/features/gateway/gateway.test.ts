@@ -22,6 +22,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   Arbitrary,
   Context,
+  DateTime,
   Deferred,
   Duration,
   Effect,
@@ -40,6 +41,7 @@ import { TestClock } from "effect/testing";
 import { ToolFailed } from "../../shared/tool-result.ts";
 import { auditLogLayer, migrateAudit } from "../audit/public.ts";
 import { botToolkit } from "../bots/public.ts";
+import { assistant, researcher, testBots } from "../bots/testing/test-bots.ts";
 import {
   type Computer,
   ComputerActFailed,
@@ -49,11 +51,11 @@ import {
 } from "../computers/public.ts";
 import { fakeComputer } from "../computers/testing/fake-computer.ts";
 import { ComputerControl } from "./control.ts";
-import { Gateway, gatewayLayer } from "./gateway.ts";
+import { Claim, Gateway, gatewayLayer } from "./gateway.ts";
 import { FileTransfers } from "./transfers.ts";
-import { gatewayMcpLayer } from "./mcp.ts";
+import { botHeader, gatewayMcpLayer } from "./mcp.ts";
 import { migrateGateway } from "./migrations.ts";
-import { botToolHandlers } from "./tools.ts";
+import { ActingBot, botToolHandlers } from "./tools.ts";
 
 /**
 A computer that answers with `answers`, and keeps every page, command and file action it was sent. It is
@@ -117,7 +119,11 @@ const database = Layer.effectDiscard(Effect.andThen(migrateAudit, migrateGateway
 
 /** A gateway on the database in the context, as one server start would build it. */
 function startGateway(computers: Layer.Layer<Computers>) {
-  return gatewayLayer.pipe(Layer.provide(auditLogLayer), Layer.provide(computers));
+  return gatewayLayer.pipe(
+    Layer.provide(auditLogLayer),
+    Layer.provide(computers),
+    Layer.provide(testBots),
+  );
 }
 
 const auditRows = Effect.gen(function* () {
@@ -129,7 +135,19 @@ const auditRows = Effect.gen(function* () {
   `;
 });
 
-const bot = BotId.make("assistant");
+/** Each audit row as `action · decision`, with the reason its detail gives, oldest first. */
+const trailWithReasons = Effect.map(auditRows, (rows) =>
+  rows.map((row) => [
+    `${String(row["action"])} · ${String(row["decision"])}`,
+    JSON.parse(String(row["detail"])).reason,
+  ]),
+);
+
+const named = (id: BotId) => Claim.cases.Named.make({ bot: id });
+
+const bot = named(assistant.id);
+
+const otherBot = named(researcher.id);
 
 const { Exited, Signalled, TimedOut } = CommandEnd.cases;
 
@@ -186,7 +204,7 @@ describe("Gateway", () => {
           initiator_kind: "person",
           decision: "allow",
           action: "navigate",
-          detail: JSON.stringify({ url: "https://example.com" }),
+          detail: JSON.stringify({ bot: "assistant", url: "https://example.com" }),
           outcome_of: null,
         });
         expect(outcome).toMatchObject({
@@ -347,6 +365,84 @@ const form = `- generic [ref=e1]:
 const sent = `- generic [ref=e1]:
   - heading "Thank you" [level=1] [ref=e4]`;
 
+describe("Gateway grants", () => {
+  it.effect("refuses a tool the Bot was not granted before resolving or forwarding anything", () =>
+    Effect.gen(function* () {
+      const computer = shell({});
+
+      const [run, type, read] = yield* Gateway.use((gateway) =>
+        Effect.all([
+          Effect.flip(gateway.act(otherBot, makeNotes)),
+          // A ref with no snapshot behind it: resolving it first would refuse it for that instead.
+          Effect.flip(gateway.act(otherBot, { action: "type", ref: "e9", text: "hunter2" })),
+          // A path outside the workspace: judging it first would refuse it for that instead.
+          Effect.flip(gateway.act(otherBot, { action: "read_file", path: "../x" })),
+        ]),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(run.message).toBe(
+        "run did not run: it is not granted to researcher. Use only the tools your instructions name.",
+      );
+      expect(type.message).toContain("type did not run: it is not granted to researcher");
+      expect(read.message).toContain("read_file did not run: it is not granted to researcher");
+      expect(computer.actions).toEqual([]);
+      expect(yield* trailWithReasons).toEqual([
+        ["run · deny", "not granted to researcher"],
+        ["type · deny", "not granted to researcher"],
+        ["read_file · deny", "not granted to researcher"],
+      ]);
+      expect(JSON.stringify(yield* auditRows)).not.toContain("hunter2");
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("refuses an ungranted tool for that, even while a person holds the computer", () =>
+    Effect.gen(function* () {
+      const refused = yield* withControl((gateway, control) =>
+        control.take.pipe(Effect.andThen(Effect.flip(gateway.act(otherBot, makeNotes)))),
+      ).pipe(Effect.provide(startGateway(shell({}).layer)));
+
+      expect(refused.message).toContain("not granted to researcher");
+      expect((yield* trailWithReasons).at(-1)).toEqual(["run · deny", "not granted to researcher"]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("refuses every tool to a Bot the server does not know, and to a call naming none", () =>
+    Effect.gen(function* () {
+      const computer = fakeComputers({ browse: exampleDomain });
+
+      yield* Gateway.use((gateway) =>
+        Effect.all([
+          Effect.flip(gateway.act(named(BotId.make("intruder")), navigate)),
+          Effect.flip(gateway.act(Claim.cases.Unnamed.make({}), navigate)),
+        ]),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(computer.actions).toEqual([]);
+      expect(yield* trailWithReasons).toEqual([
+        ["navigate · deny", "not granted to intruder"],
+        ["navigate · deny", "not granted to an unnamed Bot"],
+      ]);
+      expect((yield* auditRows).map((row) => JSON.parse(String(row["detail"])).bot)).toEqual([
+        "intruder",
+        null,
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("lets a Bot use a tool it was granted", () =>
+    Effect.gen(function* () {
+      const computer = fakeComputers({ browse: exampleDomain });
+
+      yield* Gateway.use((gateway) => gateway.act(otherBot, navigate)).pipe(
+        Effect.provide(startGateway(computer.layer)),
+      );
+
+      expect(computer.actions).toEqual([navigate]);
+      expect(yield* auditTrail).toEqual(["navigate · allow", "navigate · succeeded"]);
+    }).pipe(Effect.provide(database)),
+  );
+});
+
 describe("Gateway refs", () => {
   it.effect(
     "denies a click on a ref missing from the latest snapshot, before the computer hears of it",
@@ -362,7 +458,7 @@ describe("Gateway refs", () => {
 
         expect(error).toBeInstanceOf(ToolFailed);
         expect(error.message).toBe(
-          "click did not run: e9 is not a ref in your latest snapshot. Take a snapshot and use a ref from it.",
+          "click did not run: e9 is not a ref in the page's latest snapshot. Take a snapshot and use a ref from it.",
         );
         expect(computer.actions).toEqual([{ action: "snapshot" }]);
 
@@ -370,7 +466,11 @@ describe("Gateway refs", () => {
         expect(deny).toMatchObject({
           decision: "deny",
           action: "click",
-          detail: JSON.stringify({ ref: "e9", reason: "not in the latest snapshot" }),
+          detail: JSON.stringify({
+            bot: "assistant",
+            ref: "e9",
+            reason: "not in the latest snapshot",
+          }),
           outcome_of: null,
         });
       }).pipe(Effect.provide(database)),
@@ -384,13 +484,17 @@ describe("Gateway refs", () => {
         Effect.flip(gateway.act(bot, { action: "type", ref: "e2", text: "Ada" })),
       ).pipe(Effect.provide(startGateway(computer.layer)));
 
-      expect(error.message).toContain("e2 is not a ref in your latest snapshot");
+      expect(error.message).toContain("e2 is not a ref in the page's latest snapshot");
       expect(computer.actions).toEqual([]);
       expect(yield* auditRows).toMatchObject([
         {
           decision: "deny",
           action: "type",
-          detail: JSON.stringify({ ref: "e2", reason: "there is no snapshot yet" }),
+          detail: JSON.stringify({
+            bot: "assistant",
+            ref: "e2",
+            reason: "there is no snapshot yet",
+          }),
         },
       ]);
     }).pipe(Effect.provide(database)),
@@ -423,12 +527,18 @@ describe("Gateway refs", () => {
         const allowed = rows.filter((row) => row["decision"] === "allow");
 
         expect(allowed.map((row) => [row["action"], row["detail"]])).toEqual([
-          ["snapshot", "{}"],
+          ["snapshot", JSON.stringify({ bot: "assistant" })],
           [
             "type",
-            JSON.stringify({ ref: "e2", role: "textbox", name: "Name", text: "[22 chars]" }),
+            JSON.stringify({
+              bot: "assistant",
+              ref: "e2",
+              role: "textbox",
+              name: "Name",
+              text: "[22 chars]",
+            }),
           ],
-          ["click", JSON.stringify({ ref: "e3", role: "button", name: "Send" })],
+          ["click", JSON.stringify({ bot: "assistant", ref: "e3", role: "button", name: "Send" })],
         ]);
         expect(JSON.stringify(rows)).not.toContain("hunter2");
       }).pipe(Effect.provide(database)),
@@ -451,7 +561,7 @@ describe("Gateway refs", () => {
       ).pipe(Effect.provide(startGateway(computer.layer)));
 
       expect(clicked).toContain('heading "Thank you"');
-      expect(gone.message).toContain("e3 is not a ref in your latest snapshot");
+      expect(gone.message).toContain("e3 is not a ref in the page's latest snapshot");
       expect(thanked).toContain('heading "Thank you"');
       expect(computer.actions.map((action) => action.action)).toEqual([
         "navigate",
@@ -461,22 +571,76 @@ describe("Gateway refs", () => {
     }).pipe(Effect.provide(database)),
   );
 
-  it.effect("keeps each Bot's latest snapshot apart", () =>
+  it.effect("refuses a Bot's ref once another Bot read the page, even one the new page has", () =>
     Effect.gen(function* () {
-      const computer = pages(form);
+      const computer = pages(form, sent);
 
-      const error = yield* Gateway.use((gateway) =>
-        gateway
-          .act(bot, { action: "snapshot" })
-          .pipe(
-            Effect.andThen(
-              Effect.flip(gateway.act(BotId.make("other"), { action: "click", ref: "e3" })),
-            ),
-          ),
+      const [stale, current] = yield* Gateway.use((gateway) =>
+        Effect.gen(function* () {
+          yield* gateway.act(bot, { action: "snapshot" });
+          yield* gateway.act(otherBot, navigate);
+
+          return [
+            yield* Effect.flip(gateway.act(bot, { action: "click", ref: "e1" })),
+            yield* gateway.act(otherBot, { action: "click", ref: "e4" }),
+          ] as const;
+        }),
       ).pipe(Effect.provide(startGateway(computer.layer)));
 
-      expect(error.message).toContain("e3 is not a ref in your latest snapshot");
+      expect(stale.message).toBe(
+        "click did not run: the page changed since you last read it. Take a snapshot and use a ref from it.",
+      );
+      expect(current).toContain('heading "Thank you"');
+      expect(computer.actions.map((action) => action.action)).toEqual([
+        "snapshot",
+        "navigate",
+        "click",
+      ]);
+      expect(computer.actions.at(-1)).toEqual({
+        action: "click",
+        target: { ref: "e4", role: "heading", name: "Thank you" },
+      });
+      expect((yield* auditRows).find((row) => row["decision"] === "deny")).toMatchObject({
+        action: "click",
+        detail: JSON.stringify({
+          bot: "assistant",
+          ref: "e1",
+          reason: "another Bot read the page since",
+        }),
+      });
     }).pipe(Effect.provide(database)),
+  );
+
+  it.effect(
+    "keeps the page a Bot read last, and that it read it, once every Bot shares the one snapshot",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`DROP TABLE computer_snapshot`;
+        yield* sql`
+        CREATE TABLE bot_snapshots (bot_id text PRIMARY KEY, snapshot text NOT NULL, updated_at text NOT NULL)
+      `;
+        yield* sql`
+        INSERT INTO bot_snapshots VALUES
+          ('assistant', ${form}, '2026-10-01T09:00:00.000Z'),
+          ('researcher', ${sent}, '2026-10-01T09:05:00.000Z')
+      `;
+        yield* sql`DELETE FROM gateway_migrations WHERE name = 'share_computer_snapshot'`;
+
+        yield* migrateGateway;
+
+        const computer = pages(sent);
+
+        const [clicked, refused] = yield* Gateway.use((gateway) =>
+          Effect.all([
+            gateway.act(otherBot, { action: "click", ref: "e4" }),
+            Effect.flip(gateway.act(bot, { action: "click", ref: "e1" })),
+          ]),
+        ).pipe(Effect.provide(startGateway(computer.layer)));
+
+        expect(clicked).toContain('heading "Thank you"');
+        expect(refused.message).toContain("the page changed since you last read it");
+      }).pipe(Effect.provide(database)),
   );
 });
 
@@ -584,13 +748,14 @@ describe("Gateway run", () => {
         expect(
           (yield* auditRows).map((row) => [row["decision"], row["action"], row["detail"]]),
         ).toEqual([
-          ["allow", "run", JSON.stringify({ command: makeNotes.command })],
-          ["succeeded", "run", "{}"],
+          ["allow", "run", JSON.stringify({ bot: "assistant", command: makeNotes.command })],
+          ["succeeded", "run", JSON.stringify({ bot: "assistant" })],
         ]);
 
         const span = tracing.spans.find((candidate) => candidate.name === "Gateway.act");
         expect(span?.attributes.get("gateway.command_end")).toBe("exited");
         expect(span?.attributes.get("gateway.exit_code")).toBe(0);
+        expect(span?.attributes.get("gateway.bot")).toBe("assistant");
         expect(JSON.stringify([...(span?.attributes ?? [])])).not.toContain("notes.txt");
       }).pipe(Effect.provide(database)),
   );
@@ -797,40 +962,38 @@ describe("Gateway run", () => {
     }).pipe(Effect.provide(database)),
   );
 
-  it.effect(
-    "never takes a page the computer answers a command with as the Bot's latest snapshot",
-    () =>
-      Effect.gen(function* () {
-        const [ran, clicked] = yield* Gateway.use((gateway) =>
-          Effect.gen(function* () {
-            yield* gateway.act(bot, { action: "snapshot" });
+  it.effect("never takes a page the computer answers a command with as the latest snapshot", () =>
+    Effect.gen(function* () {
+      const [ran, clicked] = yield* Gateway.use((gateway) =>
+        Effect.gen(function* () {
+          yield* gateway.act(bot, { action: "snapshot" });
 
-            const ran = yield* Effect.flip(gateway.act(bot, { action: "run", command: "ls" }));
-            const clicked = yield* Effect.flip(gateway.act(bot, { action: "click", ref: "e9" }));
+          const ran = yield* Effect.flip(gateway.act(bot, { action: "run", command: "ls" }));
+          const clicked = yield* Effect.flip(gateway.act(bot, { action: "click", ref: "e9" }));
 
-            return [ran, clicked] as const;
-          }),
-        ).pipe(
-          Effect.provide(
-            startGateway(
-              pagesOverHttp('- heading "Example Domain" [ref=e1]', '- button "Delete" [ref=e9]'),
-            ),
+          return [ran, clicked] as const;
+        }),
+      ).pipe(
+        Effect.provide(
+          startGateway(
+            pagesOverHttp('- heading "Example Domain" [ref=e1]', '- button "Delete" [ref=e9]'),
           ),
-        );
+        ),
+      );
 
-        expect(ran.message).toContain("The computer stopped answering.");
-        expect(clicked.message).toContain("e9 is not a ref in your latest snapshot");
-        expect((yield* auditRows).map((row) => [row["decision"], row["action"]])).toEqual([
-          ["allow", "snapshot"],
-          ["succeeded", "snapshot"],
-          ["allow", "run"],
-          ["unknown", "run"],
-          ["deny", "click"],
-        ]);
-        expect((yield* auditRows).at(-1)?.["detail"]).toBe(
-          JSON.stringify({ ref: "e9", reason: "not in the latest snapshot" }),
-        );
-      }).pipe(Effect.provide(database)),
+      expect(ran.message).toContain("The computer stopped answering.");
+      expect(clicked.message).toContain("e9 is not a ref in the page's latest snapshot");
+      expect((yield* auditRows).map((row) => [row["decision"], row["action"]])).toEqual([
+        ["allow", "snapshot"],
+        ["succeeded", "snapshot"],
+        ["allow", "run"],
+        ["unknown", "run"],
+        ["deny", "click"],
+      ]);
+      expect((yield* auditRows).at(-1)?.["detail"]).toBe(
+        JSON.stringify({ bot: "assistant", ref: "e9", reason: "not in the latest snapshot" }),
+      );
+    }).pipe(Effect.provide(database)),
   );
 
   it.effect("keeps the Bot's latest page when a command answers, so its refs still resolve", () =>
@@ -868,45 +1031,84 @@ describe("Gateway run", () => {
   );
 });
 
+/**
+Serves the gateway's MCP server on a free port and calls `tool` once over HTTP with `headers`, as a CLI
+would. Answers the tool's result.
+*/
+const callOverMcp = Effect.fnUntraced(function* (
+  headers: Readonly<Record<string, string>>,
+  tool: string,
+  args: Readonly<Record<string, string>>,
+) {
+  const server = yield* Layer.build(
+    HttpRouter.serve(gatewayMcpLayer).pipe(
+      Layer.provide(startGateway(fakeComputers({ browse: exampleDomain }).layer)),
+      Layer.provideMerge(NodeHttpServer.layer(createServer, { port: 0, host: "127.0.0.1" })),
+      // As in the server: HTTP requests start no spans, so only the gateway can link the trace.
+      Layer.provide(Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true)),
+    ),
+  );
+
+  const url = `${HttpServer.formatAddress(Context.get(server, HttpServer.HttpServer).address)}/mcp`;
+
+  return yield* Effect.gen(function* () {
+    const client = yield* McpClient.McpClient;
+    const tools = yield* client.listTools();
+    const offered = tools.find((candidate) => candidate.name === tool);
+    expect(offered).toBeDefined();
+
+    return yield* client.callTool({ tool: offered!, arguments: args });
+  }).pipe(
+    Effect.provide(
+      McpClient.layerHttp({
+        name: "test-cli",
+        version: "0.0.0",
+        protocol: McpProtocol.v2025_11_25,
+        url,
+        headers,
+      }).pipe(Layer.provide(FetchHttpClient.layer)),
+    ),
+    // Only `headers` name a trace; the client's own propagation would name another.
+    Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+  );
+});
+
 describe("the gateway's MCP server", () => {
   it.live("runs a CLI's tool call inside the trace its traceparent names", () =>
     Effect.gen(function* () {
       const traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
 
-      const server = yield* Layer.build(
-        HttpRouter.serve(gatewayMcpLayer).pipe(
-          Layer.provide(startGateway(fakeComputers({ browse: exampleDomain }).layer)),
-          Layer.provideMerge(NodeHttpServer.layer(createServer, { port: 0, host: "127.0.0.1" })),
-          // As in the server: HTTP requests start no spans, so only the gateway can link the trace.
-          Layer.provide(Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true)),
-        ),
-      );
-
-      const url = `${HttpServer.formatAddress(Context.get(server, HttpServer.HttpServer).address)}/mcp`;
-
-      const result = yield* Effect.gen(function* () {
-        const client = yield* McpClient.McpClient;
-        const tools = yield* client.listTools();
-        const tool = tools.find((candidate) => candidate.name === "navigate");
-        expect(tool).toBeDefined();
-
-        return yield* client.callTool({ tool: tool!, arguments: { url: "https://example.com" } });
-      }).pipe(
-        Effect.provide(
-          McpClient.layerHttp({
-            name: "test-cli",
-            version: "0.0.0",
-            protocol: McpProtocol.v2025_11_25,
-            url,
-            headers: { traceparent: `00-${traceId}-00f067aa0ba902b7-01` },
-          }).pipe(Layer.provide(FetchHttpClient.layer)),
-        ),
-        // Only the header above names a trace; the client's own propagation would name another.
-        Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+      const result = yield* callOverMcp(
+        { traceparent: `00-${traceId}-00f067aa0ba902b7-01`, [botHeader]: assistant.id },
+        "navigate",
+        { url: "https://example.com" },
       );
 
       expect(JSON.stringify(result.content)).toContain("Example Domain");
       expect((yield* auditRows).map((row) => row["trace_id"])).toEqual([traceId, traceId]);
+    }).pipe(Effect.provide(database), Effect.scoped),
+  );
+
+  it.live("acts for the Bot its header names, with that Bot's grants", () =>
+    Effect.gen(function* () {
+      const result = yield* callOverMcp({ [botHeader]: researcher.id }, "run", { command: "ls" });
+
+      expect(JSON.stringify(result.content)).toContain(
+        "run did not run: it is not granted to researcher",
+      );
+      expect(yield* trailWithReasons).toEqual([["run · deny", "not granted to researcher"]]);
+    }).pipe(Effect.provide(database), Effect.scoped),
+  );
+
+  it.live("refuses a call that names no Bot, or one that is not a Bot id", () =>
+    Effect.gen(function* () {
+      yield* callOverMcp({}, "snapshot", {});
+      yield* callOverMcp({ [botHeader]: "Not A Bot" }, "snapshot", {});
+
+      expect(yield* trailWithReasons).toEqual([
+        ["snapshot · deny", "not granted to an unnamed Bot"],
+        ["snapshot · deny", 'not granted to "Not A Bot"'],
+      ]);
     }).pipe(Effect.provide(database), Effect.scoped),
   );
 });
@@ -922,7 +1124,7 @@ const auditTrail = Effect.map(auditRows, (rows) =>
 
 /** The Bot's control as the page would first be shown it. */
 const controlNow = ComputerControl.use((control) =>
-  control.watch(bot).pipe(Stream.runHead, Effect.map(Option.getOrThrow)),
+  control.watch.pipe(Stream.runHead, Effect.map(Option.getOrThrow)),
 );
 
 /** `use` of the gateway and its control, as one server start provides them. */
@@ -943,7 +1145,7 @@ describe("Gateway control", () => {
         const tools = Object.values(botToolkit.tools);
 
         const results = yield* Effect.gen(function* () {
-          yield* ComputerControl.use((control) => control.take(bot));
+          yield* ComputerControl.use((control) => control.take);
           const toolkit = yield* botToolkit;
 
           return yield* Effect.forEach(tools, (tool) =>
@@ -960,6 +1162,7 @@ describe("Gateway control", () => {
             }),
           );
         }).pipe(
+          Effect.provideService(ActingBot, bot),
           Effect.provide(botToolHandlers.pipe(Layer.provideMerge(startGateway(computer.layer)))),
         );
 
@@ -986,12 +1189,32 @@ describe("Gateway control", () => {
   it.effect("tells the model a person has control, whatever it asked for", () =>
     Effect.gen(function* () {
       const error = yield* withControl((gateway, control) =>
-        control.take(bot).pipe(Effect.andThen(Effect.flip(gateway.act(bot, navigate)))),
+        control.take.pipe(Effect.andThen(Effect.flip(gateway.act(bot, navigate)))),
       ).pipe(Effect.provide(startGateway(shell({}).layer)));
 
       expect(error.message).toBe(
         "navigate did not run: a person has control of your computer. Wait until they hand it back, then take a snapshot.",
       );
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("refuses every Bot while a person holds the one computer they share", () =>
+    Effect.gen(function* () {
+      const computer = shell({});
+
+      const refused = yield* withControl((gateway, control) =>
+        control.take.pipe(
+          Effect.andThen(
+            Effect.forEach([bot, otherBot], (asking) => Effect.flip(gateway.act(asking, navigate))),
+          ),
+        ),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(refused.map((error) => error.message)).toEqual([
+        expect.stringContaining(personHasControl),
+        expect.stringContaining(personHasControl),
+      ]);
+      expect(computer.actions).toEqual([]);
     }).pipe(Effect.provide(database)),
   );
 
@@ -1022,13 +1245,14 @@ describe("Gateway control", () => {
 
             yield* Deferred.await(admitted);
 
-            const taking = yield* Effect.forkChild(control.take(bot), {
+            const taking = yield* Effect.forkChild(control.take, {
               startImmediately: true,
             });
 
-            const waiting = yield* control
-              .watch(bot)
-              .pipe(Stream.filter(Control.guards.Taking), Stream.runHead);
+            const waiting = yield* control.watch.pipe(
+              Stream.filter(Control.guards.Taking),
+              Stream.runHead,
+            );
 
             expect(waiting).toEqual(Option.some(Control.cases.Taking.make({ waitingFor: 1 })));
 
@@ -1086,7 +1310,7 @@ describe("Gateway control", () => {
             { startImmediately: true },
           );
 
-          const taking = yield* Effect.forkChild(control.take(bot), {
+          const taking = yield* Effect.forkChild(control.take, {
             startImmediately: true,
           });
 
@@ -1107,7 +1331,7 @@ describe("Gateway control", () => {
     Effect.gen(function* () {
       const computer = shell({});
 
-      yield* ComputerControl.use((control) => control.take(bot)).pipe(
+      yield* ComputerControl.use((control) => control.take).pipe(
         Effect.provide(startGateway(computer.layer)),
       );
 
@@ -1120,13 +1344,60 @@ describe("Gateway control", () => {
       expect(refused.message).toContain(personHasControl);
       expect(computer.actions).toEqual([]);
 
-      yield* ComputerControl.use((control) => control.handBack(bot)).pipe(
+      yield* ComputerControl.use((control) => control.handBack).pipe(
         Effect.provide(startGateway(computer.layer)),
       );
 
       expect(yield* controlNow.pipe(Effect.provide(startGateway(computer.layer)))).toEqual(
         Control.cases.Bot.make({}),
       );
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("keeps a person holding a Bot's computer in control once the computer is shared", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`DELETE FROM computer_control`;
+      yield* sql`DROP TABLE computer_control`;
+      yield* sql`CREATE TABLE bot_control (bot_id text PRIMARY KEY, since text NOT NULL)`;
+      yield* sql`INSERT INTO bot_control VALUES ('assistant', '2026-10-01T09:00:00.000Z')`;
+      yield* sql`DROP TABLE computer_snapshot`;
+      yield* sql`
+        CREATE TABLE bot_snapshots (bot_id text PRIMARY KEY, snapshot text NOT NULL, updated_at text NOT NULL)
+      `;
+      yield* sql`
+        DELETE FROM gateway_migrations WHERE name IN ('share_computer_control', 'share_computer_snapshot')
+      `;
+
+      yield* migrateGateway;
+
+      const control = yield* controlNow.pipe(Effect.provide(startGateway(shell({}).layer)));
+
+      expect(control).toEqual(
+        Control.cases.Person.make({ since: DateTime.makeUnsafe("2026-10-01T09:00:00.000Z") }),
+      );
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("forgets the latest snapshot on hand back, since the page may have changed", () =>
+    Effect.gen(function* () {
+      const stale = yield* withControl((gateway, control) =>
+        Effect.gen(function* () {
+          yield* gateway.act(bot, { action: "snapshot" });
+          yield* gateway.act(otherBot, { action: "snapshot" });
+          yield* control.take;
+          yield* control.handBack;
+
+          return yield* Effect.forEach([bot, otherBot], (asking) =>
+            Effect.flip(gateway.act(asking, { action: "click", ref: "e1" })),
+          );
+        }),
+      ).pipe(Effect.provide(startGateway(fakeComputers({ browse: exampleDomain }).layer)));
+
+      expect(stale.map((error) => error.message)).toEqual([
+        expect.stringContaining("e1 is not a ref in the page's latest snapshot"),
+        expect.stringContaining("e1 is not a ref in the page's latest snapshot"),
+      ]);
     }).pipe(Effect.provide(database)),
   );
 
@@ -1137,9 +1408,9 @@ describe("Gateway control", () => {
       const [handedBack, stale] = yield* withControl((gateway, control) =>
         Effect.gen(function* () {
           yield* gateway.act(bot, { action: "snapshot" });
-          yield* control.take(bot);
+          yield* control.take;
 
-          const handedBack = yield* control.handBack(bot);
+          const handedBack = yield* control.handBack;
           const stale = yield* Effect.flip(gateway.act(bot, { action: "click", ref: "e1" }));
 
           yield* gateway.act(bot, { action: "snapshot" });
@@ -1150,7 +1421,7 @@ describe("Gateway control", () => {
       ).pipe(Effect.provide(startGateway(computer.layer)));
 
       expect(handedBack).toEqual(Control.cases.Bot.make({}));
-      expect(stale.message).toContain("e1 is not a ref in your latest snapshot");
+      expect(stale.message).toContain("e1 is not a ref in the page's latest snapshot");
       expect(yield* auditTrail).toEqual([
         "snapshot · allow",
         "snapshot · succeeded",
@@ -1165,6 +1436,7 @@ describe("Gateway control", () => {
         "click · succeeded",
       ]);
       expect(JSON.parse(String((yield* auditRows)[6]?.["detail"]))).toEqual({
+        bot: "assistant",
         ref: "e1",
         reason: "there is no snapshot yet",
       });
@@ -1174,12 +1446,7 @@ describe("Gateway control", () => {
   it.effect("records one take and one hand back, however often each is asked for", () =>
     Effect.gen(function* () {
       const answers = yield* ComputerControl.use((control) =>
-        Effect.all([
-          control.take(bot),
-          control.take(bot),
-          control.handBack(bot),
-          control.handBack(bot),
-        ]),
+        Effect.all([control.take, control.take, control.handBack, control.handBack]),
       ).pipe(Effect.provide(startGateway(shell({}).layer)));
 
       expect(answers.map((control) => control._tag)).toEqual(["Person", "Person", "Bot", "Bot"]);
@@ -1197,9 +1464,9 @@ describe("Gateway control", () => {
       const [error, control] = yield* withControl((gateway, control) =>
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
-          yield* sql`DROP TABLE bot_control`;
+          yield* sql`DROP TABLE computer_control`;
 
-          const error = yield* Effect.flip(control.take(bot));
+          const error = yield* Effect.flip(control.take);
           yield* gateway.act(bot, navigate);
 
           return [error, yield* controlNow] as const;
@@ -1228,13 +1495,13 @@ describe("Gateway control", () => {
 
       const [before, after] = yield* ComputerControl.use((control) =>
         Effect.gen(function* () {
-          const before = yield* Effect.flip(control.input(bot, centre));
+          const before = yield* Effect.flip(control.input(centre));
 
-          yield* control.take(bot);
-          yield* control.input(bot, centre);
-          yield* control.handBack(bot);
+          yield* control.take;
+          yield* control.input(centre);
+          yield* control.handBack;
 
-          return [before, yield* Effect.flip(control.input(bot, centre))] as const;
+          return [before, yield* Effect.flip(control.input(centre))] as const;
         }),
       ).pipe(Effect.provide(startGateway(computer.layer)));
 
@@ -1260,11 +1527,9 @@ describe("Gateway control", () => {
       });
 
       const error = yield* ComputerControl.use((control) =>
-        control
-          .take(bot)
-          .pipe(
-            Effect.andThen(Effect.flip(control.input(bot, Click.make({ at: { x: 0, y: 0 } })))),
-          ),
+        control.take.pipe(
+          Effect.andThen(Effect.flip(control.input(Click.make({ at: { x: 0, y: 0 } })))),
+        ),
       ).pipe(Effect.provide(startGateway(computer.layer)));
 
       expect(error).toEqual(new InputFailed({ message: "Clicking failed: closed" }));
@@ -1277,9 +1542,9 @@ describe("Gateway control", () => {
 
       yield* withControl((gateway, control) =>
         Effect.gen(function* () {
-          yield* control.take(bot);
+          yield* control.take;
           yield* Effect.flip(gateway.act(bot, navigate));
-          yield* control.handBack(bot);
+          yield* control.handBack;
         }),
       ).pipe(Effect.provide(startGateway(shell({}).layer)), Effect.provide(tracing.layer));
 
@@ -1318,7 +1583,7 @@ describe("Gateway control", () => {
         );
 
         const [first, again, control] = yield* ComputerControl.use((control) =>
-          Effect.all([Effect.flip(control.take(bot)), Effect.flip(control.take(bot)), controlNow]),
+          Effect.all([Effect.flip(control.take), Effect.flip(control.take), controlNow]),
         ).pipe(Effect.provide(startGateway(computers.layer)));
 
         expect(first).toEqual(
@@ -1342,11 +1607,9 @@ describe("Gateway control", () => {
       );
 
       const error = yield* ComputerControl.use((control) =>
-        control
-          .take(bot)
-          .pipe(
-            Effect.andThen(Effect.flip(control.input(bot, Click.make({ at: { x: 0, y: 0 } })))),
-          ),
+        control.take.pipe(
+          Effect.andThen(Effect.flip(control.input(Click.make({ at: { x: 0, y: 0 } })))),
+        ),
       ).pipe(Effect.provide(startGateway(computers.layer)));
 
       expect(error).toEqual(new InputFailed({ message: "No computer is running." }));
@@ -1361,15 +1624,15 @@ describe("Gateway control", () => {
 
         const [error, handedBack] = yield* ComputerControl.use((control) =>
           Effect.gen(function* () {
-            yield* control.take(bot);
+            yield* control.take;
 
             const clicking = yield* Effect.forkChild(
-              Effect.flip(control.input(bot, Click.make({ at: { x: 0, y: 0 } }))),
+              Effect.flip(control.input(Click.make({ at: { x: 0, y: 0 } }))),
             );
 
             yield* TestClock.adjust(Duration.seconds(15));
 
-            return [yield* Fiber.join(clicking), yield* control.handBack(bot)] as const;
+            return [yield* Fiber.join(clicking), yield* control.handBack] as const;
           }),
         ).pipe(Effect.provide(startGateway(computer.layer)));
 
@@ -1429,13 +1692,14 @@ describe("Gateway files", () => {
           "allow",
           "write_file",
           JSON.stringify({
+            bot: "assistant",
             path: "expenses-total.csv",
             name: "expenses-total.csv",
             extension: "csv",
             bytes: totalledBytes,
           }),
         ],
-        ["succeeded", "write_file", "{}"],
+        ["succeeded", "write_file", JSON.stringify({ bot: "assistant" })],
       ]);
       expect(JSON.stringify(rows)).not.toContain("total,20.00");
 
@@ -1479,7 +1743,13 @@ describe("Gateway files", () => {
           [
             "deny",
             "read_file",
-            JSON.stringify({ path, name: "passwd", extension: "", reason: "outside workspace" }),
+            JSON.stringify({
+              bot: "assistant",
+              path,
+              name: "passwd",
+              extension: "",
+              reason: "outside workspace",
+            }),
           ],
         ]);
       }).pipe(Effect.provide(database)),

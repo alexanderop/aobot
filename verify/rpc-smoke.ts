@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Effect, Layer, Stream } from "effect";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
-import { ChatRpcs, ConversationId, MessageId } from "../packages/domain/src/index.ts";
+import { BotId, ChatRpcs, ConversationId, MessageId } from "../packages/domain/src/index.ts";
 
 /**
 Talks to a running server the way the web app does: Effect RPC over the `/rpc` WebSocket. Opens a new
@@ -13,6 +13,8 @@ Usage: `node verify/rpc-smoke.ts [ws://localhost:3000/rpc]`.
 const url = process.argv[2] ?? "ws://localhost:3000/rpc";
 
 const conversationId = ConversationId.make(randomUUID());
+
+const botId = BotId.make("assistant");
 
 function check(condition: boolean, message: string): void {
   if (!condition) throw new Error(`smoke failed: ${message}`);
@@ -28,7 +30,7 @@ const protocol = RpcClient.layerProtocolSocket().pipe(
 const smoke = Effect.gen(function* () {
   const client = yield* RpcClient.make(ChatRpcs);
 
-  const before = yield* client["Chat.open"]({ conversationId });
+  const before = yield* client["Chat.open"]({ conversationId, botId });
   console.log("open (new):", JSON.stringify(before));
   check(before.messages.length === 0, "a new conversation has no messages");
 
@@ -36,6 +38,7 @@ const smoke = Effect.gen(function* () {
 
   const events = yield* client["Chat.send"]({
     conversationId,
+    botId,
     messageId: MessageId.make(randomUUID()),
     text: "Say hi in five words",
   }).pipe(
@@ -50,7 +53,7 @@ const smoke = Effect.gen(function* () {
   check(deltas.length > 1, `the answer streamed in ${deltas.length} pieces`);
   check(events.at(-1)?.type === "RUN_FINISHED", "the turn ends with RUN_FINISHED");
 
-  const after = yield* client["Chat.open"]({ conversationId });
+  const after = yield* client["Chat.open"]({ conversationId, botId });
   console.log("open (again):", JSON.stringify(after));
   check(
     after.messages.map((message) => message.role).join(",") === "user,assistant",

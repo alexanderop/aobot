@@ -85,10 +85,48 @@ the Mac itself, the native dialog, because a rule written on the server cannot s
 person's disk. When the app is closed, a `mac` call fails with "your Mac is not connected" rather than
 waiting.
 
+## Bots and their grants
+
+An admin defines the Bots in `bots.yaml` at the repository root (`BOTS_FILE` points elsewhere; Compose
+mounts it into the server). Each Bot has an id, a name, its instructions, the tools it is granted, and
+where the sidebar shows it: `pinned`, or under a `group`.
+
+```yaml
+bots:
+  - id: researcher # lowercase letters, digits and dashes
+    name: Researcher
+    group: research
+    instructions: You are Researcher. You look things up on the web and report what you found.
+    tools: [snapshot, navigate, click]
+```
+
+The server decodes the file with Effect Schema once at start-up. A file that is missing, empty or not
+YAML, misses a field or misspells one, names a tool that does not exist, pins a Bot it also puts in a
+group, gives two Bots one id, or lists no Bot at all stops the server with the file's path, every
+problem in it and where in the file each is. An edit takes effect on the next start.
+
+Every Bot is offered every gateway tool, whichever runtime runs it, because the gateway is what enforces
+the grant: a model that calls a tool its Bot was not granted reads why. Its instructions describe only
+the tools it was granted, so a model rarely tries the others.
+
+Each turn runs on behalf of one Bot. The `api` runtime provides the turn's Bot to the tool handlers as
+`ActingBot`; the `acp` runtime offers the gateway's MCP server with an `aobot-bot` header naming it, and
+the server reads `ActingBot` from that header on every call.
+
+`Gateway.act` checks the grant before anything else the gateway does: before the door, before a ref is
+resolved or a path judged, and before any rule. Only the toolkit comes first, decoding the call's
+parameters. A tool the Bot was not granted, a Bot the file does not name, and a call that names no Bot
+are each a `deny` row with `{ bot, reason: "not granted to <bot id>" }` (`an unnamed Bot` when it names
+none, and the header quoted as written when an `acp` CLI's `aobot-bot` header is no Bot id), the
+computer never hears of it, and the model reads:
+
+> run did not run: it is not granted to researcher. Use only the tools your instructions name.
+
 ## Life of one request
 
 1. A person sends a message with the Bot they picked.
-2. The server starts an agent turn with the Bot's instructions and its granted tools.
+2. The server starts an agent turn on behalf of that Bot, with its instructions, which name the tools it
+   was granted.
 3. The agent asks for a tool, for example `navigate`.
 4. The gateway checks the grant, then the rules, and writes one audit row either way.
 5. Only on "yes", the gateway asks the person's computer to act, and never when its row could not be
@@ -127,22 +165,24 @@ goes into a log, a span or an audit row.
 A person takes the mouse when their Bot reaches a login or a CAPTCHA, clicks on the live screen
 themselves, and hands it back. While the person holds the computer, the panel stays open, and every Bot
 action is refused. `ComputerControl` does it, from the same layer as `Gateway`, so a person's take and the
-Bot's actions meet at one door per Bot.
+Bots' actions meet at one door. Every Bot shares the one computer until E3-3 gives each person their own,
+so there is one door for all of them, and a person who holds the computer holds it for every Bot.
 
-1. Each Bot has one door in the gateway, and every Bot action goes through it before anything else, in
-   `Gateway.act`, whatever its tool. The door is `Open` while the Bot holds its computer, `Closing` while a
-   take waits, and `Held` while the person holds it. Only an open door lets an action in. A Bot's
-   commands wait for each other outside the door, so a command whose turn comes while the person holds
-   the computer is refused, and a take never waits for one.
-2. `Control.take` writes `control_taken · allow`, closes the door, stores a row for the Bot in
-   `bot_control`, then waits for the actions the door already let in to finish. The page shows `Taking`
-   meanwhile. Once the person holds the computer, the take starts it if none runs, and answers. A
+1. The computer has one door in the gateway, and every Bot action goes through it right after its grant
+   is checked, in `Gateway.act`, whatever the tool and whichever Bot asks. The door is `Open` while the Bots
+   hold the computer, `Closing` while a take waits, and `Held` while the person holds it. Only an open
+   door lets an action in. Commands wait for each other outside the door, since they share one shell, so a
+   command whose turn comes while the person holds the computer is refused, and a take never waits for
+   one.
+2. `Control.take` writes `control_taken · allow`, closes the door, stores the one row of
+   `computer_control`, then waits for the actions the door already let in to finish. The page shows
+   `Taking` meanwhile. Once the person holds the computer, the take starts it if none runs, and answers. A
    computer that does not start leaves the person holding it, and the page says why. Taking again while
    holding it changes nothing but starts the computer again.
-3. `bot_control` is read at start-up, so a restart, even one in the middle of a take, leaves the person in
-   control. No computer runs then: the panel says the computer is not showing a page and offers to start
-   it, which takes control again.
-4. While the door is not open, a Bot call is a `deny` row with `{ reason: "a person has control" }`, the
+3. `computer_control` is read at start-up, so a restart, even one in the middle of a take, leaves the
+   person in control. No computer runs then: the panel says the computer is not showing a page and offers
+   to start it, which takes control again.
+4. While the door is not open, a Bot call is a `deny` row with `{ bot, reason: "a person has control" }`, the
    computer never hears of it, and the model reads:
 
    > navigate did not run: a person has control of your computer. Wait until they hand it back, then take
@@ -155,9 +195,10 @@ Bot's actions meet at one door per Bot.
    caller stopped waiting for it, so a Bot action from a stopped turn never lands beside the person's
    click. A click the page holds up past 5 seconds fails, and the browser is free for the next action.
    A person's clicks are not audited: the rows around them say who held the computer.
-6. `Control.handBack` writes `control_released · allow`, and in one transaction deletes the Bot's
-   `bot_control` row, forgets its latest snapshot and writes `succeeded`. The Bot's old refs are then
-   refused like any ref without a snapshot, so it reads the page again before it acts on an element.
+6. `Control.handBack` writes `control_released · allow`, and in one transaction deletes the
+   `computer_control` row, forgets the latest snapshot, since the person may have changed the
+   page, and writes `succeeded`. Old refs are then refused like any ref without a snapshot, so a Bot reads
+   the page again before it acts on an element.
 
 `/rpc` refuses a request with 403, before any RPC, unless the host it was sent to, its `Host`, is
 `localhost`, `127.0.0.1`, `[::1]` or the server's `PUBLIC_HOST`, and a page's `Origin`, when it sends one,
@@ -176,7 +217,7 @@ either is swept to `unknown` at start-up like any other call. Their spans, `Comp
 ## Files in and out of the workspace
 
 A person gives the Bot a file to work on and downloads the file it made, without copying text through the
-chat. Both are the person's own calls, not the Bot's, so they do not go through the Bot's door: a person
+chat. Both are the person's own calls, not the Bot's, so they do not go through the Bots' door: a person
 holding the computer can still move files. `FileTransfers` does them, from the same layer as `Gateway`.
 
 1. `＋` in the composer uploads a picked file at once with `PUT /files?path=<name>`. The server
@@ -207,24 +248,26 @@ ends. The HTTP client's spans of the server's requests to the computer's `/files
 
 ## Gateway tools
 
-Every tool a Bot has, in either runtime. The tool map test (`apps/server/src/features/gateway/tool-map.test.ts`)
+Every tool a Bot can be granted, in either runtime. The tool map test (`apps/server/src/features/gateway/tool-map.test.ts`)
 fails when a tool in `botToolkit` is missing here or a row here names no tool. Each call writes the `allow`
 row first, then one outcome row linked to it by `outcome_of`. Both carry the turn's `trace_id`; the outcome row
-copies the action, and its `detail` says why for `failed` and `unknown`.
+copies the action, and its `detail` says why for `failed` and `unknown`. Every row's `detail`, `deny` rows
+included, starts with `bot`: the id of the Bot the call was made for, or `null` when it named none by its
+id. The `Gateway.act` span records it as `gateway.bot`.
 
-| Tool         | Parameters         | Computer action                                               | Audit rows                                                                                                                                                          |
-| ------------ | ------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `navigate`   | `url`              | `POST /act {"action":"navigate","url"}`                       | `navigate · allow` with `{ url }`, then `succeeded`, `failed` or `unknown`                                                                                          |
-| `snapshot`   | none               | `POST /act {"action":"snapshot"}`                             | `snapshot · allow` with `{}`, then `succeeded`, `failed` or `unknown`                                                                                               |
-| `click`      | `ref`              | `POST /act {"action":"click","target":{ref,role,name}}`       | `click · allow` with `{ ref, role, name }`, then `succeeded`, `failed` or `unknown`; `click · deny` with `{ ref, reason }`                                          |
-| `type`       | `ref`, `text`      | `POST /act {"action":"type","target":{ref,role,name},"text"}` | `type · allow` with `{ ref, role, name, text: "[N chars]" }`, then `succeeded`, `failed` or `unknown`; `type · deny` with `{ ref, reason }`                         |
-| `run`        | `command`          | `POST /act {"action":"run","command"}`                        | `run · allow` with `{ command }` (capped at 2,000 characters), then `succeeded`, `failed` or `unknown`                                                              |
-| `read_file`  | `path`             | `POST /act {"action":"read_file","path"}`                     | `read_file · allow` with `{ path, name, extension }`, then `succeeded`, `failed` or `unknown`; `read_file · deny` with `{ path, name, extension, reason }`          |
-| `write_file` | `path`, `contents` | `POST /act {"action":"write_file","path","contents"}`         | `write_file · allow` with `{ path, name, extension, bytes }`, then `succeeded`, `failed` or `unknown`; `write_file · deny` with `{ path, name, extension, reason }` |
-| `list_files` | `path`             | `POST /act {"action":"list_files","path"}`                    | `list_files · allow` with `{ path, name, extension }`, then `succeeded`, `failed` or `unknown`; `list_files · deny` with `{ path, name, extension, reason }`        |
+| Tool         | Parameters         | Computer action                                               | Audit rows                                                                                                                                                                    |
+| ------------ | ------------------ | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `navigate`   | `url`              | `POST /act {"action":"navigate","url"}`                       | `navigate · allow` with `{ bot, url }`, then `succeeded`, `failed` or `unknown`                                                                                               |
+| `snapshot`   | none               | `POST /act {"action":"snapshot"}`                             | `snapshot · allow` with `{ bot }`, then `succeeded`, `failed` or `unknown`                                                                                                    |
+| `click`      | `ref`              | `POST /act {"action":"click","target":{ref,role,name}}`       | `click · allow` with `{ bot, ref, role, name }`, then `succeeded`, `failed` or `unknown`; `click · deny` with `{ bot, ref, reason }`                                          |
+| `type`       | `ref`, `text`      | `POST /act {"action":"type","target":{ref,role,name},"text"}` | `type · allow` with `{ bot, ref, role, name, text: "[N chars]" }`, then `succeeded`, `failed` or `unknown`; `type · deny` with `{ bot, ref, reason }`                         |
+| `run`        | `command`          | `POST /act {"action":"run","command"}`                        | `run · allow` with `{ bot, command }` (capped at 2,000 characters), then `succeeded`, `failed` or `unknown`                                                                   |
+| `read_file`  | `path`             | `POST /act {"action":"read_file","path"}`                     | `read_file · allow` with `{ bot, path, name, extension }`, then `succeeded`, `failed` or `unknown`; `read_file · deny` with `{ bot, path, name, extension, reason }`          |
+| `write_file` | `path`, `contents` | `POST /act {"action":"write_file","path","contents"}`         | `write_file · allow` with `{ bot, path, name, extension, bytes }`, then `succeeded`, `failed` or `unknown`; `write_file · deny` with `{ bot, path, name, extension, reason }` |
+| `list_files` | `path`             | `POST /act {"action":"list_files","path"}`                    | `list_files · allow` with `{ bot, path, name, extension }`, then `succeeded`, `failed` or `unknown`; `list_files · deny` with `{ bot, path, name, extension, reason }`        |
 
-While a person holds the Bot's computer, every tool is refused before its ref is resolved: `<tool> · deny`
-with `{ reason: "a person has control" }` (see [Taking control](#taking-control)).
+While a person holds the computer, every granted tool of every Bot is refused before its ref is resolved: `<tool> · deny`
+with `{ bot, reason: "a person has control" }` (see [Taking control](#taking-control)).
 
 Every browser action answers with the page read afresh: its URL, title and snapshot, capped at 12,000
 characters. `type` replaces what the field holds and never presses Enter.
@@ -250,7 +293,7 @@ on the tools, on `/act` and on both `/files` routes: `""` is read as `.`, the wo
 is trimmed, so the gateway and the computer judge the very same name, and `a.txt ` is a file of its own.
 A path is judged as the computer, which runs Linux, reads it: only a leading `/` makes it absolute and
 only `/` separates, so `c:notes.txt` and `a\b.txt` are each one file's name. A path that is absolute,
-`/workspace/notes.txt` included, or that goes up with `..` is denied before anything else, the computer
+`/workspace/notes.txt` included, or that goes up with `..` is denied before anything is forwarded, the computer
 never hears of it, and the model reads:
 
 > read_file did not run: /etc/passwd is outside your workspace. Name a file by its path inside /workspace,
@@ -275,13 +318,21 @@ file holds.
 
 ### Refs
 
-A ref such as `e12` names one element of the latest snapshot the Bot was shown. The gateway stores that
-snapshot per Bot in the database (`bot_snapshots`), replacing it after every action that answered, so any
-replica resolves a ref the same way. Before any rule runs, `click` and `type` resolve their ref to the
-element's role and name. A ref that is not in the stored snapshot is a `deny` row, the computer never
-hears of it, and the model reads:
+A ref such as `e12` names one element of the latest snapshot of the page. Every Bot drives the one
+browser on the computer they share, so the gateway stores one snapshot for that computer in the database
+(`computer_snapshot`), with the Bot whose browser action read it (`read_by`), replacing both after every
+browser action that answered, whichever Bot asked. Any replica resolves a ref the same way. Before any
+rule runs, `click` and `type` resolve their ref to the element's role and name. A ref resolves only for
+the Bot that read the latest snapshot: another Bot's refs name a page it saw before the page changed, and
+the same ref can name a different element on the new page, which the computer's own check would not
+catch. Such a ref is a `deny` row with `another Bot read the page since`, the computer never hears of it,
+and the model reads:
 
-> click did not run: e12 is not a ref in your latest snapshot. Take a snapshot and use a ref from it.
+> click did not run: the page changed since you last read it. Take a snapshot and use a ref from it.
+
+A ref that is not in the snapshot its Bot read is a `deny` row too, and the model reads:
+
+> click did not run: e12 is not a ref in the page's latest snapshot. Take a snapshot and use a ref from it.
 
 The computer sends the resolved element, not just its ref, and reads the page afresh before acting. When
 the element at that ref is gone or no longer has that role and name (the page changed, or a navigation
@@ -332,11 +383,32 @@ const conversation = Atom.family((id: ConversationId) => /* fold ChatEvents into
 
 | Hook                       | Shaped like CopilotKit's             | What it gives a component                                                                                                                     | From |
 | -------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
-| `useConversation(id)`      | `useAgent`                           | `transcript` (messages and tool calls in order), `isRunning`, `usesComputer`, `send`, `stop`                                                  | E0-1 |
+| `useConversation(id, bot)` | `useAgent`                           | The conversation's own `bot`, `transcript` (messages and tool calls in order), `isRunning`, `usesComputer`, `unsent`, `send`, `stop`          | E0-1 |
 | `useToolCallRenderer()`    | `useRenderTool`, `useRenderToolCall` | A registry from tool name to a component that draws one tool call in each of its states                                                       | E1-1 |
 | `useLiveScreen()`          | (none)                               | The latest screen frame, none while the screen is blank                                                                                       | E1-4 |
-| `useControl()`             | (none)                               | Who holds the Bot's computer, why the last take, click or hand back failed, `takeControl`, `handBack`, `click`                                | E1-5 |
+| `useControl()`             | (none)                               | Who holds the computer every Bot shares, why the last take, click or hand back failed, `takeControl`, `handBack`, `click`                     | E1-5 |
 | `useAttachments(id, send)` | (none)                               | The files picked in the conversation's composer and how each upload went, `attach`, `dismiss`, and `send`, which names the files that arrived | E1-6 |
+| `useBots()`                | (none)                               | The Bots the server knows, as `bots.yaml` lists them, for the sidebar                                                                         | E2-1 |
+| `useSelection()`           | (none)                               | The Bot and conversation the page has open, as the server confirmed it, and `pick` to open another Bot                                        | E2-1 |
+
+The page opens the Bot and the conversation the URL names as `?bot=<id>&c=<id>`, or the first Bot in
+`bots.yaml`; a `bot` that is no Bot the server knows, or no Bot id at all, opens the first Bot and drops
+the URL's conversation. One writable `selection` atom holds it: its read side derives it from the URL, the
+Bot list, a memory of each Bot's last conversation and what `Chat.open` answered for that pair, and
+corrects the URL to show it without a history entry; its write side takes a picked Bot and pushes a
+history entry, so Back returns to the Bot before. The memory lives in an atom and is mirrored to
+`localStorage` at best, so a private window still returns to the conversation a person left. Each write
+takes in what other tabs stored first, so two tabs never overwrite each other's Bots. Each sidebar entry
+is a link to `?bot=<id>`, so it opens in a new tab or copies like any link.
+
+A conversation belongs to the Bot of its first message. `Chat.open` and `Chat.send` name the Bot the page
+picked; the server refuses another Bot with `ConversationOfAnotherBot`, naming the conversation's own,
+and a Bot the file does not name with `UnknownBot`. The page follows the first to the conversation's Bot;
+a message `Chat.send` was refused for goes back into the composer, where it stays through the follow.
+The second means the page's Bot list is out of date: the page asks for it again, once per answer, and
+stays on the Bot with its refusal until the fresh list resolves the URL to a Bot it names. It never moves
+to a Bot only the old list named, so two Bots the server forgot cannot send it back and forth. It
+remembers a Bot's conversation only once the server opened it with that Bot.
 
 Not copied: `useFrontendTool` (it runs a Bot's tool in the open tab, which breaks routines, the Mac and
 closed tabs) and CopilotKit's provider. The wire format stays AG-UI, so a CopilotKit or other AG-UI client
@@ -451,6 +523,10 @@ reaches when it does not, until network limits (E5-3). These hold locally as muc
 - **An approval is spent once.** It is bound to the exact action, refused if that changes, never repeated
   after a crash, and a "No" covers equivalent actions. Credentials, security settings and payments always go
   to the person, whatever the rules say (E2-6).
+- **An `acp` CLI names its own Bot.** Every MCP call carries the `aobot-bot` header the `acp` runtime
+  set for the turn, and the gateway grants by it, so a process on the host that reaches `/mcp` can name
+  any Bot. `acp` runs only in single-user mode on loopback, the same trust every MCP call had before
+  Bots existed; a per-turn token would close it.
 - **Secrets are typed by the person, not the chat.** When a Bot needs a password it asks; the person types
   it into a separate field that goes straight to the computer. The audit row records that a secret was
   supplied and its length.

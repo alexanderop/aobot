@@ -1,18 +1,22 @@
 import {
+  type BotId,
   type ChatEvent,
   ChatRpcs,
   ConversationBusy,
   type ConversationId,
+  ConversationOfAnotherBot,
   type ConversationRef,
   type Message,
   MessageAlreadySent,
   MessageId,
+  type OpenConversation,
   RunId,
   type SendMessage,
+  UnknownBot,
 } from "@aobot/domain";
 import { Deferred, Effect, MutableHashMap, Option, Ref, Stream } from "effect";
 import { AgentRuntime } from "../agent/public.ts";
-import { assistant, botSummary } from "../bots/public.ts";
+import { Bots, botSummary, turnInstructions } from "../bots/public.ts";
 import { ConversationStore } from "./conversation-store.ts";
 import { TurnStopped, isTerminal, turnEvents } from "./turn.ts";
 
@@ -32,19 +36,39 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
   Effect.gen(function* () {
     const store = yield* ConversationStore;
     const agent = yield* AgentRuntime;
+    const bots = yield* Bots;
 
     // One server process owns every run, so this map is the whole "one run per conversation" rule:
     // an entry exists exactly while a turn runs, and a restart starts with none. Its value is that
     // turn's stop signal.
     const runs = MutableHashMap.empty<ConversationId, Deferred.Deferred<void>>();
 
+    /**
+    The Bot the page picked, unless the conversation belongs to another. A Bot no longer in `bots.yaml` is
+    unknown, so its old conversations open no more.
+    */
+    const botOf = Effect.fnUntraced(function* (conversationId: ConversationId, picked: BotId) {
+      const own = yield* store.bot(conversationId);
+
+      if (Option.isSome(own) && own.value !== picked) {
+        return yield* new ConversationOfAnotherBot({ conversationId, botId: own.value });
+      }
+
+      return yield* Option.match(bots.get(picked), {
+        onNone: () => Effect.fail(new UnknownBot({ botId: picked })),
+        onSome: Effect.succeed,
+      });
+    });
+
     const open = Effect.fn("Chat.open")(function* ({
       conversationId,
-    }: typeof ConversationRef.Type) {
+      botId,
+    }: typeof OpenConversation.Type) {
+      const bot = yield* botOf(conversationId, botId);
       const messages = yield* store.messages(conversationId);
 
       return {
-        bot: botSummary(assistant),
+        bot: botSummary(bot),
         messages,
         isRunning: MutableHashMap.has(runs, conversationId),
       };
@@ -81,7 +105,9 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
         () => release,
       );
 
-      yield* store.ensure(conversationId, assistant.id);
+      const bot = yield* botOf(conversationId, message.botId);
+
+      yield* store.ensure(conversationId, bot.id);
 
       const isNew = yield* store.append(conversationId, {
         id: message.messageId,
@@ -125,7 +151,7 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
             isStopped
               ? Stream.fail(new TurnStopped())
               : agent
-                  .run({ instructions: assistant.instructions, history })
+                  .run({ bot: bot.id, instructions: turnInstructions(bot), history })
                   .pipe(
                     Stream.interruptWhen(
                       Effect.andThen(Deferred.await(stopped), Effect.fail(new TurnStopped())),
@@ -156,7 +182,9 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
       "Chat.open": open,
       // A new root, so the trace is named after the turn rather than the socket or RPC call it came in on.
       "Chat.send": (message) =>
-        Stream.unwrap(startTurn(message)).pipe(Stream.withSpan("Chat.turn", { root: true })),
+        Stream.unwrap(startTurn(message)).pipe(
+          Stream.withSpan("Chat.turn", { root: true, attributes: { "chat.bot": message.botId } }),
+        ),
       "Chat.stop": stop,
     });
   }),

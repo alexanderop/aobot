@@ -1,7 +1,8 @@
-import { Effect, Schedule, Schema, Stream } from "effect";
+import { Effect, Option, Schedule, Schema, Stream } from "effect";
 import type { Duration } from "effect";
 import { Atom } from "effect/reactivity";
-import type { ConversationId, MessageId } from "@aobot/domain";
+import type { BotId, ConversationId, MessageId, OpenConversation } from "@aobot/domain";
+import { botList } from "../bots/public.ts";
 import { ChatClient } from "./chat-client.ts";
 import {
   acknowledgeDuplicate,
@@ -9,14 +10,18 @@ import {
   failConnection,
   failIfStillRunning,
   initialState,
+  OpenOutcome,
   receiveEvent,
+  refuseForAnotherBot,
   refuseMessage,
+  refuseUnknownBot,
   requestStop,
   seedFromSnapshot,
 } from "./conversation-state.ts";
 
-/** A message the person typed, with the id the page picked for it. */
+/** A message the person typed, with the id the page picked for it and the Bot the page has open. */
 export interface Outgoing {
+  readonly botId: BotId;
   readonly messageId: MessageId;
   readonly text: string;
 }
@@ -32,23 +37,46 @@ page would silently start a second conversation state.
 */
 export function makeConversations(
   runtime: Atom.AtomRuntime<ChatClient>,
+  botList: Atom.Atom<unknown>,
   reconnectEvery: Duration.Input = "2 seconds",
 ) {
   const state = Atom.family((_id: ConversationId) => Atom.keepAlive(Atom.make(initialState)));
 
-  const open = Atom.family((id: ConversationId) =>
+  /**
+  Opens the conversation with the Bot the page picked, and answers what the server said. Keyed by the
+  conversation and the Bot, compared by value. A refusal is an answer, not retried: asking again would
+  not make the server know the Bot, nor give the conversation another. A Bot the server does not know
+  means `botList` is out of date, so it is asked for again, once per answer.
+  */
+  const open = Atom.family((opening: typeof OpenConversation.Type) =>
     Atom.keepAlive(
       runtime.atom(
         Effect.gen(function* () {
+          const id = opening.conversationId;
           const client = yield* ChatClient;
-          const snapshot = yield* client("Chat.open", { conversationId: id });
 
-          yield* Atom.set(state(id), seedFromSnapshot(snapshot));
+          return yield* client("Chat.open", opening).pipe(
+            Effect.tap((snapshot) =>
+              Atom.update(state(id), (current) => seedFromSnapshot(current, snapshot)),
+            ),
+            Effect.map(({ bot }) => OpenOutcome.Opened({ bot })),
+            Effect.catchTags({
+              UnknownBot: ({ botId }) =>
+                Atom.update(state(id), (current) =>
+                  refuseUnknownBot(current, botId, Option.none()),
+                ).pipe(
+                  Effect.andThen(Atom.refresh(botList)),
+                  Effect.as(OpenOutcome.UnknownBot({ botId })),
+                ),
+              ConversationOfAnotherBot: ({ botId }) =>
+                Effect.succeed(OpenOutcome.OfAnotherBot({ botId })),
+            }),
+          );
         }).pipe(
           Effect.catchDefect(() => Effect.fail(new OpenCrashed())),
           Effect.timeout("5 seconds"),
           Effect.tapError(() =>
-            Atom.update(state(id), (current) =>
+            Atom.update(state(opening.conversationId), (current) =>
               failConnection(current, "Cannot reach the server."),
             ),
           ),
@@ -69,6 +97,7 @@ export function makeConversations(
           );
           yield* client("Chat.send", {
             conversationId: id,
+            botId: outgoing.botId,
             messageId: outgoing.messageId,
             text: outgoing.text,
           }).pipe(
@@ -81,6 +110,19 @@ export function makeConversations(
             ),
             Effect.catchTag("ConversationBusy", () =>
               Atom.update(state(id), (current) => refuseMessage(current, outgoing.messageId)),
+            ),
+            Effect.catchTag("UnknownBot", ({ botId }) =>
+              Atom.update(state(id), (current) =>
+                refuseUnknownBot(current, botId, Option.some(outgoing.messageId)),
+              ),
+            ),
+            // The open asks again, so the page follows the conversation to its own Bot.
+            Effect.catchTag("ConversationOfAnotherBot", ({ botId }) =>
+              Atom.update(state(id), (current) =>
+                refuseForAnotherBot(current, botId, outgoing.messageId),
+              ).pipe(
+                Effect.andThen(Atom.refresh(open({ conversationId: id, botId: outgoing.botId }))),
+              ),
             ),
             Effect.catchTag("MessageAlreadySent", () =>
               Atom.update(state(id), (current) =>
@@ -122,4 +164,4 @@ export function makeConversations(
 }
 
 /** The conversation atoms wired to the real WebSocket client. */
-export const conversation = makeConversations(ChatClient.runtime);
+export const conversation = makeConversations(ChatClient.runtime, botList);

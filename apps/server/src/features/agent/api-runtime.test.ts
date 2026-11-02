@@ -1,4 +1,4 @@
-import { MessageId, ToolCallId } from "@aobot/domain";
+import { BotId, MessageId, ToolCallId } from "@aobot/domain";
 import { describe, expect, it } from "@effect/vitest";
 import { Duration, Effect, Fiber, Layer, Queue, Ref, Schema, Stream } from "effect";
 import { Tool, Toolkit } from "effect/ai";
@@ -35,6 +35,7 @@ const pingHandlers = PingToolkit.toLayer({ ping: () => Effect.succeed("pong") })
 const limits = { maxSteps: 8, stallTimeout: Duration.seconds(60) };
 
 const turn: Turn = {
+  bot: BotId.make("assistant"),
   instructions: "Answer briefly.",
   history: [{ id: MessageId.make("message-1"), role: "user", text: "Say hi" }],
 };

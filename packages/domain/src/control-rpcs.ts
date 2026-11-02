@@ -10,9 +10,9 @@ import {
 } from "./control.ts";
 
 /**
-Taking the mouse from the Bot. `Control.watch` streams who holds its computer, the current holder first,
-and never fails. `Control.take` answers once the Bot's actions already running are done and the computer
-runs, and `Control.handBack` once the Bot holds it again; asking for what already holds changes nothing,
+Taking the mouse from the Bots. `Control.watch` streams who holds the computer, the current holder first,
+and never fails. `Control.take` answers once every Bot action already running is done and the computer
+runs, and `Control.handBack` once the Bots hold it again; asking for what already holds changes nothing,
 except that a take starts a computer that is not running.
 `Control.click` clicks at a point of the screen the page shows, only while the person holds it.
 */

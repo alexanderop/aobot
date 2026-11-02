@@ -1,5 +1,5 @@
 import {
-  type BotId,
+  BotId,
   ComputerAction,
   commandTimeLimit,
   escapesWorkspace,
@@ -11,6 +11,7 @@ import {
 } from "@aobot/domain";
 import { Context, Duration, Effect, Layer, Match, Option, Result, Schema } from "effect";
 import { AuditLog, type Outcome } from "../audit/public.ts";
+import { Bots, isGranted } from "../bots/public.ts";
 import {
   type Computer,
   type ComputerActFailed,
@@ -49,7 +50,7 @@ export interface Refusal {
 }
 
 /**
-What a Bot asks for, in the words of its tools: an element is a ref from its latest snapshot. The gateway
+What a Bot asks for, in the words of its tools: an element is a ref from the latest snapshot. The gateway
 resolves each ref into the {@link RefTarget} the computer is sent. A file is a path inside its workspace.
 */
 export const BotRequest = Schema.Union([
@@ -64,27 +65,71 @@ export const BotRequest = Schema.Union([
 /** A decoded {@link BotRequest}. */
 export type BotRequest = typeof BotRequest.Type;
 
+/**
+The Bot a call says it is made for: one named by its id, or, from an `acp` CLI whose `aobot-bot` header
+is no Bot id, that header as it was written. Only a named Bot can have been granted anything.
+*/
+export const Claim = Schema.TaggedUnion({
+  Named: { bot: BotId },
+  Unreadable: { header: Schema.String },
+  Unnamed: {},
+});
+
+/** A decoded {@link Claim}. */
+export type Claim = typeof Claim.Type;
+
 /** The only door a Bot's actions go through. */
 export class Gateway extends Context.Service<
   Gateway,
   {
     readonly refuse: (refusal: Refusal) => Effect.Effect<void>;
     /**
-    Refuses the call while a person holds the Bot's computer. Otherwise resolves its ref against the
-    Bot's latest snapshot, records the call, forwards it to the computer, records what became of it, and
-    answers what the model reads. A call that could not be carried out is a `ToolFailed` the model reads,
-    never a dead turn.
+    Refuses the call when the Bot it claims was not granted its tool, or is no Bot the server knows,
+    before anything else the gateway does. Then refuses it while a person holds the computer. Otherwise
+    resolves its ref against the latest snapshot, records the call, forwards it to the computer, records
+    what became of it, and answers what the model reads. A call that could not be carried out is a
+    `ToolFailed` the model reads, never a dead turn.
     */
-    readonly act: (bot: BotId, request: BotRequest) => Effect.Effect<string, ToolFailed>;
+    readonly act: (claim: Claim, request: BotRequest) => Effect.Effect<string, ToolFailed>;
   }
 >()("aobot/gateway/Gateway") {}
 
 type ActionName = ComputerAction["action"];
 
-/** A ref the gateway could not find in the Bot's latest snapshot, so the call is denied. */
+/** The Bot a call claims was not granted the tool, or is no Bot the server knows, so it is denied. */
+class NotGranted extends Schema.TaggedError<NotGranted>()("NotGranted", { claim: Claim }) {}
+
+const claimedHeaderLimit = 100;
+
+/** The Bot a call named by its id, which its audit rows and span record. */
+const namedBot = Claim.match({
+  Named: ({ bot }) => Option.some(bot),
+  Unreadable: () => Option.none<BotId>(),
+  Unnamed: () => Option.none<BotId>(),
+});
+
+/** How a refusal names the Bot a call claimed: its id, the header as written, or none. */
+const claimedName = Claim.match({
+  Named: ({ bot }): string => bot,
+  Unreadable: ({ header }) => JSON.stringify(capText(header, claimedHeaderLimit)),
+  Unnamed: () => "an unnamed Bot",
+});
+
+/** Another Bot read the page after the Bot that sent the ref, so its refs name a page it has not seen. */
+const readByAnother = "another Bot read the page since";
+
+/** Why a ref did not resolve, as its deny row says. */
+const RefMiss = Schema.Literals([
+  "there is no snapshot yet",
+  "the latest snapshot could not be read",
+  "not in the latest snapshot",
+  readByAnother,
+]);
+
+/** A ref the gateway could not resolve for the Bot that sent it, so the call is denied. */
 class UnknownRef extends Schema.TaggedError<UnknownRef>()("UnknownRef", {
   ref: Schema.String,
-  reason: Schema.String,
+  reason: RefMiss,
 }) {}
 
 /** A file action whose path leaves the workspace as it is written, so the call is denied. */
@@ -97,9 +142,16 @@ function outsideWorkspaceAnswer({ action, path }: FileAction): string {
   return `${action} did not run: ${path} is outside your workspace. Name a file by its path inside ${workspaceRoot}, such as notes.txt, with no leading / and no "..".`;
 }
 
-/** What the model reads when its ref is not in its latest snapshot. */
-function unknownRefAnswer(action: ActionName, ref: string): string {
-  return `${action} did not run: ${ref} is not a ref in your latest snapshot. Take a snapshot and use a ref from it.`;
+/** What the model reads when its ref does not resolve. */
+function unknownRefAnswer(action: ActionName, { ref, reason }: UnknownRef): string {
+  return reason === readByAnother
+    ? `${action} did not run: the page changed since you last read it. Take a snapshot and use a ref from it.`
+    : `${action} did not run: ${ref} is not a ref in the page's latest snapshot. Take a snapshot and use a ref from it.`;
+}
+
+/** What the model reads when it asks for a tool it was not granted. */
+function notGrantedAnswer(action: ActionName, claim: Claim): string {
+  return `${action} did not run: it is not granted to ${claimedName(claim)}. Use only the tools your instructions name.`;
 }
 
 /** What the model reads, whatever it asked for, while a person holds its computer. */
@@ -143,17 +195,17 @@ and the command is what the audit row exists to show. A file is its path, name a
 write its size: never what it holds.
 */
 const auditDetail = ComputerAction.match({
-  navigate: ({ url }): Schema.JsonObject => ({ url }),
-  snapshot: (): Schema.JsonObject => ({}),
-  click: ({ target }): Schema.JsonObject => ({ ...target }),
-  type: ({ target, text }): Schema.JsonObject => ({ ...target, text: redact(text) }),
-  run: ({ command }): Schema.JsonObject => ({ command: capText(command, auditCommandLimit) }),
-  read_file: ({ path }): Schema.JsonObject => ({ ...fileTarget(path) }),
-  write_file: ({ path, contents }): Schema.JsonObject => ({
+  navigate: ({ url }) => ({ url }),
+  snapshot: () => ({}),
+  click: ({ target }) => ({ ...target }),
+  type: ({ target, text }) => ({ ...target, text: redact(text) }),
+  run: ({ command }) => ({ command: capText(command, auditCommandLimit) }),
+  read_file: ({ path }) => ({ ...fileTarget(path) }),
+  write_file: ({ path, contents }) => ({
     ...fileTarget(path),
     bytes: new TextEncoder().encode(contents).length,
   }),
-  list_files: ({ path }): Schema.JsonObject => ({ ...fileTarget(path) }),
+  list_files: ({ path }) => ({ ...fileTarget(path) }),
 });
 
 /** Why a forwarded call did not come back with a result. */
@@ -162,7 +214,7 @@ type ForwardFailure = ComputerFailure | ToolTimedOut;
 /** What a forwarded call became: its outcome row, and what the model is told. */
 interface Settled {
   readonly outcome: Outcome;
-  readonly detail: Schema.JsonObject;
+  readonly detail: Readonly<Record<string, Schema.Json>>;
   readonly answer: Result.Result<string, ToolFailed>;
 }
 
@@ -206,12 +258,13 @@ function settle(name: ActionName, result: Result.Result<string, ForwardFailure>)
 
 /**
 The {@link Gateway}: one audit row per decision, and one outcome row per allowed call. The same layer
-provides {@link ComputerControl}, so a person's take and the Bot's actions meet at one door per Bot, and
-{@link FileTransfers}, so a person's files are audited in the same trail.
+provides {@link ComputerControl}, so a person's take and every Bot's actions meet at the computer's one
+door, and {@link FileTransfers}, so a person's files are audited in the same trail.
 */
 export const gatewayLayer = Layer.effectContext(
   Effect.gen(function* () {
     const audit = yield* AuditLog;
+    const bots = yield* Bots;
     const rows = yield* personAudit;
     const computers = yield* Computers;
     const snapshots = yield* snapshotStore;
@@ -235,19 +288,23 @@ export const gatewayLayer = Layer.effectContext(
     });
 
     const targetOf = Effect.fn("Gateway.resolveRef")(function* (bot: BotId, ref: string) {
-      const latest = yield* snapshots
-        .latest(bot)
-        .pipe(
-          Effect.mapError(
-            () => new UnknownRef({ ref, reason: "the latest snapshot could not be read" }),
-          ),
-        );
+      const latest = yield* snapshots.latest.pipe(
+        Effect.mapError(
+          () => new UnknownRef({ ref, reason: "the latest snapshot could not be read" }),
+        ),
+      );
 
       if (Option.isNone(latest)) {
         return yield* new UnknownRef({ ref, reason: "there is no snapshot yet" });
       }
 
-      const target = snapshotRefs(latest.value).get(ref);
+      // The role and name come from this snapshot, so the computer's check against the page it shows
+      // passes for any ref in it, also one from a page this Bot read before another Bot navigated.
+      if (latest.value.readBy !== bot) {
+        return yield* new UnknownRef({ ref, reason: readByAnother });
+      }
+
+      const target = snapshotRefs(latest.value.snapshot).get(ref);
 
       if (target === undefined) {
         return yield* new UnknownRef({ ref, reason: "not in the latest snapshot" });
@@ -257,14 +314,14 @@ export const gatewayLayer = Layer.effectContext(
     });
 
     const forward = (
-      bot: BotId,
       computer: Computer,
+      bot: BotId,
       action: ComputerAction,
     ): Effect.Effect<string, ComputerActFailed | ComputerLost> => {
       const browse = (page: PageAction) =>
         computer.browse(page).pipe(
           Effect.tap((read) =>
-            snapshots.save(bot, read.snapshot).pipe(
+            snapshots.save(read.snapshot, bot).pipe(
               // Its refs then resolve against an older page, which the computer refuses as stale.
               Effect.catchTag("SqlError", (error) =>
                 Effect.logWarning("The latest snapshot could not be stored").pipe(
@@ -334,67 +391,102 @@ export const gatewayLayer = Layer.effectContext(
     });
 
     const carryOut = Effect.fnUntraced(function* (bot: BotId, request: BotRequest) {
-      // A ref is resolved before anything else, so the rules E2 brings judge the element, not its ref.
+      // A ref is resolved before any rule, so the rules E2 brings judge the element, not its ref.
       // A path outside the workspace is denied here; the computer still confines every path itself.
       const action = yield* resolve(bot, request);
 
-      // Grants and rules arrive with E2. Until then everything is allowed, and still recorded first.
-      const allowRow = yield* rows.decide("allow", action.action, auditDetail(action)).pipe(
-        Effect.tapError((error) =>
-          Effect.logError(
-            "An audit row could not be written, so the action was not forwarded",
-          ).pipe(Effect.annotateLogs({ action: action.action, reason: error.message })),
-        ),
-        Effect.mapError(
-          () =>
-            new ToolFailed({
-              message: `${action.action} did not run: it could not be recorded, and nothing runs unrecorded.`,
-            }),
-        ),
-      );
+      // The grant was checked before the door. Rules arrive with E2-2; until then a granted call is
+      // allowed, and still recorded first.
+      const allowRow = yield* rows
+        .decide("allow", action.action, { bot, ...auditDetail(action) })
+        .pipe(
+          Effect.tapError((error) =>
+            Effect.logError(
+              "An audit row could not be written, so the action was not forwarded",
+            ).pipe(Effect.annotateLogs({ action: action.action, reason: error.message })),
+          ),
+          Effect.mapError(
+            () =>
+              new ToolFailed({
+                message: `${action.action} did not run: it could not be recorded, and nothing runs unrecorded.`,
+              }),
+          ),
+        );
 
       const forwarded = yield* Effect.gen(function* () {
         const computer = yield* computers.ensure;
 
-        return yield* forward(bot, computer, action).pipe(toolResult(forwarding[action.action]));
+        return yield* forward(computer, bot, action).pipe(toolResult(forwarding[action.action]));
       }).pipe(
         Effect.result,
         Effect.onInterrupt(() =>
-          rows.settle(allowRow, "unknown", { reason: "the turn was stopped" }),
+          rows.settle(allowRow, "unknown", { bot, reason: "the turn was stopped" }),
         ),
       );
 
       const settled = settle(action.action, forwarded);
       yield* Effect.annotateCurrentSpan({ "gateway.outcome": settled.outcome });
-      yield* rows.settle(allowRow, settled.outcome, settled.detail);
+      yield* rows.settle(allowRow, settled.outcome, { bot, ...settled.detail });
 
       return yield* Effect.fromResult(settled.answer);
     });
 
-    const act = Effect.fn("Gateway.act")(function* (bot: BotId, request: BotRequest) {
+    /** The Bot `claim` names, when the server knows it and it was granted `tool`. */
+    const grant = (claim: Claim, tool: ActionName): Effect.Effect<BotId, NotGranted> => {
+      const known = Claim.guards.Named(claim) ? bots.get(claim.bot) : Option.none();
+
+      return Option.match(
+        Option.filter(known, (bot) => isGranted(bot, tool)),
+        {
+          onNone: () => Effect.fail(new NotGranted({ claim })),
+          onSome: (bot) => Effect.succeed(bot.id),
+        },
+      );
+    };
+
+    const act = Effect.fn("Gateway.act")(function* (claim: Claim, request: BotRequest) {
+      const named = namedBot(claim);
       yield* Effect.annotateCurrentSpan({ "gateway.action": request.action });
 
-      // A Bot's commands run one at a time, in the order it asked for them.
+      if (Option.isSome(named)) {
+        yield* Effect.annotateCurrentSpan({ "gateway.bot": named.value });
+      }
+
+      // A row's JSON says null for a call that named no Bot by its id.
+      const bot = Option.getOrNull(named);
+
+      // Commands run one at a time, in the order they were asked for.
       const queued = request.action === "run";
 
-      return yield* doors.admit(bot, carryOut(bot, request), { queued }).pipe(
+      return yield* grant(claim, request.action).pipe(
+        Effect.flatMap((granted) => doors.admit(carryOut(granted, request), { queued })),
         Effect.catchTags({
+          NotGranted: (refused) =>
+            deny(
+              request.action,
+              { bot, reason: `not granted to ${claimedName(refused.claim)}` },
+              notGrantedAnswer(request.action, refused.claim),
+            ),
           PersonHasControl: () =>
             spanEvent("control.refused").pipe(
               Effect.andThen(
                 deny(
                   request.action,
-                  { reason: "a person has control" },
+                  { bot, reason: "a person has control" },
                   personHasControlAnswer(request.action),
                 ),
               ),
             ),
-          UnknownRef: ({ ref, reason }) =>
-            deny(request.action, { ref, reason }, unknownRefAnswer(request.action, ref)),
+          UnknownRef: (unknown) =>
+            deny(
+              request.action,
+              { bot, ref: unknown.ref, reason: unknown.reason },
+              unknownRefAnswer(request.action, unknown),
+            ),
           OutsideWorkspace: ({ action }) =>
             deny(
               action.action,
-              { ...fileTarget(action.path), reason: "outside workspace" },
+              { bot, ...fileTarget(action.path), reason: "outside workspace" },
               outsideWorkspaceAnswer(action),
             ),
         }),

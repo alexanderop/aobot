@@ -18,8 +18,14 @@ export const MessageId = Schema.String.pipe(Schema.brand("MessageId"));
 /** A decoded {@link MessageId}. */
 export type MessageId = typeof MessageId.Type;
 
-/** A Bot the server knows. */
-export const BotId = Schema.String.pipe(Schema.brand("BotId"));
+/**
+A Bot the server knows, such as `researcher`: up to 64 lowercase letters, digits and dashes, since it
+travels in a URL, a header and the reason a refusal gives, and is written into every audit row.
+*/
+export const BotId = Schema.String.pipe(
+  Schema.check(Schema.isMaxLength(64), Schema.isPattern(/^[a-z0-9][a-z0-9-]*$/u)),
+  Schema.brand("BotId"),
+);
 
 /** A decoded {@link BotId}. */
 export type BotId = typeof BotId.Type;
