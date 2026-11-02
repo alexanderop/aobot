@@ -2,7 +2,7 @@
 id: E2-5
 title: Ask before risky actions
 epic: E2
-status: todo
+status: done
 depends_on: [E2-2]
 estimate: 3d
 ---

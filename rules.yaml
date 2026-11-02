@@ -3,10 +3,13 @@
 # The gateway first refuses a tool a Bot was not granted in bots.yaml. Every other action is judged
 # here: each deny rule in order, and the first that holds refuses it. Then each allow rule in order,
 # and the first that holds allows it. Anything no allow rule allows is refused, so an empty allow list
-# refuses everything.
+# refuses everything. Then each ask rule in order, and the first that holds asks the person in the
+# chat first: the action runs once if they say yes within 10 minutes, and is refused otherwise. An ask
+# rule is read only for an action an allow rule allowed, so adding one never allows anything. The ask
+# list may be left out.
 #
 # It fails closed. A deny rule that fails while it is checked, such as int(command) on a command that is
-# no number, refuses; an allow rule that fails allows nothing. A file that does not parse, a rule that
+# no number, refuses; an allow rule that fails allows nothing; an ask rule that fails asks. A file that does not parse, a rule that
 # names a field there is not, does not answer true or false, or fails when page.host, element, key,
 # command and file are "" stops the server at start-up. That catches a rule that fails on an action
 # without the fact it reads, not one that fails only on some values, such as
@@ -17,7 +20,7 @@
 # every rule cheap: a comprehension over command.split("") is quadratic in the command's length, so keep
 # rules simple.
 #
-# Each rule has a name (lowercase letters, digits and dashes, unique across both lists), which the audit
+# Each rule has a name (lowercase letters, digits and dashes, unique across every list), which the audit
 # row and the Bot's answer name, and a `when` in CEL (https://cel.dev). It can read:
 #
 #   tool.name      navigate, snapshot, click, type, press, run, read_file, write_file, list_files or
@@ -55,3 +58,9 @@ deny:
 allow:
   - name: granted-tools
     when: "true"
+
+# A no holds for the rest of the person's turn: the Bot cannot ask again, or try the same rule another
+# way, until the person writes again.
+ask:
+  - name: ask-before-delete
+    when: tool.name == "run" && command.contains("delete")

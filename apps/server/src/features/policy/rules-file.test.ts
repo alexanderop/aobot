@@ -19,12 +19,13 @@ function reason(text: string): string {
 }
 
 describe("readRulesFile", () => {
-  it("reads the rules.yaml the server starts with: no rm -rf, then whatever a Bot was granted", () => {
+  it("reads the rules.yaml the server starts with: no rm -rf, whatever a Bot was granted, ask before delete", () => {
     const shipped = readFileSync(new URL("../../../../../rules.yaml", import.meta.url), "utf8");
     const rules = Result.getOrThrow(readRulesFile(shipped));
 
     expect(rules.deny.map((rule) => rule.name)).toEqual(["no-rm-rf"]);
     expect(rules.allow.map((rule) => rule.name)).toEqual(["granted-tools"]);
+    expect(rules.ask.map((rule) => rule.name)).toEqual(["ask-before-delete"]);
   });
 
   it("reads each list's rules by name, in the order the file gives them", () => {
