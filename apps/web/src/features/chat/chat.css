@@ -379,9 +379,12 @@
 }
 
 .approval__question {
+  max-height: 40vh;
   margin: 0 0 4px;
+  overflow-y: auto;
   color: var(--muted);
   font-weight: 600;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 

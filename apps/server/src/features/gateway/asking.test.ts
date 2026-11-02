@@ -155,6 +155,38 @@ describe("Gateway asking the person", () => {
     }).pipe(Effect.provide(database)),
   );
 
+  it.effect("shows the whole command as the Bot wrote it, while its rows keep it redacted", () =>
+    Effect.gen(function* () {
+      const computer = shell();
+      const command = 'API_TOKEN="$(find . -name notes.txt -delete)"';
+
+      const askBeforeDelete = policyFrom(`deny: []
+allow:
+  - name: granted-tools
+    when: "true"
+ask:
+  - name: ask-before-delete
+    when: command.contains("delete")
+`);
+
+      const { shown } = yield* askAndAnswer(firstRun, { action: "run", command }, "no").pipe(
+        Effect.provide(startGateway(computer.layer, askBeforeDelete)),
+      );
+
+      expect(shown.question).toBe(`Run \`${command}\`?`);
+      expect((yield* decodedTrail)[0]).toEqual([
+        "run · ask",
+        {
+          bot: "assistant",
+          command: 'API_TOKEN="[33 chars]"',
+          rule: "ask-before-delete",
+          allowedBy: "granted-tools",
+          approval: shown.approval,
+        },
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
   it.effect("refuses an action its person says no to, and never sends it to the computer", () =>
     Effect.gen(function* () {
       const computer = shell();

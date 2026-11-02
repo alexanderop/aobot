@@ -510,16 +510,18 @@ const elementOn = ({ role, name, url }: RefTarget) =>
   `the ${role} ${JSON.stringify(name)} on ${hostOf(url) || "a page with no site"}`;
 
 /**
-The question a person is asked about an action: worded by the server from the action as it resolved, with
-the same redaction as its audit row. Text a Bot would type is never shown, only its length.
+The question a person is asked about an action: worded by the server from the action as it resolved, and
+showing what they approve as the Bot wrote it, the whole command, address or text. Only the person's own
+page sees it, never an audit row, a log, a span or the conversation, so nothing in it is redacted or cut:
+a redacted command can hide the very part a rule asks about.
 */
 const questionOf = DirectAction.match({
-  navigate: ({ url }) => `Open ${redactUrl(url)}?`,
+  navigate: ({ url }) => `Open ${url}?`,
   snapshot: () => "Read the page?",
   click: ({ target }) => `Click ${elementOn(target)}?`,
-  type: ({ target, text }) => `Type ${text.length} characters into ${elementOn(target)}?`,
+  type: ({ target, text }) => `Type ${JSON.stringify(text)} into ${elementOn(target)}?`,
   press: ({ target, key }) => `Press ${key} on ${elementOn(target)}?`,
-  run: ({ command }) => `Run \`${capText(redactCommand(command), auditCommandLimit)}\`?`,
+  run: ({ command }) => `Run \`${command}\`?`,
   read_file: ({ path }) => `Read the file ${path}?`,
   write_file: ({ path, contents }) =>
     `Write ${new TextEncoder().encode(contents).length} bytes to the file ${path}?`,
