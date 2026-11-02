@@ -180,6 +180,17 @@ class RuleRefused extends Schema.TaggedError<RuleRefused>()("RuleRefused", {
   verdict: Refused,
 }) {}
 
+/**
+An ask rule holds for `action`, which the allow rule `allowedBy` allows: it runs only once the person says
+yes.
+*/
+class NeedsApproval extends Schema.TaggedError<NeedsApproval>()("NeedsApproval", {
+  action: ToolAction,
+  host: Schema.String,
+  rule: Schema.String,
+  allowedBy: Schema.String,
+}) {}
+
 /** How much of a failed rule's error a deny row keeps. */
 const ruleErrorLimit = 500;
 
@@ -589,7 +600,7 @@ export const gatewayLayer = Layer.effectContext(
     and list only, never its error, which can echo what the action holds. A refusal's deny row keeps the
     error of every rule that failed, capped; an allowed action's allow rules that failed are only logged.
     */
-    const allowedBy = (action: ToolAction, verdict: Verdict) => {
+    const allowedBy = (action: ToolAction, host: string, verdict: Verdict) => {
       const failed = (list: "deny" | "allow") => (rule: string) =>
         Effect.logWarning("A rule failed while it was checked").pipe(
           Effect.annotateLogs({ rule, list, action: action.action }),
@@ -602,6 +613,11 @@ export const gatewayLayer = Layer.effectContext(
 
       return Verdict.match(verdict, {
         Allowed: ({ rule, broken }) => Effect.as(failedAllowRules(broken), rule),
+        Ask: ({ rule, allowedBy, broken }) =>
+          Effect.andThen(
+            failedAllowRules(broken),
+            Effect.fail(new NeedsApproval({ action, host, rule, allowedBy })),
+          ),
         Denied: refused,
         DenyRuleFailed: (failure) => Effect.andThen(failed("deny")(failure.rule), refused(failure)),
         NoneAllowed: (none) => Effect.andThen(failedAllowRules(none.broken), refused(none)),
@@ -649,7 +665,7 @@ export const gatewayLayer = Layer.effectContext(
     and that row, or why it is refused.
     */
     const decide = Effect.fnUntraced(function* (bot: BotId, action: ToolAction, host: string) {
-      const rule = yield* allowedBy(action, policy.judge(actionFacts(bot, action, host)));
+      const rule = yield* allowedBy(action, host, policy.judge(actionFacts(bot, action, host)));
 
       const allowRow = yield* recordAllowed(action.action, auditAction(action.action), {
         bot,
@@ -874,6 +890,12 @@ export const gatewayLayer = Layer.effectContext(
               ),
             );
           },
+          NeedsApproval: ({ action, rule }) =>
+            deny(
+              action.action,
+              { bot, ...auditDetail(action), rule, reason: "no one to ask" },
+              ruleRefusedAnswer(action.action, `the rule ${rule} asks your person first`),
+            ),
           OutsideWorkspace: ({ action }) =>
             deny(
               action.action,

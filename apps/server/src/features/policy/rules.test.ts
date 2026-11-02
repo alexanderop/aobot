@@ -18,7 +18,7 @@ function running(command: string): Facts {
 /** A rule that passes the check on blank facts, then fails on any command but a number. */
 const numberOnly = 'command == "" || int(command) > 0';
 
-const { Allowed, Denied, DenyRuleFailed, NoneAllowed } = Verdict.cases;
+const { Allowed, Ask, Denied, DenyRuleFailed, NoneAllowed } = Verdict.cases;
 
 /** The facts of a browser action on an element of a page on shop.example, pressing `key` when it is `press`. */
 function onTheShop(tool: "click" | "press", role: string, name: string, key = ""): Facts {
@@ -137,6 +137,84 @@ allow:
       "deny: []\nallow: []",
       "ls",
       NoneAllowed.make({ broken: [] }),
+    ],
+  ])("%s", (_case, file, command, verdict) => {
+    expect(judge(rulesFrom(file), running(command))).toEqual(verdict);
+  });
+});
+
+describe("judge with ask rules", () => {
+  const askBeforeDelete = `
+ask:
+  - name: ask-before-delete
+    when: command.contains("delete")`;
+
+  it.each([
+    [
+      "an action an allow rule allows asks the person first when an ask rule holds",
+      `deny: []${allowAll}${askBeforeDelete}`,
+      "delete notes.txt",
+      Ask.make({
+        rule: RuleName.make("ask-before-delete"),
+        allowedBy: RuleName.make("granted-tools"),
+        broken: [],
+      }),
+    ],
+    [
+      "an action no ask rule holds for is allowed without asking",
+      `deny: []${allowAll}${askBeforeDelete}`,
+      "ls",
+      Allowed.make({ rule: RuleName.make("granted-tools"), broken: [] }),
+    ],
+    [
+      "a deny rule refuses before any ask rule is read",
+      `deny:
+  - name: no-delete
+    when: command.contains("delete")${allowAll}${askBeforeDelete}`,
+      "delete notes.txt",
+      Denied.make({ rule: RuleName.make("no-delete") }),
+    ],
+    [
+      "an action no allow rule allows is refused, though an ask rule holds, so asking never allows",
+      `deny: []
+allow:
+  - name: only-ls
+    when: command == "ls"${askBeforeDelete}`,
+      "delete notes.txt",
+      NoneAllowed.make({ broken: [] }),
+    ],
+    [
+      "an ask rule that fails asks the person, and says why",
+      `deny: []${allowAll}
+ask:
+  - name: number-only
+    when: ${numberOnly}`,
+      "ls",
+      {
+        ...Ask.make({
+          rule: RuleName.make("number-only"),
+          allowedBy: RuleName.make("granted-tools"),
+          broken: [],
+        }),
+        broken: [brokenWith("number-only", "int()")],
+      },
+    ],
+    [
+      "the first ask rule in the file that holds is the one that asks",
+      `deny: []${allowAll}
+ask:
+  - name: ask-before-rm
+    when: command.startsWith("rm")
+  - name: ask-before-delete
+    when: command.contains("delete")
+  - name: ask-before-anything
+    when: "true"`,
+      "delete notes.txt",
+      Ask.make({
+        rule: RuleName.make("ask-before-delete"),
+        allowedBy: RuleName.make("granted-tools"),
+        broken: [],
+      }),
     ],
   ])("%s", (_case, file, command, verdict) => {
     expect(judge(rulesFrom(file), running(command))).toEqual(verdict);

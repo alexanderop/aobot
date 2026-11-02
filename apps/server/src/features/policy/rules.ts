@@ -1,4 +1,4 @@
-import { Result, Schema } from "effect";
+import { Option, Result, Schema } from "effect";
 import type { Facts } from "./facts.ts";
 
 /**
@@ -26,18 +26,22 @@ export interface Rule {
 export interface Rules {
   readonly deny: ReadonlyArray<Rule>;
   readonly allow: ReadonlyArray<Rule>;
+  readonly ask: ReadonlyArray<Rule>;
 }
 
 /** A rule that failed while it was checked, and why. `error` can echo what the action holds. */
 const FailedRule = Schema.Struct({ rule: RuleName, error: Schema.String });
 
 /**
-What the rules make of one action. `Allowed` and `NoneAllowed` carry the allow rules that failed on the
-way, each counted as not matching. `DenyRuleFailed` is a deny rule that failed, which refuses. A failed
-rule's `error` can echo what the action holds, so it goes into the audit row only.
+What the rules make of one action. `Allowed`, `Ask` and `NoneAllowed` carry the rules that failed on the
+way, each counted as not matching, except an ask rule, which asks. `Ask` is an action an allow rule allows
+only once the person says yes: `rule` is the ask rule, `allowedBy` the allow rule. `DenyRuleFailed` is a
+deny rule that failed, which refuses. A failed rule's `error` can echo what the action holds, so it goes
+into the audit row only.
 */
 export const Verdict = Schema.TaggedUnion({
   Allowed: { rule: RuleName, broken: Schema.Array(FailedRule) },
+  Ask: { rule: RuleName, allowedBy: RuleName, broken: Schema.Array(FailedRule) },
   Denied: { rule: RuleName },
   DenyRuleFailed: { rule: RuleName, error: Schema.String },
   NoneAllowed: { broken: Schema.Array(FailedRule) },
@@ -46,9 +50,9 @@ export const Verdict = Schema.TaggedUnion({
 /** A decoded {@link Verdict}. */
 export type Verdict = typeof Verdict.Type;
 
-const { Allowed, Denied, DenyRuleFailed, NoneAllowed } = Verdict.cases;
+const { Allowed, Ask, Denied, DenyRuleFailed, NoneAllowed } = Verdict.cases;
 
-/** A {@link Verdict} that refuses the action: every one but `Allowed`. */
+/** A {@link Verdict} that refuses the action: every one but `Allowed` and `Ask`. */
 export const Refused = Schema.Union([Denied, DenyRuleFailed, NoneAllowed]).pipe(
   Schema.toTaggedUnion("_tag"),
 );
@@ -56,9 +60,28 @@ export const Refused = Schema.Union([Denied, DenyRuleFailed, NoneAllowed]).pipe(
 /** A decoded {@link Refused}. */
 export type Refused = typeof Refused.Type;
 
+/** The first of the allow rules `allow` that holds on `facts`, and each one that failed before it. */
+function firstAllowing(allow: ReadonlyArray<Rule>, facts: Facts) {
+  const broken: Array<typeof FailedRule.Type> = [];
+
+  for (const rule of allow) {
+    const allows = rule.answer(facts);
+
+    if (Result.isFailure(allows)) {
+      broken.push({ rule: rule.name, error: allows.failure });
+    } else if (allows.success) {
+      return { allowedBy: Option.some(rule.name), broken };
+    }
+  }
+
+  return { allowedBy: Option.none<RuleName>(), broken };
+}
+
 /**
 The {@link Verdict} of `rules` on one action. Every deny rule in order: the first that holds or fails
-refuses. Then every allow rule in order: the first that holds allows. Anything else is refused.
+refuses. Then every allow rule in order: the first that holds allows, and anything none allows is refused.
+Then every ask rule in order: the first that holds or fails asks the person first. An ask rule is read
+only once an allow rule held, so adding one never allows anything.
 */
 export function judge(rules: Rules, facts: Facts): Verdict {
   for (const rule of rules.deny) {
@@ -71,17 +94,21 @@ export function judge(rules: Rules, facts: Facts): Verdict {
     if (denies.success) return Denied.make({ rule: rule.name });
   }
 
-  const broken: Array<typeof FailedRule.Type> = [];
+  const { allowedBy, broken } = firstAllowing(rules.allow, facts);
 
-  for (const rule of rules.allow) {
-    const allows = rule.answer(facts);
+  if (Option.isNone(allowedBy)) return NoneAllowed.make({ broken });
 
-    if (Result.isFailure(allows)) {
-      broken.push({ rule: rule.name, error: allows.failure });
-    } else if (allows.success) {
-      return Allowed.make({ rule: rule.name, broken });
+  for (const rule of rules.ask) {
+    const asks = rule.answer(facts);
+
+    if (Result.isFailure(asks)) {
+      broken.push({ rule: rule.name, error: asks.failure });
+
+      return Ask.make({ rule: rule.name, allowedBy: allowedBy.value, broken });
     }
+
+    if (asks.success) return Ask.make({ rule: rule.name, allowedBy: allowedBy.value, broken });
   }
 
-  return NoneAllowed.make({ broken });
+  return Allowed.make({ rule: allowedBy.value, broken });
 }
