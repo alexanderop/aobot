@@ -66,6 +66,11 @@ type ToolCallsTransition = readonly [ToolCalls, ReadonlyArray<AgentEvent>];
 /** A turn before the agent has called any tool. */
 export const noToolCalls: ToolCalls = new Map();
 
+/** Whether a tool call the agent reported has not ended yet, so the agent waits on it. */
+export function toolCallRunning(calls: ToolCalls): boolean {
+  return [...calls.values()].some((call) => !ToolCall.$is("Ended")(call));
+}
+
 const CodexMcpInput = Schema.Struct({
   server: Schema.String,
   tool: Schema.String,

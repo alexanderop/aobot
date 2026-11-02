@@ -66,6 +66,14 @@ export { ControlRpcs } from "./control-rpcs.ts";
 
 export { ScreenRpcs } from "./screen-rpcs.ts";
 
+export {
+  NoSecretRequested,
+  PendingSecret,
+  SecretAnswer,
+  SecretRequestId,
+  SecretRpcs,
+} from "./secret-rpcs.ts";
+
 export { canonicalHost, originOf, sameOrigin } from "./host.ts";
 
 export { keepFirst, keepLast } from "./text.ts";

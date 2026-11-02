@@ -1,6 +1,6 @@
-import { Effect, FileSystem, Path, type PlatformError, Schema } from "effect";
+import { Duration, Effect, FileSystem, Path, type PlatformError, Schema } from "effect";
 import { botToolkit } from "../../bots/public.ts";
-import { gatewayMcpName } from "../../gateway/public.ts";
+import { gatewayMcpName, secretWaitLimit } from "../../gateway/public.ts";
 
 /** The CLIs `acp` can run a Bot on, each on the person's own subscription. */
 export const AcpAgentName = Schema.Literals(["claude-code", "codex", "opencode"]);
@@ -66,6 +66,13 @@ const gatewayToolsForClaudeCode = Object.keys(botToolkit.tools).map(
 );
 
 /**
+How long Claude Code lets a gateway tool call go without an answer. Its own default for an HTTP server is
+five minutes, shorter than `request_secret` waits for a person, and the call would fail while the gateway
+still waits. Codex has no setting for a server its session was handed, see docs/architecture.md.
+*/
+const claudeToolIdleTimeout = Duration.sum(secretWaitLimit, Duration.minutes(1));
+
+/**
 One entry per CLI, so adding one is a row here. Adapter versions are pinned exactly: an adapter decides
 which tools exist, so an upgrade is a change the contract suite must pass again.
 */
@@ -73,7 +80,10 @@ export const acpAgents = {
   "claude-code": {
     command: "npx",
     args: ["--yes", "@agentclientprotocol/claude-agent-acp@0.99.1"],
-    environment: () => Effect.succeed({}),
+    environment: () =>
+      Effect.succeed({
+        CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT: String(Duration.toMillis(claudeToolIdleTimeout)),
+      }),
     // `tools: []` removes every built-in tool. `settingSources: []` and `strictMcpConfig` keep the
     // person's own settings, hooks and MCP servers out of the Bot's session. `allowedTools` lets the
     // gateway's tools run without a permission request.

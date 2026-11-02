@@ -16,6 +16,7 @@ export const ToolName = Schema.Literals([
   "read_file",
   "write_file",
   "list_files",
+  "request_secret",
 ]);
 
 /** A decoded {@link ToolName}. */

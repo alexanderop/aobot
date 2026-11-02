@@ -20,7 +20,8 @@
 # Each rule has a name (lowercase letters, digits and dashes, unique across both lists), which the audit
 # row and the Bot's answer name, and a `when` in CEL (https://cel.dev). It can read:
 #
-#   tool.name      navigate, snapshot, click, type, press, run, read_file, write_file or list_files
+#   tool.name      navigate, snapshot, click, type, press, run, read_file, write_file, list_files or
+#                  request_secret, which asks the person to type a secret into the field a ref names
 #   bot.id         the Bot's id from bots.yaml
 #   actor.id       the person it acts for: single-user until sign-in arrives
 #   computer.kind  cloud

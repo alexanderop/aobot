@@ -285,6 +285,64 @@ describe("AgentRuntime (acp)", () => {
     ),
   );
 
+  it.live("waits past the stall limit while a tool call the agent reported runs", () =>
+    Effect.gen(function* () {
+      const turnRan = yield* runTurn.pipe(
+        Effect.as("the turn ended"),
+        Effect.raceFirst(Effect.as(Effect.sleep("1 second"), "still waiting")),
+      );
+
+      expect(turnRan).toBe("still waiting");
+    }).pipe(
+      Effect.provide(
+        runtimeWith(
+          launcherFor({
+            ...quiet,
+            silent: true,
+            chunks: [
+              {
+                sessionUpdate: "tool_call",
+                toolCallId: "toolu_1",
+                name: "mcp__aobot__request_secret",
+                status: "in_progress",
+                rawInput: { ref: "e3", field: "the password" },
+              },
+            ],
+          }),
+          Duration.millis(300),
+        ),
+      ),
+    ),
+  );
+
+  it.live("fails with Stalled when the agent goes silent once its tool call ended", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(runTurn);
+
+      expect(error).toEqual(new Stalled({ waitedMs: 300 }));
+    }).pipe(
+      Effect.provide(
+        runtimeWith(
+          launcherFor({
+            ...quiet,
+            silent: true,
+            chunks: [
+              {
+                sessionUpdate: "tool_call",
+                toolCallId: "toolu_1",
+                name: "mcp__aobot__navigate",
+                status: "in_progress",
+                rawInput: { url: "https://example.com" },
+              },
+              { sessionUpdate: "tool_call_update", toolCallId: "toolu_1", status: "completed" },
+            ],
+          }),
+          Duration.millis(300),
+        ),
+      ),
+    ),
+  );
+
   it.live("fails with the agent's last words when it exits before answering", () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(runTurn);

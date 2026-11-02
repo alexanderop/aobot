@@ -153,6 +153,71 @@ describe("AgentRuntime (api)", () => {
     ),
   );
 
+  it.effect(
+    "waits for a tool that runs past the stall limit, as one waiting for a person does",
+    () =>
+      Effect.gen(function* () {
+        const agent = yield* AgentRuntime;
+        const fiber = yield* agent.run(turn).pipe(Stream.runCollect, Effect.forkChild);
+
+        yield* advanceSeconds(11 * 60);
+        const events = yield* Fiber.join(fiber);
+
+        expect(events).toContainEqual(
+          AgentEvent.ToolCallFinished({
+            id: ToolCallId.make("call-1-0"),
+            result: "answered",
+            failed: false,
+          }),
+        );
+        expect(events.at(-1)).toEqual(AgentEvent.Done());
+      }).pipe(
+        Effect.provide(
+          layerApi(PingToolkit, limits).pipe(
+            Layer.provide([
+              scriptedModel(
+                replay([
+                  ModelStep.CallTools({ calls: [{ name: "ping", params: {} }] }),
+                  ModelStep.Say({ words: ["Done"] }),
+                ]),
+              ),
+              PingToolkit.toLayer({
+                ping: () => Effect.sleep("10 minutes").pipe(Effect.as("answered")),
+              }),
+            ]),
+          ),
+        ),
+      ),
+  );
+
+  it.effect("still stops a model that goes silent after a tool call it never finished", () =>
+    Effect.gen(function* () {
+      const agent = yield* AgentRuntime;
+      const seen = yield* Queue.unbounded<AgentEvent>();
+
+      const fiber = yield* agent.run(turn).pipe(
+        Stream.runForEach((event) => Queue.offer(seen, event)),
+        Effect.forkChild,
+      );
+
+      expect(yield* Queue.take(seen)).toEqual(
+        AgentEvent.ToolCallStarted({ id: ToolCallId.make("call-1-0"), name: "ping", params: {} }),
+      );
+      yield* advanceSeconds(60);
+
+      expect(yield* Effect.flip(Fiber.join(fiber))).toEqual(new Stalled({ waitedMs: 60_000 }));
+    }).pipe(
+      Effect.provide(
+        runtimeWith(() =>
+          Stream.concat(
+            Stream.make({ type: "tool-call", id: "call-1-0", name: "ping", params: {} }),
+            Stream.never,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("does not blame the model for a reader slower than the stall limit", () =>
     Effect.gen(function* () {
       const agent = yield* AgentRuntime;

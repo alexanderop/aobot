@@ -30,6 +30,7 @@ const ownFacts = ToolAction.match({
   click: ({ target }) => element(target),
   type: ({ target }) => element(target),
   press: ({ target, key }): OwnFacts => ({ ...element(target), key }),
+  request_secret: ({ target }) => element(target),
   run: ({ command }): OwnFacts => ({ command }),
   read_file: file,
   write_file: file,
