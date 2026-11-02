@@ -83,6 +83,13 @@ const addOutcomeRows = Effect.gen(function* () {
   `;
 });
 
+// The audit page reads newest first and pages by this key.
+const indexNewestFirst = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+
+  yield* sql`CREATE INDEX audit_rows_newest_first ON audit_rows (created_at, seq)`;
+});
+
 /** Brings the audit table up to date. Safe to run at every boot. */
 export const migrateAudit = SqliteMigrator.run({
   // Its own table, so the audit trail's migrations never share a numbering with another feature's.
@@ -90,5 +97,6 @@ export const migrateAudit = SqliteMigrator.run({
   loader: SqliteMigrator.fromRecord({
     "0001_create_audit_rows": createAuditRows,
     "0002_add_outcome_rows": addOutcomeRows,
+    "0003_index_newest_first": indexNewestFirst,
   }),
 });

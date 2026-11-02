@@ -1,17 +1,15 @@
+import type { AuditAction, AuditDecision, InitiatorKind } from "@aobot/domain";
 import { Context, Effect, Layer, Option, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 
-/** Who an action was done for: a person who was watching, or the deployment itself. */
-type InitiatorKind = "person" | "deployment";
-
 /** What the gateway decided about a call. */
-type Decision = "allow" | "deny";
+export type Decision = Extract<AuditDecision, "allow" | "deny">;
 
 /**
 What became of an allowed call. `unknown` means the server stopped hearing about it before it heard back,
 so the action may or may not have happened. It is never run again.
 */
-export type Outcome = "succeeded" | "failed" | "unknown";
+export type Outcome = Exclude<AuditDecision, Decision>;
 
 /** One audit row. */
 export const AuditRowId = Schema.String.pipe(Schema.brand("AuditRowId"));
@@ -25,7 +23,7 @@ export interface DecisionEntry {
   readonly initiatorKind: InitiatorKind;
   readonly actorId: string;
   readonly decision: Decision;
-  readonly action: string;
+  readonly action: AuditAction;
   readonly detail: Schema.JsonObject;
 }
 

@@ -25,7 +25,13 @@ import {
 } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
 import { botToolkit } from "../bots/public.ts";
-import { botToolHandlers, Gateway, gatewayMcpLayer, type Refusal } from "../gateway/public.ts";
+import {
+  botToolHandlers,
+  Claim,
+  Gateway,
+  gatewayMcpLayer,
+  type Refusal,
+} from "../gateway/public.ts";
 import { layerAcp } from "./acp/acp-runtime.ts";
 import { acpAgents, type AcpAgentName, type AcpLauncher } from "./acp/launchers.ts";
 import { AgentEvent, AgentRuntime, type Turn } from "./agent-runtime.ts";
@@ -391,7 +397,7 @@ describe.each(names)("the %s agent runtime", (name) => {
 
         expect(gateway.refusals).toEqual([]);
         expect(gateway.requests).toEqual([{ action: "snapshot" }]);
-        expect(gateway.askedBy).toEqual([Option.some(turn.bot)]);
+        expect(gateway.askedBy).toEqual([Claim.cases.Named.make({ bot: turn.bot })]);
         expect(textOf(events)).toContain("Read it.");
         expect(mock.requests().join("\n")).toContain("The page is blank.");
       });

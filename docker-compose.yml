@@ -12,6 +12,8 @@ services:
     environment:
       DATABASE_PATH: /data/aobot.db
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+      # Where a person's browser opens Grafana, for the audit page's trace links.
+      GRAFANA_URL: http://localhost:3300
       COMPUTER_IMAGE: aobot-computer:dev
       # Per project, so the dev stack and `vp run verify` start their own computer side by side.
       COMPUTER_NAME: ${COMPOSE_PROJECT_NAME}-computer

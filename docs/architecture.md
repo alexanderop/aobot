@@ -229,6 +229,28 @@ there at all. Judging the page an action lands on is a follow-up (`docs/backlog/
 8. The agent reads it and decides the next step. Every step goes through the same door.
 9. The answer streams back to the page, with each tool call shown between the text.
 
+## Reading the audit trail
+
+Security reads the trail on the audit page at `/audit`, through `GET /audit/rows`. It takes `bot`,
+`person`, `decision`, `from` and `to` (ISO instants in the years 0000 to 9999; `from` inclusive, `to`
+exclusive), `limit` (1 to 200, 50 when unsaid) and `cursor`, each optional, and answers the rows newest
+first with `next`, the cursor of the page after, when there is one. A row's Bot is its detail's `bot`, or,
+for an outcome row, that of the `allow` row it follows. Like `/files`, it answers only this server's own
+pages.
+
+Rows are ordered by `created_at`, then `seq`, the order they were written in. Not by `id`: ids are random,
+and an `allow` row and its outcome often share a millisecond, so the outcome could read as the earlier of
+the two. The cursor is the last row's `created_at`, exactly as the column stores it, and its `seq`, as
+base64url JSON, so the next page starts right after that row however many rows share its instant. Only
+`AuditTrail` reads or writes a cursor. A cursor or a query the server cannot read is a 400 that says
+which, never a 500. A CLI's call outside the gateway is refused with the Bot whose turn it was as its
+detail's `bot`, so the Bot filter shows it.
+
+Each action and decision has one label, in `packages/domain/src/audit.ts`. The server writes `action` as an
+`AuditAction` from that list, so a new action does not compile until it has a label. A value the page has
+no label for, such as one a newer server wrote, reads Unknown, never Allowed. With `GRAFANA_URL` set, each
+row with a `trace_id` links to Grafana Explore on the Tempo data source, an hour either side of the row.
+
 ## Watching the screen
 
 While a turn the page started is running and has called a tool, or while the person holds the Bot's
@@ -590,6 +612,7 @@ const conversation = Atom.family((id: ConversationId) => /* fold ChatEvents into
 | `useBots()`                   | (none)                               | The Bots the server knows, as `bots.yaml` lists them, for the sidebar                                                                                                                        | E2-1 |
 | `useSelection()`              | (none)                               | The Bot and conversation the page has open, as the server confirmed it, and `pick` to open another Bot                                                                                       | E2-1 |
 | `useSecretRequest(call, bot)` | `useHumanInTheLoop`                  | What a `request_secret` card shows, with the request `Secret.pending` streams for the Bot, `supply`, which sends the typed secret over `Secret.answer` with that request's id, and `decline` | E2-3 |
+| `useAuditTrail()`             | (none)                               | The audit rows the URL's filters let through, newest first, whether older ones are left, why the last page failed, `filter`, `loadMore` and `reload`, which reads the trail again            | E2-4 |
 
 The page opens the Bot and the conversation the URL names as `?bot=<id>&c=<id>`, or the first Bot in
 `bots.yaml`; a `bot` that is no Bot the server knows, or no Bot id at all, opens the first Bot and drops

@@ -1,11 +1,16 @@
+import { AcpClientMethod } from "@aobot/domain";
 import { Array, Data, Option, Schema } from "effect";
 import { redact } from "../../../shared/redact.ts";
 import { methodNotFound, Reply } from "./wire.ts";
 
 /** What we do with one request an agent sends us. */
 export type ClientDecision = Data.TaggedEnum<{
-  /** A request we never grant outside the gateway: write a `deny` row, then answer with `reply`. */
-  Refuse: { readonly detail: Schema.JsonObject; readonly reply: Reply };
+  /** A request we never grant outside the gateway: write a `deny` row for `method`, then `reply`. */
+  Refuse: {
+    readonly method: AcpClientMethod;
+    readonly detail: Schema.JsonObject;
+    readonly reply: Reply;
+  };
   /** A method we do not speak. */
   Unknown: { readonly reply: Reply };
 }>;
@@ -15,7 +20,10 @@ export const ClientDecision = Data.taggedEnum<ClientDecision>();
 
 /** How one method is refused: what its audit row says, and how the agent is answered. */
 interface RefusalRule {
-  readonly refuse: (params: Schema.Json) => ClientDecision;
+  readonly refuse: (params: Schema.Json) => {
+    readonly detail: Schema.JsonObject;
+    readonly reply: Reply;
+  };
 }
 
 const notOffered = Reply.Error({
@@ -39,10 +47,10 @@ function refusal<S extends Schema.ConstraintDecoder<unknown>>(
     refuse: (params) => {
       const read = decode(params);
 
-      return ClientDecision.Refuse({
+      return {
         detail: Option.match(read, { onNone: () => ({}), onSome: detail }),
         reply: reply(read),
-      });
+      };
     },
   };
 }
@@ -79,91 +87,67 @@ Every client-side method of ACP, all refused. The CLI's built-in tools are switc
 request here is the CLI trying to act outside the gateway anyway. Gateway tools arrive over MCP, never
 through these methods.
 */
-const clientRequests: ReadonlyMap<string, RefusalRule> = new Map([
-  [
-    "session/request_permission",
-    refusal(
-      PermissionRequest,
-      ({ toolCall }) => ({
-        kind: Option.getOrNull(Option.flatMap(toolCall.kind, Option.fromNullOr)),
-        // A title such as "cat /etc/passwd" spells out what the Bot typed.
-        title: Option.getOrNull(
-          Option.map(Option.flatMap(toolCall.title, Option.fromNullOr), redact),
-        ),
-      }),
-      rejectPermission,
-    ),
-  ],
-  [
-    "fs/read_text_file",
-    refusal(
-      Schema.Struct({ path: Schema.String }),
-      ({ path }) => ({ path: redact(path) }),
-      () => notOffered,
-    ),
-  ],
-  [
-    "fs/write_text_file",
-    refusal(
-      Schema.Struct({ path: Schema.String, content: Schema.String }),
-      ({ path, content }) => ({ path: redact(path), content: redact(content) }),
-      () => notOffered,
-    ),
-  ],
-  [
-    "terminal/create",
-    refusal(
-      Schema.Struct({
-        command: Schema.String,
-        args: Schema.OptionFromOptionalKey(Schema.Array(Schema.String)),
-      }),
-      ({ command, args }) => ({
-        command: redact([command, ...Option.getOrElse(args, () => [])].join(" ")),
-      }),
-      () => notOffered,
-    ),
-  ],
-  [
-    "terminal/output",
-    refusal(
-      nothingToRecord,
-      () => ({}),
-      () => notOffered,
-    ),
-  ],
-  [
-    "terminal/wait_for_exit",
-    refusal(
-      nothingToRecord,
-      () => ({}),
-      () => notOffered,
-    ),
-  ],
-  [
-    "terminal/kill",
-    refusal(
-      nothingToRecord,
-      () => ({}),
-      () => notOffered,
-    ),
-  ],
-  [
-    "terminal/release",
-    refusal(
-      nothingToRecord,
-      () => ({}),
-      () => notOffered,
-    ),
-  ],
-]);
+const clientRequests: Readonly<Record<AcpClientMethod, RefusalRule>> = {
+  "session/request_permission": refusal(
+    PermissionRequest,
+    ({ toolCall }) => ({
+      kind: Option.getOrNull(Option.flatMap(toolCall.kind, Option.fromNullOr)),
+      // A title such as "cat /etc/passwd" spells out what the Bot typed.
+      title: Option.getOrNull(
+        Option.map(Option.flatMap(toolCall.title, Option.fromNullOr), redact),
+      ),
+    }),
+    rejectPermission,
+  ),
+  "fs/read_text_file": refusal(
+    Schema.Struct({ path: Schema.String }),
+    ({ path }) => ({ path: redact(path) }),
+    () => notOffered,
+  ),
+  "fs/write_text_file": refusal(
+    Schema.Struct({ path: Schema.String, content: Schema.String }),
+    ({ path, content }) => ({ path: redact(path), content: redact(content) }),
+    () => notOffered,
+  ),
+  "terminal/create": refusal(
+    Schema.Struct({
+      command: Schema.String,
+      args: Schema.OptionFromOptionalKey(Schema.Array(Schema.String)),
+    }),
+    ({ command, args }) => ({
+      command: redact([command, ...Option.getOrElse(args, () => [])].join(" ")),
+    }),
+    () => notOffered,
+  ),
+  "terminal/output": refusal(
+    nothingToRecord,
+    () => ({}),
+    () => notOffered,
+  ),
+  "terminal/wait_for_exit": refusal(
+    nothingToRecord,
+    () => ({}),
+    () => notOffered,
+  ),
+  "terminal/kill": refusal(
+    nothingToRecord,
+    () => ({}),
+    () => notOffered,
+  ),
+  "terminal/release": refusal(
+    nothingToRecord,
+    () => ({}),
+    () => notOffered,
+  ),
+};
+
+const isClientMethod = Schema.is(AcpClientMethod);
 
 /** Decide what to do with the agent's request `method`. Pure: the caller writes the audit row. */
 export function decideClientRequest(method: string, params: Schema.Json): ClientDecision {
-  return Option.match(Option.fromUndefinedOr(clientRequests.get(method)), {
-    onNone: () =>
-      ClientDecision.Unknown({
+  return isClientMethod(method)
+    ? ClientDecision.Refuse({ method, ...clientRequests[method].refuse(params) })
+    : ClientDecision.Unknown({
         reply: Reply.Error({ code: methodNotFound, message: `Method not found: ${method}` }),
-      }),
-    onSome: (rule) => rule.refuse(params),
-  });
+      });
 }

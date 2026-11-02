@@ -1,3 +1,4 @@
+import type { BotId } from "@aobot/domain";
 import {
   Cause,
   Data,
@@ -124,10 +125,10 @@ export function layerAcp(options: AcpRuntimeOptions) {
           Effect.flatMap(decodeAnswer(agent, method, schema)),
         );
 
-      const answerClientRequest = (method: string, params: Schema.Json) =>
+      const answerClientRequest = (bot: BotId, method: string, params: Schema.Json) =>
         ClientDecision.$match(decideClientRequest(method, params), {
-          Refuse: ({ detail, reply }) =>
-            gateway.refuse({ agent, action: method, detail }).pipe(Effect.as(reply)),
+          Refuse: ({ method: refusedMethod, detail, reply }) =>
+            gateway.refuse({ bot, agent, action: refusedMethod, detail }).pipe(Effect.as(reply)),
           Unknown: ({ reply }) => Effect.succeed(reply),
         });
 
@@ -179,7 +180,7 @@ export function layerAcp(options: AcpRuntimeOptions) {
             method === "session/update"
               ? Queue.offer(signals, Signal.Update({ params })).pipe(Effect.asVoid)
               : Effect.void,
-          request: answerClientRequest,
+          request: (method, params) => answerClientRequest(turn.bot, method, params),
         });
 
         const initialized = yield* ask(

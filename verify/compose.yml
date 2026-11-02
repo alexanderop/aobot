@@ -9,6 +9,7 @@ services:
       MODEL_BASE_URL: http://mock-model:4010/v1
       # Only here, for the fixture page. The server refuses it in production.
       COMPUTER_ALLOW_PRIVATE_HOSTS: "true"
+      GRAFANA_URL: http://localhost:3400
     ports: !override
       - "127.0.0.1:3100:3000"
 

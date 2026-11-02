@@ -1,4 +1,6 @@
 import {
+  type AcpClientMethod,
+  type AuditAction,
   BotId,
   ComputerAction,
   commandTimeLimit,
@@ -51,10 +53,12 @@ import { FileTransfers, fileTransfers } from "./transfers.ts";
 
 /** Something an agent asked for that the gateway turned down. `detail` is already redacted. */
 export interface Refusal {
+  /** The Bot whose turn the CLI was running. */
+  readonly bot: BotId;
   /** The CLI or runtime that asked, such as `claude-code`. */
   readonly agent: string;
   /** What it asked for, such as `terminal/create`. */
-  readonly action: string;
+  readonly action: AcpClientMethod;
   readonly detail: Schema.JsonObject;
 }
 
@@ -456,7 +460,11 @@ export const gatewayLayer = Layer.effectContext(
 
     const refuse = Effect.fn("Gateway.refuse")(function* (refusal: Refusal) {
       yield* rows
-        .decide("deny", refusal.action, { agent: refusal.agent, request: refusal.detail })
+        .decide("deny", refusal.action, {
+          bot: refusal.bot,
+          agent: refusal.agent,
+          request: refusal.detail,
+        })
         .pipe(Effect.orDie);
     });
 
@@ -602,7 +610,7 @@ export const gatewayLayer = Layer.effectContext(
 
     /** Records a `deny` row as `audited` and tells the model `answer`. */
     const denyAs = Effect.fnUntraced(function* (
-      audited: string,
+      audited: AuditAction,
       detail: Schema.JsonObject,
       answer: string,
     ) {
@@ -619,7 +627,7 @@ export const gatewayLayer = Layer.effectContext(
     /** Writes the `allow` row for `action` as `audited`, or tells the model it did not run. */
     const recordAllowed = (
       tool: ToolName,
-      audited: string,
+      audited: AuditAction,
       detail: Schema.JsonObject,
     ): Effect.Effect<AuditRowId, ToolFailed> =>
       rows.decide("allow", audited, detail).pipe(

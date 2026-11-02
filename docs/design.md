@@ -93,6 +93,24 @@ in the app, previews and unread dots for E3-2, and the bottom bar for people (E3
 - **When a take, a click or a hand back failed:** the panel opens and says why in `--danger` text under
   the bar, until your next command or until control changes hands.
 
+### Audit page
+
+- **Where:** `/audit`, a page of its own, linked as Audit trail in `--muted` text at the bottom of the
+  sidebar. Back to the Bots returns to the messenger.
+- **Filters:** a `--bubble` card of fields on `--row-active`: Bot (as `bots.yaml` names them), Person,
+  Decision, From and Before (the browser's own time, to the minute), then a Filter pill in the accent colour
+  and a Clear pill. The URL keeps the filters, so a reload or a copied link shows the same rows, and Back
+  returns to the filters before. Filter on the filters already shown reads the trail again, with no new
+  history entry.
+- **Rows:** a table, newest first: the time, the Bot, the person (with "by the server" for a row the
+  deployment wrote), the action and the decision in words ("Run a command", "Refused"), why (the rule in a
+  code chip, then the reason), and Trace, which opens the row's trace in Grafana in a new tab. Refused and
+  Failed are `--danger`, Outcome unknown `--muted`. An action or a decision the page has no words for reads
+  Unknown, never Allowed.
+- **Paging:** 50 rows at a time; Load more reads the next page after the last row shown, and is gone once
+  there is none. Why a page did not arrive shows in `--danger`, and the rows read before it stay; Load
+  more asks for that page again. When no rows came, Try again reads the trail again from the newest row.
+
 ### Bot avatars
 
 Each Bot gets a simple, friendly character: a soft blob shape in one solid colour with two eyes. Colour
@@ -129,5 +147,6 @@ Dark is the main theme. A light theme is a later ticket.
 | [E1-6](backlog/E1-a-computer/E1-6-files-in-and-out-of-the-workspace.md)             | Attachment chips, file chip                     |
 | [E2-1](backlog/E2-roles-and-guardrails/E2-1-bots-from-a-file-with-granted-tools.md) | Sidebar with groups, pinned Bots, avatars       |
 | [E2-3](backlog/E2-roles-and-guardrails/E2-3-never-record-secrets.md)                | Secret entry card                               |
+| [E2-4](backlog/E2-roles-and-guardrails/E2-4-an-audit-page-people-can-read.md)       | Audit page                                      |
 | [E2-5](backlog/E2-roles-and-guardrails/E2-5-ask-before-risky-actions.md)            | Approval card                                   |
 | [E3-2](backlog/E3-people/E3-2-my-conversations-only-mine.md)                        | Last-message previews and unread dots           |

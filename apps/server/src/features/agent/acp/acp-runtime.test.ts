@@ -163,7 +163,7 @@ describe("AgentRuntime (acp)", () => {
   );
 
   it.live(
-    "refuses a terminal and a permission through the gateway, inside the turn's trace",
+    "refuses a terminal and a permission through the gateway for the turn's Bot, inside its trace",
     () => {
       const gateway = recordingGateway();
 
@@ -179,8 +179,14 @@ describe("AgentRuntime (acp)", () => {
         );
 
         expect(gateway.refusals.map(({ refusal }) => refusal)).toEqual([
-          { agent: "fake-agent", action: "terminal/create", detail: { command: "[6 chars]" } },
           {
+            bot: turn.bot,
+            agent: "fake-agent",
+            action: "terminal/create",
+            detail: { command: "[6 chars]" },
+          },
+          {
+            bot: turn.bot,
             agent: "fake-agent",
             action: "session/request_permission",
             detail: { kind: "execute", title: "[3 chars]" },

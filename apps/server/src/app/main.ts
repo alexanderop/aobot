@@ -22,7 +22,7 @@ import {
   layerAcp,
   layerApi,
 } from "../features/agent/public.ts";
-import { auditLogLayer, migrateAudit } from "../features/audit/public.ts";
+import { auditLogLayer, auditTrailLayer, migrateAudit } from "../features/audit/public.ts";
 import { botHandlers, botsFileLayer, botToolkit } from "../features/bots/public.ts";
 import { chatLayer, migrateChat } from "../features/chat/public.ts";
 import { policyFileLayer } from "../features/policy/public.ts";
@@ -37,6 +37,7 @@ import {
   screenHandlers,
 } from "../features/gateway/public.ts";
 import { spanAttributesRedacted } from "../shared/span-redaction.ts";
+import { auditRoutes } from "./audit-routes.ts";
 import { serverConfig } from "./config.ts";
 import { fileRoutes } from "./file-routes.ts";
 import { rpcSocket } from "./rpc-socket.ts";
@@ -135,6 +136,11 @@ const server = Layer.unwrap(
 
     const files = fileRoutes(config.publicHost).pipe(Layer.provide(gateway));
 
+    const audit = auditRoutes(config.publicHost, config.grafanaUrl).pipe(
+      Layer.provide(auditTrailLayer),
+      Layer.provide(database),
+    );
+
     const webApp = HttpStaticServer.layer({ root: config.webDistDir, spa: true });
 
     const listener = NodeHttpServer.layer(createServer, { port: config.port, host: config.host });
@@ -147,12 +153,12 @@ const server = Layer.unwrap(
         ),
     });
 
-    // HTTP carries only the web app's files, the health check, the RPC socket, a person's files and the
-    // gateway's MCP server. A transfer names its own span; the health check every two seconds would bury
-    // the turns.
+    // HTTP carries only the web app's files, the health check, the RPC socket, a person's files, the
+    // audit trail and the gateway's MCP server. A transfer names its own span; the health check every
+    // two seconds would bury the turns.
     const untracedHttp = Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true);
 
-    return HttpRouter.serve(Layer.mergeAll(rpc, files, webApp, runtime.routes)).pipe(
+    return HttpRouter.serve(Layer.mergeAll(rpc, files, audit, webApp, runtime.routes)).pipe(
       Layer.merge(runtime.beside),
       Layer.provide(listener),
       Layer.provide([spanAttributesRedacted.pipe(Layer.provide(telemetry)), untracedHttp]),

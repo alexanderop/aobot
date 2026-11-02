@@ -1,4 +1,11 @@
-import { FileAction, PageAction, RefTarget, RunCommand, type ToolName } from "@aobot/domain";
+import {
+  type AuditAction,
+  FileAction,
+  PageAction,
+  RefTarget,
+  RunCommand,
+  type ToolName,
+} from "@aobot/domain";
 import { Schema } from "effect";
 
 /**
@@ -39,6 +46,6 @@ export type DirectAction = Exclude<ToolAction, SecretRequest>;
 The action the audit rows of `tool` name: the tool itself, but for `request_secret` what happened,
 `secret.requested`, which the person's answer follows with `secret.supplied`.
 */
-export function auditAction(tool: ToolName): string {
+export function auditAction(tool: ToolName): AuditAction {
   return tool === "request_secret" ? "secret.requested" : tool;
 }
