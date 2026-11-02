@@ -1,10 +1,19 @@
 import { Option } from "effect";
 
+/**
+Only what an IPv6 address is written in, once lower-cased and without its zone. Anything else, such as `@`,
+`/` or a bracket, is URL syntax that would change what `http://[…]/` parses: `x@[::1]/:` would read as
+`::1`.
+*/
+const ipv6Characters = /^[0-9a-f:.]+$/u;
+
 /** `host` as URL writes an IPv6 address, compressed and in hex, or none when it is no IPv6 address. */
 function ipv6(host: string): Option.Option<string> {
-  return host.includes(":") && URL.canParse(`http://[${host}]/`)
-    ? Option.some(new URL(`http://[${host}]/`).hostname.slice(1, -1))
-    : Option.none();
+  if (!host.includes(":") || !ipv6Characters.test(host)) return Option.none();
+
+  return Option.fromNullishOr(URL.parse(`http://[${host}]/`)).pipe(
+    Option.map((url) => url.hostname.slice(1, -1)),
+  );
 }
 
 /**

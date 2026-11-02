@@ -13,6 +13,8 @@ describe("canonicalHost", () => {
     ["[::1]", "::1"],
     ["Shop.Example..", "shop.example"],
     ["shop.example", "shop.example"],
+    ["x@[::1]/:", "x@[::1]/:"],
+    ["[x@[::1]/:]", "x@[::1]/:"],
   ])("spells %s as %s", (host, canonical) => {
     expect(canonicalHost(host)).toBe(canonical);
   });
