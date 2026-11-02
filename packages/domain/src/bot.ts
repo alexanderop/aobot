@@ -11,6 +11,7 @@ export const ToolName = Schema.Literals([
   "snapshot",
   "click",
   "type",
+  "press",
   "run",
   "read_file",
   "write_file",

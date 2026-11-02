@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option, Result } from "effect";
-import { canonicalHost, makeDestinations, parseCidr, reachOf } from "./destinations.ts";
+import { makeDestinations, parseCidr, reachOf } from "./destinations.ts";
 import { DestinationUnreachable } from "./errors.ts";
 
 const dns = new Map([
@@ -35,20 +35,6 @@ describe("parseCidr", () => {
     "10.0.0.0/8/8",
   ])("reads %j as an error, never as /0", (text) => {
     expect(Result.isFailure(parseCidr(text))).toBe(true);
-  });
-});
-
-describe("canonicalHost", () => {
-  it.each([
-    ["[::ffff:169.254.169.254]", "169.254.169.254"],
-    ["::ffff:a9fe:a9fe", "169.254.169.254"],
-    ["64:ff9b::a9fe:a9fe", "169.254.169.254"],
-    ["64:ff9b::169.254.169.254", "169.254.169.254"],
-    ["METADATA.GOOG.", "metadata.goog"],
-    ["[fe80::1%25eth0]", "fe80::1"],
-    ["[0:0:0:0:0:0:0:1]", "::1"],
-  ])("spells %s as %s", (host, canonical) => {
-    expect(canonicalHost(host)).toBe(canonical);
   });
 });
 

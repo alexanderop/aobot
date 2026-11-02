@@ -110,6 +110,7 @@ const act = Effect.fn("Computer.act")(function* (action: ComputerAction) {
     snapshot: browse,
     click: browse,
     type: browse,
+    press: browse,
     run: ({ command }) => Shell.use((shell) => shell.run(command)),
     read_file: files,
     write_file: files,

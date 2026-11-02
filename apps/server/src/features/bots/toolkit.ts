@@ -2,6 +2,7 @@ import {
   commandTimeLimit,
   fileReadLimit,
   fileWriteLimit,
+  PressKey,
   WorkspacePath,
   workspaceRoot,
 } from "@aobot/domain";
@@ -47,6 +48,18 @@ const type = Tool.make("type", {
   parameters: Schema.Struct({
     ref,
     text: Schema.String.annotate({ description: "What the field should hold." }),
+  }),
+  success: Schema.String,
+  failure: ToolFailed,
+  failureMode: "return",
+});
+
+const press = Tool.make("press", {
+  description:
+    "Press one key on an element of the page open in your computer's browser, such as Enter in a field to submit its form. Answers with the page read afresh.",
+  parameters: Schema.Struct({
+    ref,
+    key: PressKey.annotate({ description: "The key to press." }),
   }),
   success: Schema.String,
   failure: ToolFailed,
@@ -115,6 +128,7 @@ export const botToolkit = Toolkit.make(
   snapshot,
   click,
   type,
+  press,
   run,
   readFile,
   writeFile,

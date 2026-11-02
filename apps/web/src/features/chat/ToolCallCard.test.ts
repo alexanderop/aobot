@@ -107,6 +107,39 @@ describe("ToolCallCard", () => {
     expect(html).toMatch(/<details[^>]*>.*\[ref=e23\]: Effect TypeScript.*<\/details>/s);
   });
 
+  it("says which key press pressed on which element, and folds the page it answered with", () => {
+    const html = draw(
+      call(
+        "press",
+        '{"ref":"e23","key":"Enter"}',
+        ToolCallStatus.Done({ result: 'heading "Results" [ref=f2e1]' }),
+      ),
+    );
+
+    expect(html).toContain('data-tool="press"');
+    expect(html).toContain("Pressed Enter on e23");
+    expect(html).toMatch(/<details[^>]*>.*heading &quot;Results&quot;.*<\/details>/s);
+  });
+
+  it("says it presses a key while the call's arguments are still streaming in", () => {
+    expect(draw(call("press", '{"ref":"e2","ke', ToolCallStatus.Running()))).toContain(
+      "Pressing a key…",
+    );
+  });
+
+  it("says why a key press a rule refused did not happen", () => {
+    const html = draw(
+      call(
+        "press",
+        '{"ref":"e23","key":"Enter"}',
+        ToolCallStatus.Failed({ result: "press did not run: the rule no-enter refuses it." }),
+      ),
+    );
+
+    expect(html).toContain("Could not press Enter on e23");
+    expect(html).toContain("the rule no-enter refuses it");
+  });
+
   it("says why a click on a stale ref did not happen", () => {
     const html = draw(
       call(

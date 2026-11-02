@@ -4,13 +4,15 @@ import { join } from "node:path";
 import {
   PageAction,
   type PageRead,
+  type PressKey,
   PersonInput,
   type RefTarget,
+  sameOrigin,
   type ScreenPoint,
   snapshotLimit,
   snapshotRefs,
 } from "@aobot/domain";
-import { chromium, type BrowserContext, type Page } from "playwright";
+import { chromium, type BrowserContext, type Locator, type Page } from "playwright";
 import { Context, Effect, Layer, Option, Semaphore, Stream, SubscriptionRef } from "effect";
 import { Destinations, refusedHeader, startEgressProxy } from "../egress/public.ts";
 import { ActionFailed, ActionRefused } from "./errors.ts";
@@ -46,7 +48,7 @@ const navigationTimeoutMs = 30_000;
 
 const snapshotTimeoutMs = 10_000;
 
-/** How long a click or a fill may wait for its element to be ready. A ref that names nothing is refused first. */
+/** How long a click, a fill or a key press may wait for its element to be ready. A ref that names nothing is refused first. */
 const elementTimeoutMs = 5_000;
 
 /** How long a Playwright call that takes no time limit of its own may run, such as a click on the screen. */
@@ -55,6 +57,11 @@ const callTimeoutMs = 5_000;
 /** What the Bot reads when a ref no longer names the element it saw. */
 function staleRef(target: RefTarget): string {
   return `The page changed since your latest snapshot, so ${target.ref} is not the ${target.role} it was. Take a snapshot again and use a ref from it.`;
+}
+
+/** What the Bot reads when the page moved to another site since the snapshot its ref came from. */
+function otherSite(target: RefTarget): string {
+  return `The page is on another site than your latest snapshot read, so ${target.ref} is not the ${target.role} you saw. Take a snapshot again and use a ref from it.`;
 }
 
 /** Where `at` lands in a viewport of `width` by `height` pixels, kept inside it at the far edges. */
@@ -102,12 +109,18 @@ const readPage = Effect.fn("Browser.readPage")(function* (current: Page) {
 });
 
 /**
-The element `target` names, once the page read afresh still shows it at that ref with that role and name.
-The read also points `aria-ref` at the page as it is now. Playwright can start counting refs again on a
-new document, so a ref from before a navigation can name another element; its role and name tell them
-apart.
+The element `target` names, once the page is still on the origin its snapshot was read at and, read
+afresh, still shows it at that ref with that role and name. The server judged the action by that page's
+host, so a page that moved to another site, by a parallel call or by itself, is refused even when it
+shows the same element. The read also points `aria-ref` at the page as it is now. Playwright can start
+counting refs again on a new document, so a ref from before a navigation can name another element; its
+role and name tell them apart.
 */
 const element = Effect.fn("Browser.element")(function* (current: Page, target: RefTarget) {
+  if (!sameOrigin(current.url(), target.url)) {
+    return yield* new ActionRefused({ message: otherSite(target) });
+  }
+
   const tree = yield* playwright("Reading the page", () =>
     current.ariaSnapshot({ mode: "ai", timeout: snapshotTimeoutMs }),
   );
@@ -249,17 +262,37 @@ export const browserLayer = (home: string) =>
         return current;
       });
 
+      /**
+      Does `what` to the element `target` names, then waits until whatever it led to has loaded: a click
+      can follow a link and Enter can submit a form, and the page is read where it landed.
+      */
+      const onElementThenLoad = (
+        what: string,
+        target: RefTarget,
+        run: (found: Locator) => Promise<void>,
+      ) =>
+        Effect.gen(function* () {
+          const current = yield* currentPage(context, page);
+          const found = yield* element(current, target);
+
+          yield* playwright(what, () => run(found));
+          yield* playwright("Waiting for the page", () =>
+            current.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs }),
+          );
+
+          return current;
+        });
+
       const click = Effect.fn("Browser.click")(function* (target: RefTarget) {
-        const current = yield* currentPage(context, page);
-        const found = yield* element(current, target);
-
-        yield* playwright("Clicking", () => found.click({ timeout: elementTimeoutMs }));
-        // A click that follows a link reads the page it led to, not the one it left.
-        yield* playwright("Waiting for the page", () =>
-          current.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs }),
+        return yield* onElementThenLoad("Clicking", target, (found) =>
+          found.click({ timeout: elementTimeoutMs }),
         );
+      });
 
-        return current;
+      const press = Effect.fn("Browser.press")(function* (target: RefTarget, key: PressKey) {
+        return yield* onElementThenLoad("Pressing a key", target, (found) =>
+          found.press(key, { timeout: elementTimeoutMs }),
+        );
       });
 
       // `fill` replaces what the field holds and never presses Enter, so typing submits nothing.
@@ -290,6 +323,7 @@ export const browserLayer = (home: string) =>
             snapshot: () => currentPage(context, page),
             click: ({ target }) => click(target),
             type: ({ target, text }) => type(target, text),
+            press: ({ target, key }) => press(target, key),
           }).pipe(
             Effect.flatMap(readPage),
             Effect.map((read): PageRead => ({ action: action.action, ...read })),

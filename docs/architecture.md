@@ -122,6 +122,97 @@ computer never hears of it, and the model reads:
 
 > run did not run: it is not granted to researcher. Use only the tools your instructions name.
 
+## Rules that fail closed
+
+Security writes deny and allow rules in `rules.yaml` at the repository root (`RULES_FILE` points
+elsewhere; Compose mounts it into the server next to `bots.yaml`). The grant decides which tools a Bot
+has; the rules narrow what it may do with them. Each rule has a name, which the audit row and the model's
+answer give, and a `when` in [CEL](https://cel.dev), through `@marcbachmann/cel-js`.
+
+```yaml
+deny:
+  - name: no-rm-rf # lowercase letters, digits and dashes, unique across both lists
+    when: tool.name == "run" && command.contains("rm -rf")
+allow:
+  - name: granted-tools
+    when: "true"
+```
+
+A rule reads one record of facts about the action, declared once in `features/policy/facts.ts`, where the
+CEL environment is built from the same declaration so the two cannot drift:
+
+| Field                                      | What it holds                                                                                                 |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `tool.name`                                | The tool: `navigate`, `snapshot`, `click`, `type`, `press`, `run`, `read_file`, `write_file`, `list_files`    |
+| `bot.id`                                   | The Bot the call is for                                                                                       |
+| `actor.id`                                 | The person it acts for: `single-user` until E3 brings sign-in                                                 |
+| `computer.kind`                            | `cloud`; `mac` arrives with the Mac                                                                           |
+| `page.host`                                | For `navigate`, the host it opens; for the other browser tools, the host of the page the latest snapshot read |
+| `element.role`, `element.name`             | The element a ref names in the server's own snapshot, never what the Bot says it is                           |
+| `key`                                      | The key `press` presses                                                                                       |
+| `command`                                  | The command `run` runs, as the Bot wrote it                                                                   |
+| `file.path`, `file.name`, `file.extension` | The file a file tool names, as its audit row records it                                                       |
+
+Every field is bound on every action, `""` where the action has none, so a rule naming `element.name`
+answers false for `run` instead of failing. `page.host` is the host in the one spelling the computer's
+egress checks it in (`canonicalHost` in `@aobot/domain`): lower-cased, without its port, brackets or a
+trailing dot, so `SHOP.example.` and `shop.example%2e` are `shop.example` and `[::1]` is `::1`. It is the
+host of the page's origin, so `blob:https://shop.example/…` is `shop.example`, the site the computer's
+`sameOrigin` counts it on, and `""` for an address that does not parse or whose origin is opaque, such as
+`about:blank` or a `data:` page. The latest snapshot keeps the address it was read at for this. A snapshot
+stored before E2-2 has none, so the migration that adds the address forgets it rather than let a ref be
+judged on the host `""`: no ref resolves until a Bot reads the page again.
+
+The order in `Gateway.act` is grant, door, ref or path, rules, `allow` row, forward. A ref that does not
+resolve is refused for that and never judged on an empty element. Then every deny rule in the order the
+file gives them: the first that holds refuses. Then every allow rule in order: the first that holds
+allows. Anything no allow rule allows is refused, so empty lists refuse everything; the server logs a
+warning at start-up when the allow list is empty.
+
+It fails closed. A deny rule that fails while it is evaluated, such as
+`command == "" || int(command) > 0` on `ls`, refuses. An allow rule that fails allows nothing, and a
+later allow rule still can. A failed rule is logged by its name and list only, never its error, which can
+echo what the action holds. The error goes into the action's deny row, capped: a failed deny rule's as
+`error`, and when nothing allowed the action, each failed allow rule's as `failed: [{ rule, error }]`.
+When a later allow rule allows the action anyway, the errors of the allow rules that failed before it are
+not kept; only their warnings are. A file that is missing, empty or not YAML, misses a list or misspells
+a key, gives a name that is not a slug or names two rules, or has a `when` that does not parse, names a
+field the facts do not have, does not answer `bool` (a `dyn` answer included), calls `matches`, or fails
+when `page.host`, `element`, `key`, `command` and `file` are `""` (such as `int("ten")`, `1/0` or
+`command.split(" ")[1]`) stops the server with the path, every problem and where in the file each is.
+Each rule is tried once on those blank facts when the file is read, which catches a rule that fails on an
+action without the fact it reads. A rule that fails only on some actions, such as
+`command == "" || int(command) > 0` on `ls`, still loads, and fails closed each time it runs. The facts every action has
+hold a value they can have in that try: `bot.id` is `bot`, `actor.id` is `single-user` and
+`computer.kind` is `cloud`, so `computer.kind.substring(0, 3) == "clo"` loads, since none of them is ever
+`""` on a real action. `matches` is refused because cel-js runs it as a backtracking JavaScript regular
+expression on the server's one thread, where `^(a+)+$` on a short command holds every turn for seconds;
+write the rule with `contains`, `startsWith`, `endsWith` and `lowerAscii()` instead. That does not make
+every rule cheap: a comprehension over `command.split("")` is quadratic in the command's length, so keep
+rules simple.
+
+A refusal is a `deny` row with the action's audit detail and the rule: `run · deny · no-rm-rf` is
+`{ bot, command, rule: "no-rm-rf", reason: "denied by rule" }`, a failed deny rule adds `error` with
+`reason: "rule failed"`, and nothing allowed is `{ rule: null, reason: "no rule allows it" }`, with
+`failed` when an allow rule failed. An `allow` row names the allow rule that allowed it as `rule`. The
+`Gateway.act` span records `gateway.decision` (`allow` or `deny`, for every refusal) and `gateway.rule`
+when a rule decided. The model reads:
+
+> run did not run: the rule no-rm-rf refuses it. Tell your person what was refused; do not try another way around it.
+
+`press` activates the element it targets: Space or Enter on a button clicks it, and Enter in a field
+submits its form. So a rule that must stop a submission names `click` and `press` on the button, and
+Enter in the form's fields: `tool.name in ["click", "press"] && element.name == "Submit"` and
+`tool.name == "press" && key == "Enter" && page.host == "shop.example"`. Matching a command's text is a
+filter, not a boundary; the computer the command runs on is the boundary.
+
+Known gaps. `page.host` is the host of the page an action acts on, never of the page it lands on. So
+`snapshot` is judged on the page the last Bot action read, or on `""` after a hand-back, while the
+browser may show another page by then: one the person opened while they held the computer, or one the
+page moved to by itself. A click that follows a link, Enter that submits a form, and a redirect after
+`navigate` all reach a host no rule judged; the egress filter still decides whether the computer may go
+there at all. Judging the page an action lands on is a follow-up (`docs/backlog/later.md`).
+
 ## Life of one request
 
 1. A person sends a message with the Bot they picked.
@@ -251,26 +342,36 @@ ends. The HTTP client's spans of the server's requests to the computer's `/files
 Every tool a Bot can be granted, in either runtime. The tool map test (`apps/server/src/features/gateway/tool-map.test.ts`)
 fails when a tool in `botToolkit` is missing here or a row here names no tool. Each call writes the `allow`
 row first, then one outcome row linked to it by `outcome_of`. Both carry the turn's `trace_id`; the outcome row
-copies the action, and its `detail` says why for `failed` and `unknown`. Every row's `detail`, `deny` rows
+copies the action, and its `detail` says why for `failed` and `unknown`. An `allow` row's `detail` ends with
+`rule`, the allow rule that allowed it, and a rule's refusal is a `deny` row as
+[Rules that fail closed](#rules-that-fail-closed) says. Every row's `detail`, `deny` rows
 included, starts with `bot`: the id of the Bot the call was made for, or `null` when it named none by its
-id. The `Gateway.act` span records it as `gateway.bot`.
+id. The `Gateway.act` span records it as `gateway.bot`. A ref's row keeps the `host` of its page, which
+is what a rule judged, never the page's address: a query or fragment can carry a token, such as an OAuth
+`#access_token=…`. Only the computer is sent the whole address, as `url`.
 
-| Tool         | Parameters         | Computer action                                               | Audit rows                                                                                                                                                                    |
-| ------------ | ------------------ | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `navigate`   | `url`              | `POST /act {"action":"navigate","url"}`                       | `navigate · allow` with `{ bot, url }`, then `succeeded`, `failed` or `unknown`                                                                                               |
-| `snapshot`   | none               | `POST /act {"action":"snapshot"}`                             | `snapshot · allow` with `{ bot }`, then `succeeded`, `failed` or `unknown`                                                                                                    |
-| `click`      | `ref`              | `POST /act {"action":"click","target":{ref,role,name}}`       | `click · allow` with `{ bot, ref, role, name }`, then `succeeded`, `failed` or `unknown`; `click · deny` with `{ bot, ref, reason }`                                          |
-| `type`       | `ref`, `text`      | `POST /act {"action":"type","target":{ref,role,name},"text"}` | `type · allow` with `{ bot, ref, role, name, text: "[N chars]" }`, then `succeeded`, `failed` or `unknown`; `type · deny` with `{ bot, ref, reason }`                         |
-| `run`        | `command`          | `POST /act {"action":"run","command"}`                        | `run · allow` with `{ bot, command }` (capped at 2,000 characters), then `succeeded`, `failed` or `unknown`                                                                   |
-| `read_file`  | `path`             | `POST /act {"action":"read_file","path"}`                     | `read_file · allow` with `{ bot, path, name, extension }`, then `succeeded`, `failed` or `unknown`; `read_file · deny` with `{ bot, path, name, extension, reason }`          |
-| `write_file` | `path`, `contents` | `POST /act {"action":"write_file","path","contents"}`         | `write_file · allow` with `{ bot, path, name, extension, bytes }`, then `succeeded`, `failed` or `unknown`; `write_file · deny` with `{ bot, path, name, extension, reason }` |
-| `list_files` | `path`             | `POST /act {"action":"list_files","path"}`                    | `list_files · allow` with `{ bot, path, name, extension }`, then `succeeded`, `failed` or `unknown`; `list_files · deny` with `{ bot, path, name, extension, reason }`        |
+| Tool         | Parameters         | Computer action                                                   | Audit rows                                                                                                                                                                    |
+| ------------ | ------------------ | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `navigate`   | `url`              | `POST /act {"action":"navigate","url"}`                           | `navigate · allow` with `{ bot, url }`, then `succeeded`, `failed` or `unknown`                                                                                               |
+| `snapshot`   | none               | `POST /act {"action":"snapshot"}`                                 | `snapshot · allow` with `{ bot }`, then `succeeded`, `failed` or `unknown`                                                                                                    |
+| `click`      | `ref`              | `POST /act {"action":"click","target":{ref,role,name,url}}`       | `click · allow` with `{ bot, ref, role, name, host }`, then `succeeded`, `failed` or `unknown`; `click · deny` with `{ bot, ref, reason }`                                    |
+| `type`       | `ref`, `text`      | `POST /act {"action":"type","target":{ref,role,name,url},"text"}` | `type · allow` with `{ bot, ref, role, name, host, text: "[N chars]" }`, then `succeeded`, `failed` or `unknown`; `type · deny` with `{ bot, ref, reason }`                   |
+| `press`      | `ref`, `key`       | `POST /act {"action":"press","target":{ref,role,name,url},"key"}` | `press · allow` with `{ bot, ref, role, name, host, key }`, then `succeeded`, `failed` or `unknown`; `press · deny` with `{ bot, ref, reason }`                               |
+| `run`        | `command`          | `POST /act {"action":"run","command"}`                            | `run · allow` with `{ bot, command }` (capped at 2,000 characters), then `succeeded`, `failed` or `unknown`                                                                   |
+| `read_file`  | `path`             | `POST /act {"action":"read_file","path"}`                         | `read_file · allow` with `{ bot, path, name, extension }`, then `succeeded`, `failed` or `unknown`; `read_file · deny` with `{ bot, path, name, extension, reason }`          |
+| `write_file` | `path`, `contents` | `POST /act {"action":"write_file","path","contents"}`             | `write_file · allow` with `{ bot, path, name, extension, bytes }`, then `succeeded`, `failed` or `unknown`; `write_file · deny` with `{ bot, path, name, extension, reason }` |
+| `list_files` | `path`             | `POST /act {"action":"list_files","path"}`                        | `list_files · allow` with `{ bot, path, name, extension }`, then `succeeded`, `failed` or `unknown`; `list_files · deny` with `{ bot, path, name, extension, reason }`        |
+
+Any tool can also be refused by a rule, as `<tool> · deny` with its audit detail and the rule (see
+[Rules that fail closed](#rules-that-fail-closed)).
 
 While a person holds the computer, every granted tool of every Bot is refused before its ref is resolved: `<tool> · deny`
 with `{ bot, reason: "a person has control" }` (see [Taking control](#taking-control)).
 
 Every browser action answers with the page read afresh: its URL, title and snapshot, capped at 12,000
-characters. `type` replaces what the field holds and never presses Enter.
+characters. `type` replaces what the field holds and never presses Enter. `press` presses one key on an element:
+`Enter`, `Tab`, `Escape`, `Backspace`, `Space` or an arrow key, and like `click` reads the page once what it led
+to has loaded, so Enter in a field reads the page its form submitted to.
 
 `run` answers how the command ended and the last 8,000 characters of each of stdout and stderr, each with
 a note when its start was dropped. It ended `Exited` with bash's exit code, `Signalled` when a signal the
@@ -288,13 +389,14 @@ The `Gateway.act` span records `gateway.command_end` (`exited`, `signalled` or `
 
 `read_file`, `write_file` and `list_files` name a file by its path inside `/workspace`, such as
 `reports/august.csv`; the audit row records that path with its `name` and `extension`, the three that
-rules see as `file.path`, `file.name` and `file.extension`. The path is a `WorkspacePath` from the domain,
-on the tools, on `/act` and on both `/files` routes: `""` is read as `.`, the workspace itself, and nothing
-is trimmed, so the gateway and the computer judge the very same name, and `a.txt ` is a file of its own.
-A path is judged as the computer, which runs Linux, reads it: only a leading `/` makes it absolute and
-only `/` separates, so `c:notes.txt` and `a\b.txt` are each one file's name. A path that is absolute,
-`/workspace/notes.txt` included, or that goes up with `..` is denied before anything is forwarded, the computer
-never hears of it, and the model reads:
+rules see as `file.path`, `file.name` and `file.extension`. The extension is what follows the name's last
+dot, lower-cased, for a name that starts with one too: `.env` and `prod.ENV` are both `env`. The path is
+a `WorkspacePath` from the domain, on the tools, on `/act` and on both `/files` routes: `""` is read as
+`.`, the workspace itself, and nothing is trimmed, so the gateway and the computer judge the very same
+name, and `a.txt ` is a file of its own. A path is judged as the computer, which runs Linux, reads it:
+only a leading `/` makes it absolute and only `/` separates, so `c:notes.txt` and `a\b.txt` are each one
+file's name. A path that is absolute, `/workspace/notes.txt` included, or that goes up with `..` is
+denied before anything is forwarded, the computer never hears of it, and the model reads:
 
 > read_file did not run: /etc/passwd is outside your workspace. Name a file by its path inside /workspace,
 > such as notes.txt, with no leading / and no "..".
@@ -322,7 +424,8 @@ A ref such as `e12` names one element of the latest snapshot of the page. Every 
 browser on the computer they share, so the gateway stores one snapshot for that computer in the database
 (`computer_snapshot`), with the Bot whose browser action read it (`read_by`), replacing both after every
 browser action that answered, whichever Bot asked. Any replica resolves a ref the same way. Before any
-rule runs, `click` and `type` resolve their ref to the element's role and name. A ref resolves only for
+rule runs, `click`, `type` and `press` resolve their ref to the element's role and name, and the
+address the snapshot was read at. A ref resolves only for
 the Bot that read the latest snapshot: another Bot's refs name a page it saw before the page changed, and
 the same ref can name a different element on the new page, which the computer's own check would not
 catch. Such a ref is a `deny` row with `another Bot read the page since`, the computer never hears of it,
@@ -334,9 +437,17 @@ A ref that is not in the snapshot its Bot read is a `deny` row too, and the mode
 
 > click did not run: e12 is not a ref in the page's latest snapshot. Take a snapshot and use a ref from it.
 
-The computer sends the resolved element, not just its ref, and reads the page afresh before acting. When
-the element at that ref is gone or no longer has that role and name (the page changed, or a navigation
-started Playwright's ref counter again), it refuses with:
+The gateway sends the computer the resolved element and that address, not just the ref. The rules judged
+the action by that page's host, so when the page is on another origin by now (a parallel call navigated,
+or the page moved by itself) the computer refuses it, even when the new page shows the same element:
+
+> The page is on another site than your latest snapshot read, so e12 is not the button you saw. Take a
+> snapshot again and use a ref from it.
+
+The origin is compared, not the whole address, so a single-page app that changes its query or hash keeps
+its refs. Then the computer reads the page afresh. When the element at that ref is gone or no longer has
+that role and name (the page changed, or a navigation started Playwright's ref counter again), it refuses
+with:
 
 > The page changed since your latest snapshot, so e12 is not the button it was. Take a snapshot again and
 > use a ref from it.

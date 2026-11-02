@@ -26,6 +26,7 @@ const toolGuidance = {
   click:
     "click acts on an element by its ref. Every browser action answers with the page read afresh; use refs from the latest one.",
   type: "type puts text in a field by its ref, replacing what it held, and does not press Enter.",
+  press: "press presses one key, such as Enter or Tab, on an element by its ref.",
   run: `run runs a bash command in ${workspaceRoot}, your own folder, where you create and read files.`,
   read_file: `read_file reads a file in ${workspaceRoot} by its path inside it, such as notes.txt. A file your person gives you lands there.`,
   write_file: `write_file saves a file in ${workspaceRoot}. Your person can download it from the chat, so save what they ask you to make that way.`,

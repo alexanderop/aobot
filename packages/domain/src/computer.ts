@@ -73,10 +73,34 @@ export const RefTarget = Schema.Struct({
   role: Schema.String,
   /** Its accessible name, or `""` when the snapshot shows none. */
   name: Schema.String,
+  /**
+  The address that snapshot was read at, whose host the rules judged the action by. The computer refuses
+  the action when its page is on another origin by now.
+  */
+  url: Schema.String,
 });
 
 /** A decoded {@link RefTarget}. */
 export type RefTarget = typeof RefTarget.Type;
+
+/** An element as a snapshot shows it: a {@link RefTarget} without the address the snapshot was read at. */
+export type SnapshotElement = Omit<RefTarget, "url">;
+
+/** The keys `press` can press, by the names Playwright gives them. */
+export const PressKey = Schema.Literals([
+  "Enter",
+  "Tab",
+  "Escape",
+  "Backspace",
+  "Space",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+]);
+
+/** A decoded {@link PressKey}. */
+export type PressKey = typeof PressKey.Type;
 
 /** Something a Bot asks its computer's browser to do. Each answers with a {@link PageRead}. */
 export const PageAction = Schema.Union([
@@ -84,6 +108,7 @@ export const PageAction = Schema.Union([
   Schema.Struct({ action: Schema.Literal("snapshot") }),
   Schema.Struct({ action: Schema.Literal("click"), target: RefTarget }),
   Schema.Struct({ action: Schema.Literal("type"), target: RefTarget, text: Schema.String }),
+  Schema.Struct({ action: Schema.Literal("press"), target: RefTarget, key: PressKey }),
 ]).pipe(Schema.toTaggedUnion("action"));
 
 /** A decoded {@link PageAction}. */
@@ -126,7 +151,7 @@ The page as it is after a {@link PageAction}, read afresh, so the Bot's refs alw
 is looking at.
 */
 export const PageRead = Schema.Struct({
-  action: Schema.Literals(["navigate", "snapshot", "click", "type"]),
+  action: Schema.Literals(["navigate", "snapshot", "click", "type", "press"]),
   url: Schema.String,
   title: Schema.String,
   snapshot: Schema.String,

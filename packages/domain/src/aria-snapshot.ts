@@ -1,5 +1,5 @@
 import { Option, Schema } from "effect";
-import type { RefTarget } from "./computer.ts";
+import type { SnapshotElement } from "./computer.ts";
 
 /**
 An element line's key, such as `button "Search" [ref=e12]`: a role, its name as a JSON string, then
@@ -30,7 +30,7 @@ function lineKey(line: string): Option.Option<string> {
   );
 }
 
-function lineTarget(line: string): Option.Option<RefTarget> {
+function lineTarget(line: string): Option.Option<SnapshotElement> {
   return Option.flatMap(lineKey(line), (key) => {
     const parts = keyPattern.exec(key)?.groups;
     const role = parts?.["role"];
@@ -49,7 +49,7 @@ function lineTarget(line: string): Option.Option<RefTarget> {
 Every element with a ref in an `ariaSnapshot({ mode: "ai" })` snapshot, by ref. A line the cap cut short,
 or one without a ref (text, `/url`, options), names no element.
 */
-export function snapshotRefs(snapshot: string): ReadonlyMap<string, RefTarget> {
+export function snapshotRefs(snapshot: string): ReadonlyMap<string, SnapshotElement> {
   return new Map(
     snapshot
       .split("\n")
@@ -61,8 +61,8 @@ export function snapshotRefs(snapshot: string): ReadonlyMap<string, RefTarget> {
 /** The first element in `snapshot` with this role and name, such as the search box a test means. */
 export function findRef(
   snapshot: string,
-  element: Omit<RefTarget, "ref">,
-): Option.Option<RefTarget> {
+  element: Omit<SnapshotElement, "ref">,
+): Option.Option<SnapshotElement> {
   return Option.fromNullishOr(
     [...snapshotRefs(snapshot).values()].find(
       ({ role, name }) => role === element.role && name === element.name,

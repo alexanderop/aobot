@@ -41,6 +41,7 @@ export {
   fileWriteLimit,
   PageAction,
   PageRead,
+  PressKey,
   RefTarget,
   RunCommand,
   Screen,
@@ -63,6 +64,8 @@ export {
 export { ControlRpcs } from "./control-rpcs.ts";
 
 export { ScreenRpcs } from "./screen-rpcs.ts";
+
+export { canonicalHost, sameOrigin } from "./host.ts";
 
 export { keepFirst, keepLast } from "./text.ts";
 

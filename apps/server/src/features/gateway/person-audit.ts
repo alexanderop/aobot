@@ -3,6 +3,9 @@ import { AuditLog, type AuditRowId, type Outcome } from "../audit/public.ts";
 import type { ComputerActFailed, ComputerLost, ComputerUnavailable } from "../computers/public.ts";
 import { capText } from "../../shared/tool-result.ts";
 
+/** The one person every action is on the authority of, until E3 brings sign-in. */
+export const singleUser = "single-user";
+
 /** The longest computer message kept in an audit row or shown to a person. */
 export const computerMessageLimit = 500;
 
@@ -42,7 +45,7 @@ export const personAudit = Effect.gen(function* () {
       audit.record({
         traceId: Option.map(span, (current) => current.traceId),
         initiatorKind: "person",
-        actorId: "single-user",
+        actorId: singleUser,
         decision,
         action,
         detail,

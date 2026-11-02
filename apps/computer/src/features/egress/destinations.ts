@@ -1,5 +1,6 @@
 import { lookup } from "node:dns/promises";
 import { BlockList, isIP } from "node:net";
+import { canonicalHost } from "@aobot/domain";
 import { Context, Effect, Layer, Option, Result } from "effect";
 import { DestinationRefused, DestinationUnreachable } from "./errors.ts";
 
@@ -68,53 +69,6 @@ const names = new Map<string, Reach>([
   ["metadata.goog", "never"],
   ["localhost", "private"],
 ]);
-
-/**
-The IPv4 address an IPv6 address carries in its low 32 bits, when it is written in one of the forms that
-reach it: IPv4-mapped (`::ffff:0:0/96`), NAT64 (`64:ff9b::/96`) or the old compatible form (`::/96`).
-*/
-function embeddedIpv4(address: string): Option.Option<string> {
-  // URL compresses the address and spells a dotted tail in hex, so the groups below are always hex.
-  const [head = "", tail = ""] = new URL(`http://[${address}]/`).hostname.slice(1, -1).split("::");
-  const split = (part: string) => (part === "" ? [] : part.split(":"));
-  const known = [...split(head), ...split(tail)];
-
-  const groups = [
-    ...split(head),
-    ...Array.from({ length: 8 - known.length }, () => "0"),
-    ...split(tail),
-  ].map((group) => Number.parseInt(group, 16));
-
-  const [a, b, c, d, e, f, high = 0, low = 0] = groups;
-  const zeros = a === 0 && b === 0 && c === 0 && d === 0 && e === 0;
-  const mapped = zeros && f === 0xffff;
-  const nat64 = a === 0x64 && b === 0xff9b && c === 0 && d === 0 && e === 0 && f === 0;
-  // `::` and `::1` have the compatible form's zeros too, but are IPv6 addresses in their own right.
-  const compatible = zeros && f === 0 && high >> 8 !== 0;
-
-  if (!mapped && !nat64 && !compatible) return Option.none();
-
-  return Option.some([high >> 8, high & 255, low >> 8, low & 255].join("."));
-}
-
-/**
-The one spelling of a host the lists above are written in: lower case, no brackets, zone or root dot,
-and an IPv6 address that carries an IPv4 one reduced to it. Every spelling a client would follow to the
-same place has to land on the same string, or the lists have a door in them.
-*/
-export function canonicalHost(host: string): string {
-  const name = host
-    .toLowerCase()
-    .replace(/^\[(.*)\]$/u, "$1")
-    .replace(/%.*$/u, "")
-    .replace(/\.+$/u, "");
-
-  if (isIP(name) !== 6) return name;
-
-  return Option.getOrElse(embeddedIpv4(name), () =>
-    new URL(`http://[${name}]/`).hostname.slice(1, -1),
-  );
-}
 
 /** How far the computer may go to `host`, a name or an address in any spelling. */
 export function reachOf(host: string): Reach {

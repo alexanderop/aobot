@@ -18,6 +18,14 @@ const decodeRefArgs = Schema.decodeUnknownOption(
 
 const refOf = (args: string) => Option.map(decodeRefArgs(args), ({ ref }) => ref);
 
+const decodePressArgs = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ ref: Schema.String, key: Schema.String })),
+);
+
+/** The key a `press` call names and the element it presses it on, such as `Enter on e5`. */
+const keyOnRef = (args: string) =>
+  Option.map(decodePressArgs(args), ({ ref, key }) => `${key} on ${ref}`);
+
 const decodeRunArgs = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ command: Schema.String })),
 );
@@ -139,6 +147,18 @@ const TypeCall = namedCall({
   shown: pageAfter,
 });
 
+const PressCall = namedCall({
+  target: keyOnRef,
+  fallback: "a key",
+  words: {
+    running: (pressed) => `Pressing ${pressed}…`,
+    done: (pressed) => `Pressed ${pressed}`,
+    failed: (pressed) => `Could not press ${pressed}`,
+    unfinished: (pressed) => `Did not finish pressing ${pressed}`,
+  },
+  shown: pageAfter,
+});
+
 function RunCall({ call }: { readonly call: ToolCall }) {
   return (
     <>
@@ -234,6 +254,7 @@ const renderers: ReadonlyMap<string, ToolCallRenderer> = new Map([
   ["snapshot", SnapshotCall],
   ["click", ClickCall],
   ["type", TypeCall],
+  ["press", PressCall],
   ["run", RunCall],
   ["read_file", ReadFileCall],
   ["write_file", WriteFileCall],

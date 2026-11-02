@@ -22,6 +22,8 @@ services:
       - data:/data
       # The Bots and their grants. Edit it and restart the server; no rebuild.
       - ./bots.yaml:/app/bots.yaml:ro
+      # The rules every Bot action is judged by. Edit it and restart the server, like bots.yaml.
+      - ./rules.yaml:/app/rules.yaml:ro
       # The server starts the computer itself. It runs as root, so it can use the socket on Linux too.
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
