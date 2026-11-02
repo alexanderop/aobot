@@ -2,6 +2,7 @@ import { Schema } from "effect";
 import { ModelStep } from "../../apps/server/src/features/agent/testing/model-script.ts";
 import { assert, browser, evaluate, waitFor } from "../browser.ts";
 import { answers, auditRows, modelRequests, script, send } from "../chat.ts";
+import { panelState } from "../screen.ts";
 import { attribute, type TempoSpan, traceSpans } from "../tempo.ts";
 
 const removeNotes = "find . -name notes.txt -delete";
@@ -52,12 +53,21 @@ function approvalCard(): string {
   return evaluate(Schema.String, `document.querySelector(".approval")?.textContent ?? ""`);
 }
 
-/** Waits for the approval card to ask its question, then answers it `answer`. */
-async function answerCard(answer: "Yes" | "No"): Promise<void> {
+/**
+Waits for the approval card to ask its question below the run card of the `calls`th command, the one that
+asked it, with the Bot's screen open and still, then answers it `answer`. The card and that run card reach
+the page on two streams, and the screen slides open on a turn's first call, so until all three settle the
+card can move from under a click aimed at it.
+*/
+async function answerCard(answer: "Yes" | "No", calls: number): Promise<void> {
   await waitFor(
-    "the approval card to ask",
+    "the approval card to ask below the run card that asked it, beside a still screen",
     60_000,
-    () => browser("get", "count", ".approval .approval__answer") === "2",
+    () =>
+      browser("get", "count", ".approval .approval__answer") === "2" &&
+      browser("get", "count", '.tool-call[data-tool="run"]') === String(calls) &&
+      panelState() === "open" &&
+      evaluate(Schema.Number, "document.getAnimations().length") === 0,
   );
   assert(
     approvalCard().startsWith(question),
@@ -91,7 +101,7 @@ export default async function scenario(baseUrl: string, grafanaUrl: string): Pro
   browser("wait", "--load", "networkidle");
 
   send("Write notes.txt, then delete it.");
-  await answerCard("No");
+  await answerCard("No", 2);
   await waitFor("the Bot to say notes.txt stays", 120_000, () => answers()[0] === keptAnswer);
 
   const afterNo = runResults();
@@ -118,7 +128,7 @@ export default async function scenario(baseUrl: string, grafanaUrl: string): Pro
     () => browser("get", "count", '[aria-label="Stop"]') === "0",
   );
   send("Yes, delete it now.");
-  await answerCard("Yes");
+  await answerCard("Yes", 4);
   await waitFor(
     "the Bot to say it deleted notes.txt",
     120_000,
