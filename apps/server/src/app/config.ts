@@ -29,6 +29,9 @@ const settings = Config.all({
   rulesFile: Config.String("RULES_FILE").pipe(Config.withDefault(rulesAtTheRoot)),
   // Unset means no telemetry export, so the server runs without a collector.
   otlpEndpoint: Config.option(Config.String("OTEL_EXPORTER_OTLP_ENDPOINT")),
+  // Where people open Grafana, such as `http://localhost:3300`, for the audit page's links to each row's
+  // trace. Unset, the page shows no trace links.
+  grafanaUrl: Config.option(Config.URL("GRAFANA_URL")),
   runtime: agentRuntimeConfig,
   computers: computerConfig,
   limits: Config.all({
