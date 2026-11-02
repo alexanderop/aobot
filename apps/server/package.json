@@ -12,6 +12,7 @@
     "@effect/ai-openai-compat": "4.1.0",
     "@effect/platform-node": "4.1.0",
     "@effect/sql-sqlite-node": "4.1.0",
+    "@marcbachmann/cel-js": "8.0.0",
     "effect": "4.1.0",
     "yaml": "2.9.1"
   },

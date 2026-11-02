@@ -1,6 +1,6 @@
 import { BotId, ToolName } from "@aobot/domain";
 import { Array, Effect, Option, Result, Schema } from "effect";
-import { parseDocument } from "yaml";
+import { parseYaml } from "../../shared/yaml.ts";
 import type { Bot } from "./bot.ts";
 
 const BotEntry = Schema.Struct({
@@ -38,21 +38,6 @@ const decodeBotsFile = Schema.decodeUnknownResult(BotsFile, {
   onExcessProperty: "error",
   errors: "all",
 });
-
-/** The file's YAML as plain values. `toJS` throws on a file that expands too far, such as an alias bomb. */
-function parseYaml(text: string): Result.Result<unknown, string> {
-  return Result.try({
-    try: () => {
-      const document = parseDocument(text);
-      const [broken] = document.errors;
-
-      if (broken !== undefined) throw broken;
-
-      return document.toJS();
-    },
-    catch: (error) => (error instanceof Error ? error.message : String(error)),
-  });
-}
 
 /**
 The Bots `text` defines, in the order it lists them, or why it is not a valid bots file: empty, not YAML,
