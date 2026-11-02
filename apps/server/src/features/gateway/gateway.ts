@@ -213,14 +213,14 @@ class RuleRefused extends Schema.TaggedError<RuleRefused>()("RuleRefused", {
 }) {}
 
 /**
-The ask rule `rule` holds for `action`, on a page at `host`, which the allow rule `allowedBy` allows: it
-runs only once the person says yes.
+The ask rule `askRule` holds for `action`, on a page at `host`, which the allow rule `allowRule` allows:
+it runs only once the person says yes.
 */
 class NeedsApproval extends Schema.TaggedError<NeedsApproval>()("NeedsApproval", {
   action: DirectAction,
   host: Schema.String,
-  rule: Schema.String,
-  allowedBy: Schema.String,
+  askRule: Schema.String,
+  allowRule: Schema.String,
 }) {}
 
 /** An ask rule holds for an action from a call that names no turn, so there is no person to ask. */
@@ -702,31 +702,32 @@ export const gatewayLayer = Layer.effectContext(
     };
 
     /**
-    The allow rule that allows `action`, and the ask rule that asks the person first when one holds, or a
-    {@link RuleRefused}. A rule that failed is logged by its name and list only, never its error, which can
-    echo what the action holds. A refusal's deny row keeps the error of every rule that failed, capped; an
-    allowed action's rules that failed are only logged.
+    The allow rule that allows `bot` taking `action` on a page at `host`, and the ask rule that asks the
+    person first when one holds, or a {@link RuleRefused}. A rule that failed is logged by its name and
+    list only, never its error, which can echo what the action holds. A refusal's deny row keeps the error
+    of every rule that failed, capped; an allowed action's rules that failed are only logged.
     */
-    const allowedBy = (action: ToolAction, verdict: Verdict) => {
-      const failed = (list: "deny" | "allow" | "ask") => (rule: string) =>
+    const allowedBy = (bot: BotId, action: ToolAction, host: string) => {
+      const failed = (list: "deny" | "allow" | "ask", rule: string) =>
         Effect.logWarning("A rule failed while it was checked").pipe(
           Effect.annotateLogs({ rule, list, action: action.action }),
         );
 
-      const failedRules = (broken: ReadonlyArray<{ readonly rule: string }>, askRule = "") =>
-        Effect.forEach(broken, ({ rule }) => failed(rule === askRule ? "ask" : "allow")(rule), {
-          discard: true,
-        });
+      const failedRules = (broken: ReadonlyArray<{ readonly rule: string }>) =>
+        Effect.forEach(broken, ({ rule }) => failed("allow", rule), { discard: true });
 
       const refused = (verdict: Refused) => Effect.fail(new RuleRefused({ action, verdict }));
 
-      return Verdict.match(verdict, {
+      return Verdict.match(policy.judge(actionFacts(bot, action, host)), {
         Allowed: ({ rule, broken }) =>
-          Effect.as(failedRules(broken), { rule, asked: Option.none<string>() }),
-        Ask: ({ rule, allowedBy, broken }) =>
-          Effect.as(failedRules(broken, rule), { rule: allowedBy, asked: Option.some(rule) }),
+          Effect.as(failedRules(broken), { allowRule: rule, askRule: Option.none<string>() }),
+        Ask: ({ askRule, allowRule, broken, failed: askFailed }) =>
+          failedRules(broken).pipe(
+            Effect.andThen(askFailed ? failed("ask", askRule) : Effect.void),
+            Effect.as({ allowRule, askRule: Option.some<string>(askRule) }),
+          ),
         Denied: refused,
-        DenyRuleFailed: (failure) => Effect.andThen(failed("deny")(failure.rule), refused(failure)),
+        DenyRuleFailed: (failure) => Effect.andThen(failed("deny", failure.rule), refused(failure)),
         NoneAllowed: (none) => Effect.andThen(failedRules(none.broken), refused(none)),
       });
     };
@@ -768,11 +769,11 @@ export const gatewayLayer = Layer.effectContext(
         ),
       );
 
-    /** Writes the `allow` row of `action`, allowed by `rule`, with `more` in its detail. */
+    /** Writes the `allow` row of `action`, allowed by the allow rule `allowRule`, with `more` in its detail. */
     const allow = Effect.fnUntraced(function* (
       bot: BotId,
       action: ToolAction,
-      rule: string,
+      allowRule: string,
       more: Readonly<Record<string, Schema.Json>>,
     ) {
       const tool = action.action;
@@ -780,11 +781,11 @@ export const gatewayLayer = Layer.effectContext(
       const allowRow = yield* record(tool, "allow", auditAction(tool), {
         bot,
         ...auditDetail(action),
-        rule,
+        rule: allowRule,
         ...more,
       });
 
-      yield* Effect.annotateCurrentSpan({ "gateway.decision": "allow", "gateway.rule": rule });
+      yield* Effect.annotateCurrentSpan({ "gateway.decision": "allow", "gateway.rule": allowRule });
 
       return allowRow;
     });
@@ -824,16 +825,13 @@ export const gatewayLayer = Layer.effectContext(
       // the computer still confines every path itself.
       const { action, host } = yield* resolve(bot, request);
 
-      const { rule, asked } = yield* allowedBy(
-        action,
-        policy.judge(actionFacts(bot, action, host)),
-      );
+      const { allowRule, askRule } = yield* allowedBy(bot, action, host);
 
-      if (Option.isSome(asked)) {
-        return yield* new NeedsApproval({ action, host, rule: asked.value, allowedBy: rule });
+      if (Option.isSome(askRule)) {
+        return yield* new NeedsApproval({ action, host, askRule: askRule.value, allowRule });
       }
 
-      const allowRow = yield* allow(bot, action, rule, {});
+      const allowRow = yield* allow(bot, action, allowRule, {});
 
       return yield* forwardAndSettle(bot, action.action, action, allowRow);
     });
@@ -849,13 +847,13 @@ export const gatewayLayer = Layer.effectContext(
 
     /**
     Shows `question` to the person and takes their answer to `approval`, in a span of its own that names
-    the ask rule `rule`, the answer and who gave it. Its `approval.answered` row is written however the
+    the ask rule `askRule`, the answer and who gave it. Its `approval.answered` row is written however the
     wait ends; a turn stopped meanwhile answers no.
     */
     const askPerson = (
       tool: ToolName,
       bot: BotId,
-      rule: string,
+      askRule: string,
       approval: OpenApproval,
       question: string,
     ) =>
@@ -872,14 +870,14 @@ export const gatewayLayer = Layer.effectContext(
             Effect.ignore,
           ),
         ),
-        Effect.withSpan("Gateway.awaitApproval", { attributes: { "gateway.rule": rule } }),
+        Effect.withSpan("Gateway.awaitApproval", { attributes: { "gateway.rule": askRule } }),
         Effect.tap(({ answer, by }) => recordAnswer(tool, bot, approval, answer, by)),
       );
 
     /**
     Carries out `request` once its person said yes to `approval`: resolved again, through the door, and
     spent on the action only when it resolves to the action they were asked about. It then runs once,
-    its `allow` row naming the allow rule `rule`, the ask rule `asked` and the approval. Whatever became of
+    its `allow` row naming the allow rule `allowRule`, the ask rule `askRule` and the approval. Whatever became of
     it, the approval is finished once the Bot is told; a turn stopped meanwhile leaves it spent, so the
     next run is told its outcome is unknown.
     */
@@ -887,13 +885,16 @@ export const gatewayLayer = Layer.effectContext(
       bot: BotId,
       request: DirectRequest,
       approval: OpenApproval,
-      rule: string,
-      asked: string,
+      allowRule: string,
+      askRule: string,
     ) {
       const { action, host } = yield* resolve(bot, request);
       yield* approval.spend(digestOf(bot, action, host));
 
-      const allowRow = yield* allow(bot, action, rule, { asked, approval: approval.id });
+      const allowRow = yield* allow(bot, action, allowRule, {
+        asked: askRule,
+        approval: approval.id,
+      });
 
       return yield* forwardAndSettle(bot, action.action, action, allowRow).pipe(
         Effect.onExit((exit) => (Exit.hasInterrupts(exit) ? Effect.void : approval.finish)),
@@ -915,9 +916,9 @@ export const gatewayLayer = Layer.effectContext(
       needs: NeedsApproval,
       queued: boolean,
     ) => {
-      const { action, host, rule, allowedBy: allowRule } = needs;
+      const { action, host, askRule, allowRule } = needs;
       const tool = action.action;
-      const asked = { bot, ...auditDetail(action), rule };
+      const asked = { bot, ...auditDetail(action), rule: askRule };
 
       const notRun = ({ _tag }: { readonly _tag: keyof typeof notAsked }) =>
         deny(
@@ -930,15 +931,18 @@ export const gatewayLayer = Layer.effectContext(
         Effect.gen(function* () {
           if (Option.isNone(turn)) return yield* new NoOneToAsk();
 
-          const approval = yield* asking.open(turn.value, rule, digestOf(bot, action, host));
+          const approval = yield* asking.open(turn.value, askRule, digestOf(bot, action, host));
 
           yield* record(tool, "ask", auditAction(tool), {
             ...asked,
             allowedBy: allowRule,
             approval: approval.id,
           });
-          yield* Effect.annotateCurrentSpan({ "gateway.decision": "ask", "gateway.asked": rule });
-          const { answer, by } = yield* askPerson(tool, bot, rule, approval, questionOf(action));
+          yield* Effect.annotateCurrentSpan({
+            "gateway.decision": "ask",
+            "gateway.asked": askRule,
+          });
+          const { answer, by } = yield* askPerson(tool, bot, askRule, approval, questionOf(action));
 
           if (answer === "no") {
             return yield* deny(
@@ -952,7 +956,7 @@ export const gatewayLayer = Layer.effectContext(
             );
           }
 
-          return yield* doors.admit(carryOutApproved(bot, request, approval, allowRule, rule), {
+          return yield* doors.admit(carryOutApproved(bot, request, approval, allowRule, askRule), {
             queued,
           });
         }),
@@ -973,7 +977,7 @@ export const gatewayLayer = Layer.effectContext(
     Types what the person gave for `request` into its field, through the door, as `secret.supplied` with
     the secret's length. A person who holds the computer by now keeps it, and nothing is typed.
     */
-    const supply = (bot: BotId, request: SecretRequest, secret: SecretValue, rule: string) =>
+    const supply = (bot: BotId, request: SecretRequest, secret: SecretValue, allowRule: string) =>
       doors
         .admit(
           Effect.gen(function* () {
@@ -981,7 +985,7 @@ export const gatewayLayer = Layer.effectContext(
               bot,
               ...auditDetail(request),
               chars: Redacted.value(secret).length,
-              rule,
+              rule: allowRule,
             });
 
             const page = yield* forwardAndSettle(
@@ -1022,7 +1026,7 @@ export const gatewayLayer = Layer.effectContext(
         Effect.gen(function* () {
           const open = yield* secrets.open(bot);
 
-          const { action, host, allowRow, rule } = yield* doors.admit(
+          const { action, host, allowRow, allowRule } = yield* doors.admit(
             Effect.gen(function* () {
               const asked = yield* onElement(bot, ref, (target): SecretRequest => ({
                 action: "request_secret",
@@ -1036,23 +1040,20 @@ export const gatewayLayer = Layer.effectContext(
 
               if (asked.host === "") return yield* new NoSite({ action: asked.action });
 
-              const { rule, asked: askedBy } = yield* allowedBy(
-                asked.action,
-                policy.judge(actionFacts(bot, asked.action, asked.host)),
-              );
+              const { allowRule, askRule } = yield* allowedBy(bot, asked.action, asked.host);
 
               // The secret card already asks the person, so an ask rule only names itself in the row.
               const allowRow = yield* allow(
                 bot,
                 asked.action,
-                rule,
-                Option.match(askedBy, {
+                allowRule,
+                Option.match(askRule, {
                   onNone: () => ({}),
                   onSome: (named) => ({ asked: named }),
                 }),
               );
 
-              return { ...asked, allowRow, rule };
+              return { ...asked, allowRow, allowRule };
             }),
             { queued: false },
           );
@@ -1077,7 +1078,7 @@ export const gatewayLayer = Layer.effectContext(
               Supplied: ({ value }) =>
                 rows
                   .settle(allowRow, "succeeded", { bot })
-                  .pipe(Effect.andThen(supply(bot, action, value, rule))),
+                  .pipe(Effect.andThen(supply(bot, action, value, allowRule))),
             }),
           });
         }),

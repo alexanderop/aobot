@@ -33,15 +33,20 @@ export interface Rules {
 const FailedRule = Schema.Struct({ rule: RuleName, error: Schema.String });
 
 /**
-What the rules make of one action. `Allowed`, `Ask` and `NoneAllowed` carry the rules that failed on the
-way, each counted as not matching, except an ask rule, which asks. `Ask` is an action an allow rule allows
-only once the person says yes: `rule` is the ask rule, `allowedBy` the allow rule. `DenyRuleFailed` is a
-deny rule that failed, which refuses. A failed rule's `error` can echo what the action holds, so it goes
-into the audit row only.
+What the rules make of one action. `Allowed`, `Ask` and `NoneAllowed` carry the allow rules that failed on
+the way, each counted as not matching. `Ask` is an action the allow rule `allowRule` allows only once the
+person says yes to the ask rule `askRule`, which `failed` when it asks because it could not be checked.
+`DenyRuleFailed` is a deny rule that failed, which refuses. A failed rule's `error` can echo what the
+action holds, so it goes into the audit row only.
 */
 export const Verdict = Schema.TaggedUnion({
   Allowed: { rule: RuleName, broken: Schema.Array(FailedRule) },
-  Ask: { rule: RuleName, allowedBy: RuleName, broken: Schema.Array(FailedRule) },
+  Ask: {
+    askRule: RuleName,
+    allowRule: RuleName,
+    broken: Schema.Array(FailedRule),
+    failed: Schema.Boolean,
+  },
   Denied: { rule: RuleName },
   DenyRuleFailed: { rule: RuleName, error: Schema.String },
   NoneAllowed: { broken: Schema.Array(FailedRule) },
@@ -100,14 +105,11 @@ export function judge(rules: Rules, facts: Facts): Verdict {
 
   for (const rule of rules.ask) {
     const asks = rule.answer(facts);
+    const failed = Result.isFailure(asks);
 
-    if (Result.isFailure(asks)) {
-      broken.push({ rule: rule.name, error: asks.failure });
-
-      return Ask.make({ rule: rule.name, allowedBy: allowedBy.value, broken });
+    if (failed || asks.success) {
+      return Ask.make({ askRule: rule.name, allowRule: allowedBy.value, broken, failed });
     }
-
-    if (asks.success) return Ask.make({ rule: rule.name, allowedBy: allowedBy.value, broken });
   }
 
   return Allowed.make({ rule: allowedBy.value, broken });

@@ -155,9 +155,10 @@ ask:
       `deny: []${allowAll}${askBeforeDelete}`,
       "delete notes.txt",
       Ask.make({
-        rule: RuleName.make("ask-before-delete"),
-        allowedBy: RuleName.make("granted-tools"),
+        askRule: RuleName.make("ask-before-delete"),
+        allowRule: RuleName.make("granted-tools"),
         broken: [],
+        failed: false,
       }),
     ],
     [
@@ -184,20 +185,18 @@ allow:
       NoneAllowed.make({ broken: [] }),
     ],
     [
-      "an ask rule that fails asks the person, and says why",
+      "an ask rule that fails asks the person, and says it failed",
       `deny: []${allowAll}
 ask:
   - name: number-only
     when: ${numberOnly}`,
       "ls",
-      {
-        ...Ask.make({
-          rule: RuleName.make("number-only"),
-          allowedBy: RuleName.make("granted-tools"),
-          broken: [],
-        }),
-        broken: [brokenWith("number-only", "int()")],
-      },
+      Ask.make({
+        askRule: RuleName.make("number-only"),
+        allowRule: RuleName.make("granted-tools"),
+        broken: [],
+        failed: true,
+      }),
     ],
     [
       "the first ask rule in the file that holds is the one that asks",
@@ -211,9 +210,10 @@ ask:
     when: "true"`,
       "delete notes.txt",
       Ask.make({
-        rule: RuleName.make("ask-before-delete"),
-        allowedBy: RuleName.make("granted-tools"),
+        askRule: RuleName.make("ask-before-delete"),
+        allowRule: RuleName.make("granted-tools"),
         broken: [],
+        failed: false,
       }),
     ],
   ])("%s", (_case, file, command, verdict) => {
