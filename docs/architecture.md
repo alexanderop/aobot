@@ -122,6 +122,70 @@ computer never hears of it, and the model reads:
 
 > run did not run: it is not granted to researcher. Use only the tools your instructions name.
 
+## Rules that fail closed
+
+Security writes deny and allow rules in `rules.yaml` at the repository root (`RULES_FILE` points
+elsewhere; Compose mounts it into the server next to `bots.yaml`). The grant decides which tools a Bot
+has; the rules narrow what it may do with them. Each rule has a name, which the audit row and the model's
+answer give, and a `when` in [CEL](https://cel.dev), through `@marcbachmann/cel-js`.
+
+```yaml
+deny:
+  - name: no-rm-rf # lowercase letters, digits and dashes, unique across both lists
+    when: tool.name == "run" && command.contains("rm -rf")
+allow:
+  - name: granted-tools
+    when: "true"
+```
+
+A rule reads one record of facts about the action, declared once in `features/policy/facts.ts`, where the
+CEL environment is built from the same declaration so the two cannot drift:
+
+| Field                                      | What it holds                                                                                                 |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `tool.name`                                | The tool: `navigate`, `snapshot`, `click`, `type`, `press`, `run`, `read_file`, `write_file`, `list_files`    |
+| `bot.id`                                   | The Bot the call is for                                                                                       |
+| `actor.id`                                 | The person it acts for: `single-user` until E3 brings sign-in                                                 |
+| `computer.kind`                            | `cloud`; `mac` arrives with the Mac                                                                           |
+| `page.host`                                | For `navigate`, the host it opens; for the other browser tools, the host of the page the latest snapshot read |
+| `element.role`, `element.name`             | The element a ref names in the server's own snapshot, never what the Bot says it is                           |
+| `key`                                      | The key `press` presses                                                                                       |
+| `command`                                  | The command `run` runs, as the Bot wrote it                                                                   |
+| `file.path`, `file.name`, `file.extension` | The file a file tool names, as its audit row records it                                                       |
+
+Every field is bound on every action, `""` where the action has none, so a rule naming `element.name`
+answers false for `run` instead of failing. `page.host` is the host as the computer parses it,
+lower-cased and without its port, and `""` for an address it would refuse as no web address. The latest
+snapshot keeps the address it was read at for this; a snapshot stored before E2-2 has none, so its host is
+`""` until a Bot reads the page again.
+
+The order in `Gateway.act` is grant, door, ref or path, rules, `allow` row, forward. A ref that does not
+resolve is refused for that and never judged on an empty element. Then every deny rule in the order the
+file gives them: the first that holds refuses. Then every allow rule in order: the first that holds
+allows. Anything no allow rule allows is refused, so empty lists refuse everything; the server logs a
+warning at start-up when the allow list is empty.
+
+It fails closed. A deny rule that fails while it is evaluated, such as `command.matches("[")`, refuses.
+An allow rule that fails allows nothing, and a later allow rule still can. Either is logged by the rule's
+name and list only: CEL's error can echo what the action holds, so only the deny row keeps it, capped.
+A file that is missing, empty or not YAML, misses a list or misspells a key, gives a name that is not a
+slug or names two rules, or has a `when` that does not parse, names a field the facts do not have, or
+does not answer `bool` (a `dyn` answer included) stops the server with the path, every problem and where
+in the file each is.
+
+A refusal is a `deny` row with the action's audit detail and the rule: `run · deny · no-rm-rf` is
+`{ bot, command, rule: "no-rm-rf", reason: "denied by rule" }`, a failed deny rule adds `error` with
+`reason: "rule failed"`, and nothing allowed is `{ rule: null, reason: "no rule allows it" }`. An `allow`
+row names the allow rule that allowed it as `rule`. The `Gateway.act` span records `gateway.decision`
+(`allow` or `deny`, for every refusal) and `gateway.rule` when a rule decided. The model reads:
+
+> run did not run: the rule no-rm-rf refuses it. Tell your person what was refused; do not try another way around it.
+
+A form submits on a click and on Enter, so a rule that must stop a submission names both:
+`tool.name == "click" && element.name == "Submit"` and
+`tool.name == "press" && key == "Enter" && page.host == "shop.example"`. Matching a command's text is a
+filter, not a boundary; the computer the command runs on is the boundary.
+
 ## Life of one request
 
 1. A person sends a message with the Bot they picked.
@@ -251,7 +315,9 @@ ends. The HTTP client's spans of the server's requests to the computer's `/files
 Every tool a Bot can be granted, in either runtime. The tool map test (`apps/server/src/features/gateway/tool-map.test.ts`)
 fails when a tool in `botToolkit` is missing here or a row here names no tool. Each call writes the `allow`
 row first, then one outcome row linked to it by `outcome_of`. Both carry the turn's `trace_id`; the outcome row
-copies the action, and its `detail` says why for `failed` and `unknown`. Every row's `detail`, `deny` rows
+copies the action, and its `detail` says why for `failed` and `unknown`. An `allow` row's `detail` ends with
+`rule`, the allow rule that allowed it, and a rule's refusal is a `deny` row as
+[Rules that fail closed](#rules-that-fail-closed) says. Every row's `detail`, `deny` rows
 included, starts with `bot`: the id of the Bot the call was made for, or `null` when it named none by its
 id. The `Gateway.act` span records it as `gateway.bot`.
 

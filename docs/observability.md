@@ -34,6 +34,10 @@ OpenTelemetry for traces, logs and metrics, from the first ticket.
   `control.released`). A Bot call refused while a person holds the computer adds `control.refused` to its
   `Gateway.act` span.
 
+  Every `Gateway.act` span records `gateway.decision`, `allow` or `deny` for every refusal, and the
+  rule from `rules.yaml` that decided as `gateway.rule` (none when no allow rule held). A rule that failed
+  is logged by its name and list only, never with its error, which can echo the command.
+
   A Bot's `read_file` and `write_file` record the file's size on their `Gateway.act` span as
   `gateway.file_bytes`, and `list_files` the number of entries as `gateway.file_entries`. A person's
   upload and download are traces of their own, `FileTransfers.upload` and `FileTransfers.download`, with

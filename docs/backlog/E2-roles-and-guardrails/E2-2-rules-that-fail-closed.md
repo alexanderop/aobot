@@ -2,7 +2,7 @@
 id: E2-2
 title: Rules that fail closed
 epic: E2
-status: todo
+status: done
 depends_on: [E2-1]
 estimate: 4d
 ---
