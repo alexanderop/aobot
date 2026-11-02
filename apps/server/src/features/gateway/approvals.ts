@@ -514,11 +514,11 @@ export const approvalRequests = Effect.gen(function* () {
             moved ? Effect.as(closeInTrail(left), Option.some(left)) : Effect.succeedNone,
           ),
         ).pipe(
-          Effect.catchCause((cause) =>
+          Effect.catch((error) =>
             Effect.as(
               Effect.logError(
                 "A question left open could not be closed; the next start tries again",
-                cause,
+                error,
               ).pipe(Effect.annotateLogs({ approval: id })),
               Option.none<LeftOpen>(),
             ),
