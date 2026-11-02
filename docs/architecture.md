@@ -178,12 +178,18 @@ When a later allow rule allows the action anyway, the errors of the allow rules 
 not kept; only their warnings are. A file that is missing, empty or not YAML, misses a list or misspells
 a key, gives a name that is not a slug or names two rules, or has a `when` that does not parse, names a
 field the facts do not have, does not answer `bool` (a `dyn` answer included), calls `matches`, or fails
-when every fact but `tool.name` is `""` (such as `int("ten")`, `1/0` or `command.split(" ")[1]`) stops
-the server with the path, every problem and where in the file each is. Each rule is tried once on those
-blank facts when the file is read, so a rule that breaks on an action without the fact it reads never
-ships. `matches` is refused because cel-js runs it as a backtracking JavaScript regular expression on the
-server's one thread, where `^(a+)+$` on a short command holds every turn for seconds; write the rule with
-`contains`, `startsWith`, `endsWith` and `lowerAscii()` instead.
+when `page.host`, `element`, `key`, `command` and `file` are `""` (such as `int("ten")`, `1/0` or
+`command.split(" ")[1]`) stops the server with the path, every problem and where in the file each is.
+Each rule is tried once on those blank facts when the file is read, which catches a rule that fails on an
+action without the fact it reads. A rule that fails only on some actions, such as
+`command == "" || int(command) > 0` on `ls`, still loads, and fails closed each time it runs. The facts every action has
+hold a value they can have in that try: `bot.id` is `bot`, `actor.id` is `single-user` and
+`computer.kind` is `cloud`, so `computer.kind.substring(0, 3) == "clo"` loads, since none of them is ever
+`""` on a real action. `matches` is refused because cel-js runs it as a backtracking JavaScript regular
+expression on the server's one thread, where `^(a+)+$` on a short command holds every turn for seconds;
+write the rule with `contains`, `startsWith`, `endsWith` and `lowerAscii()` instead. That does not make
+every rule cheap: a comprehension over `command.split("")` is quadratic in the command's length, so keep
+rules simple.
 
 A refusal is a `deny` row with the action's audit detail and the rule: `run · deny · no-rm-rf` is
 `{ bot, command, rule: "no-rm-rf", reason: "denied by rule" }`, a failed deny rule adds `error` with

@@ -7,11 +7,15 @@
 #
 # It fails closed. A deny rule that fails while it is checked, such as int(command) on a command that is
 # no number, refuses; an allow rule that fails allows nothing. A file that does not parse, a rule that
-# names a field there is not, does not answer true or false, or fails when every field but tool.name
-# is "" stops the server at start-up.
+# names a field there is not, does not answer true or false, or fails when page.host, element, key,
+# command and file are "" stops the server at start-up. That catches a rule that fails on an action
+# without the fact it reads, not one that fails only on some values, such as
+# command == "" || int(command) > 0 on ls: that one loads, and fails closed each time it runs.
 #
 # matches is refused: it runs a regular expression on the server's one thread, where one pattern can
-# stall every turn. Use contains, startsWith, endsWith and lowerAscii() instead.
+# stall every turn. Use contains, startsWith, endsWith and lowerAscii() instead. That does not make
+# every rule cheap: a comprehension over command.split("") is quadratic in the command's length, so keep
+# rules simple.
 #
 # Each rule has a name (lowercase letters, digits and dashes, unique across both lists), which the audit
 # row and the Bot's answer name, and a `when` in CEL (https://cel.dev). It can read:

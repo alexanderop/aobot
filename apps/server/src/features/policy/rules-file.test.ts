@@ -41,6 +41,14 @@ describe("readRulesFile", () => {
   });
 
   it.each([
+    'computer.kind.substring(0, 3) == "clo"',
+    'actor.id.substring(0, 6) == "single"',
+    'bot.id.substring(0, 1) == "r"',
+  ])("reads a rule that cuts a fact every action has: %s", (when) => {
+    expect(reason(`deny: []\nallow:${granted.replace('"true"', `'${when}'`)}`)).toBe("valid");
+  });
+
+  it.each([
     ["is not YAML", "deny: [", "Flow sequence"],
     ["is empty", "", "the file is empty"],
     ["holds only comments", "# no rules yet\n", "the file is empty"],
@@ -101,12 +109,12 @@ describe("readRulesFile", () => {
     [
       "gives a rule that reads a number out of text that holds none",
       `deny: []\nallow:${granted.replace('"true"', "'int(\"ten\") > 3'")}`,
-      'it fails when every fact but tool.name is "": int() type error',
+      'it fails when page.host, element, key, command and file are "": int() type error',
     ],
     [
       "gives a rule that divides by zero",
       `deny: []\nallow:${granted.replace('"true"', '"1/0 == 1"')}`,
-      'it fails when every fact but tool.name is "": division by zero',
+      'it fails when page.host, element, key, command and file are "": division by zero',
     ],
     [
       "gives a rule that indexes past the end of a list",

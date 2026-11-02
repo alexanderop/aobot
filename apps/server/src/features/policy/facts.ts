@@ -34,15 +34,17 @@ export interface Facts {
 }
 
 /**
-{@link Facts} with every field `""` but the tool, which must be one: what an action that has none of them
-shows a rule. The gateway starts every action's facts from it, and every rule is tried on it once when
-the rules file is read.
+The {@link Facts} of an action that has none of its own: `page.host`, `element`, `key`, `command` and
+`file` are `""`. The tool, the Bot, the person and the computer are on every action, so they hold a value
+they can have: a Bot id is never `""`, and a rule that fails only on one that is would be refused for an
+action that cannot happen. The gateway starts every action's facts from it and sets those four, and every
+rule is tried on it once when the rules file is read.
 */
 export const blankFacts: Facts = {
   tool: { name: "snapshot" },
-  bot: { id: "" },
-  actor: { id: "" },
-  computer: { kind: "" },
+  bot: { id: "bot" },
+  actor: { id: "single-user" },
+  computer: { kind: "cloud" },
   page: { host: "" },
   element: { role: "", name: "" },
   key: "",

@@ -54,8 +54,8 @@ function callsMatches(node: ASTNode): boolean {
 
 /**
 `true` when `when` can be a rule, or why not: it does not parse, names a field the facts do not have, does
-not answer true or false, calls `matches`, or fails on {@link blankFacts}. A `dyn`
-answer is refused too, since only evaluating it would tell. `matches` runs a backtracking regular
+not answer true or false, calls `matches`, or fails on {@link blankFacts}. A `dyn` answer is refused too,
+since only evaluating it would tell. `matches` runs a backtracking regular
 expression on the server's one thread, where one pattern can stall every turn.
 */
 function checkWhen(when: string): true | string {
@@ -73,7 +73,8 @@ function checkWhen(when: string): true | string {
 
   return Result.match(answerOf(parsed)(blankFacts), {
     onSuccess: () => true,
-    onFailure: (error) => `it fails when every fact but tool.name is "": ${error}`,
+    onFailure: (error) =>
+      `it fails when page.host, element, key, command and file are "": ${error}`,
   });
 }
 
@@ -120,8 +121,8 @@ function compile({ name, when }: RuleEntry): Rule {
 /**
 The rules `text` defines, or why it is not a valid rules file: empty, not YAML, a list missing or a key
 misspelt, a name that is not a slug or names two rules, or a `when` that does not parse, names a field the
-facts do not have, does not answer true or false, calls `matches`, or fails when every fact but
-`tool.name` is `""`. Every problem is named, not just the first.
+facts do not have, does not answer true or false, calls `matches`, or fails when `page.host`, `element`,
+`key`, `command` and `file` are `""`. Every problem is named, not just the first.
 */
 export function readRulesFile(text: string): Result.Result<Rules, string> {
   return parseYaml(text).pipe(

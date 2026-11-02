@@ -40,8 +40,8 @@ Preconditions: baseline.
 - `vp run verify E2-2` is the scripted proof of `rules-deny` and `rules-span`.
 - The server reads `rules.yaml` once at start-up. After editing it, restart the server
   (`docker compose restart server`); no rebuild.
-- A rule that calls `matches`, or that fails when every fact but `tool.name` is `""` (`int("ten")`,
-  `1/0`), stops the server at start-up like any other invalid rule.
+- A rule that calls `matches`, or that fails when `page.host`, `element`, `key`, `command` and `file` are
+  `""` (`int("ten")`, `1/0`), stops the server at start-up like any other invalid rule.
 - In YAML, `when: "true"` is the CEL `true`. A CEL string literal needs both quotes: `when: '"x" == command'`.
 - A failed rule's error (which can echo the command) is never in a log or span. A failed deny rule's is in
   its deny row's `error`; when no allow rule allowed the action, each failed allow rule's is in the deny
