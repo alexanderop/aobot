@@ -3,6 +3,7 @@ import {
   CommandEnd,
   ConversationId,
   type PageAction,
+  NoApprovalWaiting,
   type PageRead,
   type PendingApproval,
   RunId,
@@ -25,8 +26,8 @@ import {
   fakeComputers,
   startGateway,
 } from "./testing/test-gateway.ts";
-import { CurrentActor } from "../../shared/actor.ts";
-import { bob } from "../../shared/testing/people.ts";
+import { CurrentActor, type PersonActor } from "../../shared/actor.ts";
+import { alice, bob } from "../../shared/testing/people.ts";
 
 const conversation = ConversationId.make("conversation-1");
 
@@ -61,23 +62,26 @@ function shell() {
   });
 }
 
-/** The question the person is shown, once the conversation waits on one. */
+/** The question the turn's person, alice, is shown, once the conversation waits on one. */
 const untilShown = ApprovalRequests.use((requests) =>
   requests.pending(conversation).pipe(
     Stream.filter(Option.isSome),
     Stream.runHead,
     Effect.map((shown) => Option.getOrThrow(Option.flatten(shown))),
   ),
-);
+).pipe(Effect.provideService(CurrentActor, alice));
 
-/** The question the person is shown now, if any. */
-const shownNow = ApprovalRequests.use((requests) =>
-  requests.pending(conversation).pipe(Stream.runHead, Effect.map(Option.flatten)),
-);
+/** The question `person`, alice unless named, is shown now, if any. */
+const shownNow = (person: PersonActor = alice) =>
+  ApprovalRequests.use((requests) =>
+    requests.pending(conversation).pipe(Stream.runHead, Effect.map(Option.flatten)),
+  ).pipe(Effect.provideService(CurrentActor, person));
 
-/** The person's `answer` to `shown`. */
-const answerTo = (shown: PendingApproval, answer: ApprovalAnswer) =>
-  ApprovalRequests.use((requests) => requests.answer(conversation, shown.approval, answer));
+/** `person`'s `answer` to `shown`, alice's unless named. */
+const answerTo = (shown: PendingApproval, answer: ApprovalAnswer, person: PersonActor = alice) =>
+  ApprovalRequests.use((requests) => requests.answer(conversation, shown.approval, answer)).pipe(
+    Effect.provideService(CurrentActor, person),
+  );
 
 /** What the model reads of an action like one approved earlier whose outcome it was never told. */
 const outcomeUnknown =
@@ -192,26 +196,32 @@ describe("Gateway asking the person", () => {
     }).pipe(Effect.provide(database)),
   );
 
-  it.effect("names whoever answered on the answer's row, and the turn's person on the rest", () =>
-    Effect.gen(function* () {
-      const acting = yield* actInBackground(firstRun, removeNotes);
-      const shown = yield* untilShown;
-      yield* answerTo(shown, "yes").pipe(Effect.provideService(CurrentActor, bob));
-      yield* Fiber.join(acting);
+  it.effect(
+    "shows the question to the turn's person only, and takes no answer from anyone else",
+    () =>
+      Effect.gen(function* () {
+        const acting = yield* actInBackground(firstRun, removeNotes);
+        const shown = yield* untilShown;
 
-      const rows = yield* auditRows;
-      expect(
-        rows.map((row) => [
-          `${String(row["action"])} · ${String(row["decision"])}`,
-          row["actor_id"],
-        ]),
-      ).toEqual([
-        ["run · ask", "alice@example.com"],
-        ["approval.answered · answered", "bob@example.com"],
-        ["run · allow", "alice@example.com"],
-        ["run · succeeded", "alice@example.com"],
-      ]);
-    }).pipe(Effect.provide(startGateway(shell().layer, askBeforeRm)), Effect.provide(database)),
+        expect(yield* shownNow(bob)).toEqual(Option.none());
+        expect(yield* Effect.flip(answerTo(shown, "yes", bob))).toBeInstanceOf(NoApprovalWaiting);
+
+        yield* answerTo(shown, "yes");
+        yield* Fiber.join(acting);
+
+        const rows = yield* auditRows;
+        expect(
+          rows.map((row) => [
+            `${String(row["action"])} · ${String(row["decision"])}`,
+            row["actor_id"],
+          ]),
+        ).toEqual([
+          ["run · ask", "alice@example.com"],
+          ["approval.answered · answered", "alice@example.com"],
+          ["run · allow", "alice@example.com"],
+          ["run · succeeded", "alice@example.com"],
+        ]);
+      }).pipe(Effect.provide(startGateway(shell().layer, askBeforeRm)), Effect.provide(database)),
   );
 
   it.effect("shows the whole command as the Bot wrote it, while its rows keep it redacted", () =>
@@ -334,7 +344,7 @@ ask:
             Effect.flip(gateway.act(firstRun, { action: "run", command: "rm ./notes.txt" })),
           );
 
-          const shownAfter = yield* shownNow;
+          const shownAfter = yield* shownNow();
           const nextRun = yield* askAndAnswer(inRun("run-2"), removeNotes, "yes");
 
           return { again, shownAfter, nextRun };
@@ -602,7 +612,7 @@ ask:
             Effect.flip(gateway.act(nextRun, removeNotes)),
           );
 
-          const shownAfter = yield* shownNow;
+          const shownAfter = yield* shownNow();
 
           return [told, shownAfter, yield* askAndAnswer(nextRun, removeNotes, "yes")] as const;
         }).pipe(Effect.provide(startGateway(computer.layer, askBeforeRm)));

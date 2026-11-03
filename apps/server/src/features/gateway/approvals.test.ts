@@ -446,7 +446,9 @@ describe("approvalRequests", () => {
           );
 
           yield* asking(waiting);
-          yield* untilShown(store.requests, elsewhere.conversation);
+          yield* untilShown(store.requests, elsewhere.conversation).pipe(
+            Effect.provideService(CurrentActor, bob),
+          );
 
           const restarted = yield* approvalRequests;
           const closed = { bot, tool: "run", rule };

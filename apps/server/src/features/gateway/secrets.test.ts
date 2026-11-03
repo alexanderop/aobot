@@ -24,6 +24,8 @@ import {
 } from "effect";
 import { HttpMiddleware, HttpRouter, HttpServer } from "effect/http";
 import { TestClock } from "effect/testing";
+import { CurrentActor } from "../../shared/actor.ts";
+import { alice } from "../../shared/testing/people.ts";
 import { recordedSpans } from "../../shared/testing/recorded-spans.ts";
 import { assistant } from "../bots/testing/test-bots.ts";
 import { policyFrom } from "../policy/testing/test-policy.ts";
@@ -245,7 +247,7 @@ ask:
               ),
             ),
           ),
-        );
+        ).pipe(Effect.provideService(CurrentActor, alice));
         yield* Fiber.join(typing);
 
         const refused = yield* Gateway.use((gateway) =>

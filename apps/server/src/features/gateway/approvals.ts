@@ -25,7 +25,7 @@ import {
 import { SqlClient, SqlError } from "effect/sql";
 import { ToolAction } from "./tool-action.ts";
 import type { TurnRef } from "./turn.ts";
-import { type Actor, actorId, CurrentActor } from "../../shared/actor.ts";
+import { actorId, CurrentActor } from "../../shared/actor.ts";
 
 /** One action as it resolved, as a digest: an approval covers that action only. */
 const ActionDigest = Schema.String.pipe(Schema.brand("ActionDigest"));
@@ -59,13 +59,16 @@ export function digestOf({ bot, action, host }: ResolvedAction): ActionDigest {
 export class ApprovalRequests extends Context.Service<
   ApprovalRequests,
   {
-    /** The question `conversation` waits on, if any: now, then each change. */
+    /**
+    The question `conversation` waits on for the {@link CurrentActor}, if any: now, then each change. A
+    question is shown only to the person whose turn asked it.
+    */
     readonly pending: (
       conversation: ConversationId,
     ) => Stream.Stream<Option.Option<PendingApproval>>;
     /**
-    Hands `answer` to the question `approval` in `conversation`, as the {@link CurrentActor}'s, whose name
-    its row carries. Fails when that question is not the one shown: it was never shown, or it was
+    Hands the {@link CurrentActor}'s `answer` to the question `approval` in `conversation`. Fails when that
+    question is not the one shown to them: it was never shown, it was asked of someone else, or it was
     answered, timed out or stopped.
     */
     readonly answer: (
@@ -191,19 +194,15 @@ const decodeLeftOpen = Schema.decodeUnknownEffect(
 /** What the time limit answers a question nobody answered in time. */
 const timedOut: Answered = { answer: "no", by: "time limit" };
 
-/** A person's answer to a question, and who gave it. */
-interface Given {
-  readonly answer: ApprovalAnswer;
-  readonly by: Actor;
-}
-
 /**
-A question held for its conversation: its answer, and the card while the person may answer it. A card
-that asks in place of an approval card, as a secret's does, holds the conversation without one.
+A question held for its conversation: the `actorId` of the person whose turn asked it, who alone sees and
+answers it, their answer, and the card while they may answer it. A card that asks in place of an approval
+card, as a secret's does, holds the conversation without one.
 */
 interface Waiting {
   readonly id: ApprovalId;
-  readonly answer: Deferred.Deferred<Given>;
+  readonly asker: string;
+  readonly answer: Deferred.Deferred<ApprovalAnswer>;
   readonly card: Option.Option<PendingApproval>;
 }
 
@@ -283,13 +282,17 @@ export const approvalRequests = Effect.gen(function* () {
         : all,
     );
 
-  /** Holds `conversation` for one question, with no card yet, until the scope closes. */
+  /**
+  Holds `conversation` for one question of the {@link CurrentActor}'s, with no card yet, until the scope
+  closes.
+  */
   const holdConversation = (conversation: ConversationId) =>
     Effect.acquireRelease(
       Effect.gen(function* () {
         const waiting: Waiting = {
           id: ApprovalId.make(crypto.randomUUID()),
-          answer: yield* Deferred.make<Given>(),
+          asker: actorId(yield* CurrentActor),
+          answer: yield* Deferred.make<ApprovalAnswer>(),
           card: Option.none(),
         };
 
@@ -309,17 +312,18 @@ export const approvalRequests = Effect.gen(function* () {
     );
 
   /**
-  Takes the card of the question `id` down, when it is still up, and gives its answer to hand over. Whoever
-  takes it, the person or the time limit, answers.
+  Takes the card of the question `id`, asked of `asker`, down, when it is still up, and gives its answer to
+  hand over. Whoever takes it, the person or the time limit, answers.
   */
-  const takeCard = (conversation: ConversationId, id: ApprovalId) =>
+  const takeCard = (conversation: ConversationId, id: ApprovalId, asker: string) =>
     SubscriptionRef.modify(
       questions,
-      (all): readonly [Option.Option<Deferred.Deferred<Given>>, Questions] =>
+      (all): readonly [Option.Option<Deferred.Deferred<ApprovalAnswer>>, Questions] =>
         Option.match(
           Option.filter(
             HashMap.get(all, conversation),
-            (waiting) => waiting.id === id && Option.isSome(waiting.card),
+            (waiting) =>
+              waiting.id === id && waiting.asker === asker && Option.isSome(waiting.card),
           ),
           {
             onNone: () => [Option.none(), all],
@@ -395,7 +399,7 @@ export const approvalRequests = Effect.gen(function* () {
     Scope.Scope
   > =>
     Effect.gen(function* () {
-      const { id, answer } = yield* holdConversation(turn.conversation);
+      const { id, asker, answer } = yield* holdConversation(turn.conversation);
       yield* ledgerAllows(turn, rule);
 
       const tool = asked.action.action;
@@ -426,7 +430,7 @@ export const approvalRequests = Effect.gen(function* () {
             Option.match({
               onSome: Effect.succeedSome,
               onNone: () =>
-                Effect.flatMap(takeCard(turn.conversation, id), (timedOut) =>
+                Effect.flatMap(takeCard(turn.conversation, id, asker), (timedOut) =>
                   Option.isSome(timedOut)
                     ? Effect.succeedNone
                     : Effect.asSome(Deferred.await(answer)),
@@ -443,17 +447,13 @@ export const approvalRequests = Effect.gen(function* () {
               Effect.andThen(advance(id, { from: "asked", to: given.answer }), answered(given)),
             );
 
-          // A person's answer is recorded as theirs, whoever's turn asked.
-          const recordAnswer = (given: Option.Option<Given>) =>
+          const recordAnswer = (given: Option.Option<ApprovalAnswer>) =>
             Option.match(given, {
               onNone: () => Effect.as(record(timedOut), timedOut),
-              onSome: ({ answer: said, by }) => {
+              onSome: (said) => {
                 const byPerson: Answered = { answer: said, by: "person" };
 
-                return record(byPerson).pipe(
-                  Effect.as(byPerson),
-                  Effect.provideService(CurrentActor, by),
-                );
+                return Effect.as(record(byPerson), byPerson);
               },
             });
 
@@ -504,9 +504,21 @@ export const approvalRequests = Effect.gen(function* () {
     });
 
   const pending = (conversation: ConversationId) =>
-    SubscriptionRef.changes(questions).pipe(
-      Stream.map((all) => Option.flatMap(HashMap.get(all, conversation), ({ card }) => card)),
-      Stream.changesWith(sameCard),
+    Stream.unwrap(
+      Effect.map(CurrentActor, (actor) =>
+        SubscriptionRef.changes(questions).pipe(
+          Stream.map((all) =>
+            Option.flatMap(
+              Option.filter(
+                HashMap.get(all, conversation),
+                (waiting) => waiting.asker === actorId(actor),
+              ),
+              ({ card }) => card,
+            ),
+          ),
+          Stream.changesWith(sameCard),
+        ),
+      ),
     );
 
   const answer = Effect.fn("ApprovalRequests.answer")(function* (
@@ -514,12 +526,11 @@ export const approvalRequests = Effect.gen(function* () {
     approval: ApprovalId,
     given: ApprovalAnswer,
   ) {
-    const taken = yield* takeCard(conversation, approval);
-    const by = yield* CurrentActor;
+    const taken = yield* takeCard(conversation, approval, actorId(yield* CurrentActor));
 
     yield* Option.match(taken, {
       onNone: () => Effect.fail(notWaiting),
-      onSome: (handed) => Deferred.succeed(handed, { answer: given, by }),
+      onSome: (handed) => Deferred.succeed(handed, given),
     });
   });
 
