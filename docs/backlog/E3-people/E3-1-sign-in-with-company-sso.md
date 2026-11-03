@@ -2,7 +2,7 @@
 id: E3-1
 title: Sign in with company SSO
 epic: E3
-status: todo
+status: done
 depends_on: [E2-1]
 estimate: 3d
 ---

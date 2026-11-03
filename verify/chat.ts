@@ -11,6 +11,7 @@ const AuditRows = Schema.fromJsonString(
     Schema.Struct({
       decision: Schema.String,
       action: Schema.String,
+      actor_id: Schema.String,
       trace_id: Schema.NullOr(Schema.String),
       detail: Schema.String,
     }),
@@ -30,15 +31,23 @@ export async function script(steps: ModelScript): Promise<void> {
 }
 
 /** Every audit row, oldest first, read from the SQLite file on the server's volume. */
-export function auditRows() {
+export function everyAuditRow() {
   const read = `const { DatabaseSync } = require("node:sqlite");
 const rows = new DatabaseSync("/data/aobot.db")
-  .prepare("SELECT decision, action, trace_id, detail FROM audit_rows ORDER BY seq").all();
+  .prepare("SELECT decision, action, actor_id, trace_id, detail FROM audit_rows ORDER BY seq").all();
 console.log(JSON.stringify(rows));`;
 
   return Schema.decodeUnknownSync(AuditRows)(
     composeOutput("exec", "-T", "server", "node", "-e", read),
   );
+}
+
+/**
+The audit rows of what the scenario did, oldest first: every row but those of signing in, which
+`vp run verify` did before the scenario began.
+*/
+export function auditRows() {
+  return everyAuditRow().filter((row) => !row.action.startsWith("auth."));
 }
 
 const Held = Schema.fromJsonString(Schema.Array(Schema.String));

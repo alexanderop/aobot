@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 import { ModelStep } from "../../apps/server/src/features/agent/testing/model-script.ts";
 import { assert, browser, evaluate, waitFor } from "../browser.ts";
-import { ask, auditRows, script } from "../chat.ts";
+import { ask, auditRows, everyAuditRow, script } from "../chat.ts";
 import { gatewayActSpan, traceSpans } from "../tempo.ts";
 
 const ShownRows = Schema.Array(
@@ -107,10 +107,11 @@ export default async function scenario(baseUrl: string, grafanaUrl: string): Pro
   );
 
   browser("find", "role", "link", "click", "--name", "Audit trail");
+  const everyRow = everyAuditRow().length;
   await waitFor(
-    `the audit page to show all ${stored.length} rows`,
+    `the audit page to show all ${everyRow} rows`,
     30_000,
-    () => shownRows().length === stored.length,
+    () => shownRows().length === everyRow,
   );
 
   await filterOn("decision", "deny");

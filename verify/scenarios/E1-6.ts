@@ -16,6 +16,7 @@ import {
   script,
 } from "../chat.ts";
 import { attribute, gatewayActSpan, type TempoSpan, traceSpans } from "../tempo.ts";
+import { sessionCookieHeader } from "../sign-in.ts";
 
 const expenses = "date,item,amount\n2026-10-01,Train,12.50\n2026-10-02,Lunch,7.50\n";
 
@@ -138,10 +139,12 @@ export default async function scenario(baseUrl: string, grafanaUrl: string): Pro
   );
   assert(received.toString().endsWith("total,,20.00\n"), "the total row is there");
 
-  // Refused before the gateway, so it adds no row to the trail below.
+  // Refused before the gateway, so it adds no row to the trail below. It carries the person's session,
+  // so only the host can refuse it.
   const rebound = await answered(new URL(chip.href, baseUrl).href, {
     host: `evil.example:${new URL(baseUrl).port}`,
     "sec-fetch-site": "same-origin",
+    cookie: sessionCookieHeader(),
   });
 
   assert(
