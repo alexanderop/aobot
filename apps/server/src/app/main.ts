@@ -84,18 +84,20 @@ const server = Layer.unwrap(
       Layer.provide([FetchHttpClient.layer, NodeWS.layerWebSocketConstructor]),
     );
 
+    // One for the chat, the pause handlers and the gateway, so a pause stops the turns the chat started
+    // and the tool calls made in them.
+    const lifecycle = lifecycleLayer.pipe(Layer.provide(auditLogLayer), Layer.provide(database));
+
     // One gateway for both runtimes, the MCP server and the control handlers: layers are built once per
     // reference, so there is one door to the computer whoever asks.
     const gateway = gatewayLayer.pipe(
+      Layer.provide(lifecycle),
       Layer.provide(auditLogLayer),
       Layer.provide(computers),
       Layer.provide(bots),
       Layer.provide(policy),
       Layer.provide(database),
     );
-
-    // One for the chat and the pause handlers, so a pause stops the turns the chat started.
-    const lifecycle = lifecycleLayer.pipe(Layer.provide(auditLogLayer), Layer.provide(database));
 
     // Each runtime brings its agent, what runs beside it, and the routes it serves.
     const runtime = AgentRuntimeSettings.$match(config.runtime, {

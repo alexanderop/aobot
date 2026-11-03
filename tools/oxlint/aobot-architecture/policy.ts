@@ -28,7 +28,7 @@ export const featureDependencies: ReadonlyMap<
       ["audit", []],
       ["policy", []],
       ["computers", []],
-      ["gateway", ["bots", "policy", "audit", "computers"]],
+      ["gateway", ["bots", "policy", "audit", "computers", "lifecycle"]],
       ["agent", ["bots", "gateway"]],
       ["lifecycle", ["bots", "audit"]],
       ["chat", ["bots", "agent", "lifecycle"]],

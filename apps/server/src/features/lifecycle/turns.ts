@@ -103,6 +103,20 @@ export class Turns extends Context.Service<
   }
 >()("aobot/lifecycle/Turns") {}
 
+/**
+Whether a turn still runs on this server. The gateway reads it on every tool call made in a turn, so a
+CLI that keeps calling tools after its turn was stopped acts no more.
+*/
+export class LiveTurns extends Context.Service<
+  LiveTurns,
+  {
+    /** Whether run `run` in `conversation` runs here and was not stopped. */
+    readonly live: (conversation: ConversationId, run: RunId) => Effect.Effect<boolean>;
+    /** Completes once run `run` in `conversation` is stopped, and at once when it no longer runs here. */
+    readonly stopped: (conversation: ConversationId, run: RunId) => Effect.Effect<void>;
+  }
+>()("aobot/lifecycle/LiveTurns") {}
+
 /** How often the turns running here are checked against pauses made on another server. */
 const checkEvery = "5 seconds";
 
@@ -153,9 +167,11 @@ const changeActions = {
   resume: "bot.resumed",
 } as const satisfies Record<PauseNotChanged["change"], AuditAction>;
 
-/** {@link Turns} on the app's database, with the check of running turns as a fiber of the layer. */
-export const turnsLayer = Layer.effect(
-  Turns,
+/**
+{@link Turns} and {@link LiveTurns} on the app's database, with the check of running turns as a fiber of
+the layer.
+*/
+export const turnsLayer = Layer.effectContext(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const store = yield* PauseStore;
@@ -186,6 +202,10 @@ export const turnsLayer = Layer.effect(
         ),
       ),
     );
+
+    /** Run `run` in `conversation`, while it runs here. */
+    const runOf = (conversation: ConversationId, run: RunId) =>
+      Option.filter(MutableHashMap.get(running, conversation), (turn) => turn.run === run);
 
     /** The turns of `bot` running here. */
     const turnsOf = (bot: BotId) =>
@@ -366,6 +386,21 @@ export const turnsLayer = Layer.effect(
       Stream.changes,
     );
 
-    return Turns.of({ start, isRunning, stop, pause, resume, paused });
+    const live = (conversation: ConversationId, run: RunId) =>
+      Effect.sync(() =>
+        Option.exists(runOf(conversation, run), (turn) => !Deferred.isDoneUnsafe(turn.stopped)),
+      );
+
+    const stoppedRun = (conversation: ConversationId, run: RunId) =>
+      Effect.suspend(() =>
+        Option.match(runOf(conversation, run), {
+          onNone: () => Effect.void,
+          onSome: (turn) => Effect.ignore(Deferred.await(turn.stopped)),
+        }),
+      );
+
+    return Context.make(Turns, Turns.of({ start, isRunning, stop, pause, resume, paused })).pipe(
+      Context.add(LiveTurns, LiveTurns.of({ live, stopped: stoppedRun })),
+    );
   }),
 );

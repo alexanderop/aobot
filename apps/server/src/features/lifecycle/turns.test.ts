@@ -11,7 +11,7 @@ import { migrateLifecycle } from "./migrations.ts";
 import { PauseStore, pauseStoreLayer } from "./pause-store.ts";
 import { pauseHandlers } from "./rpcs.ts";
 import { testLifecycle } from "./testing/test-lifecycle.ts";
-import { Turns, TurnStopped, turnsLayer } from "./turns.ts";
+import { LiveTurns, Turns, TurnStopped, turnsLayer } from "./turns.ts";
 
 const first = ConversationId.make("conversation-1");
 
@@ -125,6 +125,32 @@ describe("Turns", () => {
         Option.some(new TurnStopped({ code: "stopped", by: "person" })),
       );
       expect(yield* stopOf(other.stopped)).toEqual(Option.none());
+    }).pipe(Effect.provide(server())),
+  );
+
+  it.effect("says a turn runs until it is stopped or ends, and only for its own run", () =>
+    Effect.gen(function* () {
+      const turns = yield* Turns;
+      const live = yield* LiveTurns;
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* turns.start(first, run, assistant.id);
+          yield* turns.start(second, run, assistant.id);
+
+          expect(yield* live.live(first, run)).toBe(true);
+          expect(yield* live.live(first, RunId.make("run-2"))).toBe(false);
+
+          const stopped = yield* Effect.forkChild(live.stopped(first, run));
+          yield* turns.stop(first);
+
+          yield* Fiber.join(stopped);
+          expect(yield* live.live(first, run)).toBe(false);
+        }),
+      );
+
+      expect(yield* live.live(second, run)).toBe(false);
+      yield* live.stopped(second, run);
     }).pipe(Effect.provide(server())),
   );
 

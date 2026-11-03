@@ -2,7 +2,7 @@ import { Effect, Layer, Ref } from "effect";
 import { auditLogLayer, migrateAudit } from "../../audit/public.ts";
 import { migrateLifecycle } from "../migrations.ts";
 import { PauseStore, pauseStoreLayer, PauseUnreadable } from "../pause-store.ts";
-import { turnsLayer } from "../turns.ts";
+import { LiveTurns, turnsLayer } from "../turns.ts";
 
 /**
 A {@link PauseStore} on the test's database whose reads fail while `failures` is above zero, each failed
@@ -37,3 +37,9 @@ export function testLifecycle(failures: Ref.Ref<number> = Ref.makeUnsafe(0)) {
     Layer.provide(Layer.effectDiscard(Effect.all([migrateLifecycle, migrateAudit]))),
   );
 }
+
+/** Every turn a call names still runs, for a gateway tested without the chat that starts turns. */
+export const everyTurnLive = Layer.succeed(
+  LiveTurns,
+  LiveTurns.of({ live: () => Effect.succeed(true), stopped: () => Effect.never }),
+);

@@ -75,14 +75,14 @@ name (`@aobot/domain`), never by relative path or deep path.
 The allowed dependencies live in `tools/oxlint/aobot-architecture/policy.ts`. Register a feature there
 before creating its directory. The server graph today:
 
-| Feature                                        | May depend on                          |
-| ---------------------------------------------- | -------------------------------------- |
-| `bots`, `audit`, `policy`, `computers`, `auth` | nothing                                |
-| `gateway`                                      | `bots`, `policy`, `audit`, `computers` |
-| `agent`                                        | `bots`, `gateway`                      |
-| `lifecycle`                                    | `bots`, `audit`                        |
-| `chat`                                         | `bots`, `agent`, `lifecycle`           |
-| `approvals`                                    | `gateway`                              |
+| Feature                                        | May depend on                                       |
+| ---------------------------------------------- | --------------------------------------------------- |
+| `bots`, `audit`, `policy`, `computers`, `auth` | nothing                                             |
+| `gateway`                                      | `bots`, `policy`, `audit`, `computers`, `lifecycle` |
+| `agent`                                        | `bots`, `gateway`                                   |
+| `lifecycle`                                    | `bots`, `audit`                                     |
+| `chat`                                         | `bots`, `agent`, `lifecycle`                        |
+| `approvals`                                    | `gateway`                                           |
 
 Only `gateway` depends on `computers`, so "every action goes through the gateway" is enforced by the
 graph itself, and a test checks that it stays that way.

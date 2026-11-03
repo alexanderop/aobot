@@ -5,6 +5,7 @@ import { SqlClient } from "effect/sql";
 import { auditLogLayer, migrateAudit } from "../../audit/public.ts";
 import { testBots } from "../../bots/testing/test-bots.ts";
 import { type Computer, Computers } from "../../computers/public.ts";
+import { everyTurnLive } from "../../lifecycle/testing/test-lifecycle.ts";
 import { fakeComputer } from "../../computers/testing/fake-computer.ts";
 import type { Policy } from "../../policy/public.ts";
 import { allowEverything } from "../../policy/testing/test-policy.ts";
@@ -63,7 +64,10 @@ export const database = Layer.effectDiscard(Effect.andThen(migrateAudit, migrate
   Layer.fresh,
 );
 
-/** A gateway on the database in the context, as one server start would build it, judging by `policy`. */
+/**
+A gateway on the database in the context, as one server start would build it, judging by `policy`, where
+every turn a call names still runs.
+*/
 export function startGateway(
   computers: Layer.Layer<Computers>,
   policy: Layer.Layer<Policy> = allowEverything,
@@ -73,6 +77,7 @@ export function startGateway(
     Layer.provide(computers),
     Layer.provide(testBots),
     Layer.provide(policy),
+    Layer.provide(everyTurnLive),
   );
 }
 

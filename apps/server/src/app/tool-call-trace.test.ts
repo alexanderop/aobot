@@ -128,7 +128,7 @@ describe("a tool call in an api turn", () => {
       const model = navigatingModel();
 
       const gateway = gatewayLayer.pipe(
-        Layer.provide([auditLogLayer, computers, testBots, allowEverything]),
+        Layer.provide([auditLogLayer, computers, testBots, allowEverything, lifecycle]),
       );
 
       const agent = layerApi(botToolkit, { maxSteps: 4, stallTimeout: Duration.seconds(60) }).pipe(
@@ -181,7 +181,7 @@ describe("a tool call in an api turn", () => {
 
       // As main.ts builds it: one gateway reference, provided to the agent's tools and the page's controls.
       const gateway = gatewayLayer.pipe(
-        Layer.provide([auditLogLayer, computers, testBots, allowEverything]),
+        Layer.provide([auditLogLayer, computers, testBots, allowEverything, lifecycle]),
       );
 
       const agent = layerApi(botToolkit, { maxSteps: 4, stallTimeout: Duration.seconds(60) }).pipe(
@@ -242,7 +242,7 @@ describe("a tool call in an api turn", () => {
     ]);
 
     const gateway = gatewayLayer.pipe(
-      Layer.provide([auditLogLayer, computers, testBots, allowEverything]),
+      Layer.provide([auditLogLayer, computers, testBots, allowEverything, lifecycle]),
     );
 
     const agent = layerApi(botToolkit, { maxSteps: 4, stallTimeout: Duration.seconds(60) }).pipe(
@@ -315,7 +315,7 @@ describe("a tool call in an api turn", () => {
       );
 
       const gateway = gatewayLayer.pipe(
-        Layer.provide([auditLogLayer, untouched, testBots, allowEverything]),
+        Layer.provide([auditLogLayer, untouched, testBots, allowEverything, lifecycle]),
       );
 
       const agent = layerApi(botToolkit, { maxSteps: 4, stallTimeout: Duration.seconds(60) }).pipe(
