@@ -47,6 +47,10 @@ const safetyLists = {
       // keeps its pages under /pin/, so a field's match starts at its role and stops at the first slash.
       /^(textbox|spinbutton)\b[^/]*\bpin\b|\bpin[-_ ]?(code|number)\b|\b(enter|change|reset|forgot)[-_ ]?(your[-_ ]?)?pin\b/,
       /security[-_ ]?question|credential|sign[-_ ]?in[-_ ]?method/,
+      // Credentials are matched before payments, so a card's security code is a credential.
+      /security[-_ ]?code/,
+      // From a word's start: a "Cost center code" is not a code to enter.
+      /\benter[-_ ]?(the[-_ ]?)?(\d[-_ ]?digit[-_ ]?)?code\b/,
     ),
   },
   security: {

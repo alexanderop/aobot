@@ -120,6 +120,25 @@ describe("safetyOf", () => {
       "payments",
     ],
     ["pays now in German", click("button", "Jetzt bezahlen"), "/kasse", "payments"],
+    ["types a security code", type("textbox", "Security code", "123"), "/verify", "credentials"],
+    [
+      "types a card security code",
+      type("textbox", "Card security code", "123"),
+      "/checkout",
+      "credentials",
+    ],
+    [
+      "types a code it is asked to enter",
+      type("textbox", "Enter code", "123456"),
+      "/verify",
+      "credentials",
+    ],
+    [
+      "types the 6-digit code it is asked for",
+      type("textbox", "Enter the 6-digit code", "123456"),
+      "/login/challenge",
+      "credentials",
+    ],
   ] as const)("hands off an action that %s", (_case, action, path, list) => {
     expect(safetyOf(action, path)).toEqual(Option.some(list));
   });
@@ -138,6 +157,7 @@ describe("safetyOf", () => {
     ["opens the pinned messages", click("button", "Pinned"), "/chat"],
     ["pins a message", click("button", "Pin"), "/chat"],
     ["searches on a Pinterest pin", type("searchbox", "Search", "red shoes"), "/pin/42"],
+    ["types a cost center code", type("textbox", "Cost center code", "4711"), "/expenses"],
   ] as const)("leaves an action that %s to the rules", (_case, action, path) => {
     expect(safetyOf(action, path)).toEqual(Option.none());
   });
