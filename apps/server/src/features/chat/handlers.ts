@@ -154,7 +154,9 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
         Stream.tapErrorTag("TurnStopped", recordStop),
       );
 
+      // The stream runs in the turn's span, where Chat.send's own span has ended.
       return turnEvents(ids, answer).pipe(
+        Stream.onStart(Effect.annotateCurrentSpan("actor.id", actorId(actor))),
         Stream.tap((event) => Ref.update(written, (messages) => recordText(messages, event))),
         Stream.mapEffect((event) =>
           isTerminal(event)
@@ -177,15 +179,8 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
       "Chat.open": open,
       // A new root, so the trace is named after the turn rather than the socket or RPC call it came in on.
       "Chat.send": (message) =>
-        Stream.unwrap(
-          Effect.map(CurrentActor, (actor) =>
-            Stream.unwrap(startTurn(message)).pipe(
-              Stream.withSpan("Chat.turn", {
-                root: true,
-                attributes: { "chat.bot": message.botId, "actor.id": actorId(actor) },
-              }),
-            ),
-          ),
+        Stream.unwrap(startTurn(message)).pipe(
+          Stream.withSpan("Chat.turn", { root: true, attributes: { "chat.bot": message.botId } }),
         ),
       "Chat.stop": stop,
     });
