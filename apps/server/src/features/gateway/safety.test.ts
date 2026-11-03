@@ -178,6 +178,50 @@ describe("safetyOf", () => {
       "/konto",
       "security",
     ],
+    ["sends on the send page", click("button", "Send"), "/send", "payments"],
+    ["types a card's expiry date", type("textbox", "Expiry date", "12/29"), "/wallet", "payments"],
+    [
+      "types a card's expiration",
+      type("textbox", "Expiration (MM/YY)", "12/29"),
+      "/wallet",
+      "payments",
+    ],
+    ["completes an order", click("button", "Complete order"), "/cart", "payments"],
+    ["confirms an order", click("button", "Confirm order"), "/cart", "payments"],
+    ["submits an order", click("button", "Submit order"), "/cart", "payments"],
+    ["books now", click("button", "Book now"), "/hotels/1", "payments"],
+    ["subscribes in German", click("button", "Abonnieren"), "/kanal", "payments"],
+    [
+      "makes a transfer in German",
+      click("button", "Überweisung ausführen"),
+      "/banking",
+      "payments",
+    ],
+    ["adds a card in German", click("button", "Karte hinzufügen"), "/wallet", "payments"],
+    [
+      "adds a credit card in German",
+      click("button", "Kreditkarte hinzufügen"),
+      "/wallet",
+      "payments",
+    ],
+    [
+      "types a card number in German",
+      type("textbox", "Kartennummer", "4242"),
+      "/wallet",
+      "payments",
+    ],
+    [
+      "types a card's check digits in German",
+      type("textbox", "Kartenprüfnummer", "123"),
+      "/wallet",
+      "payments",
+    ],
+    [
+      "types a card's expiry date in German",
+      type("textbox", "Ablaufdatum", "12/29"),
+      "/wallet",
+      "payments",
+    ],
   ] as const)("hands off an action that %s", (_case, action, path, list) => {
     expect(safetyOf(action, path)).toEqual(Option.some(list));
   });
@@ -200,6 +244,9 @@ describe("safetyOf", () => {
     ["opens the invitations", click("link", "Invitations"), "/"],
     ["opens the authorized dealers", click("link", "Authorized dealers"), "/"],
     ["clicks a button that says Allowed", click("button", "Allowed"), "/"],
+    ["opens book reviews", click("link", "Book reviews"), "/"],
+    ["opens a notebook in stock", click("link", "Notebook now in stock"), "/"],
+    ["opens expired posts", click("link", "Expired posts"), "/"],
   ] as const)("leaves an action that %s to the rules", (_case, action, path) => {
     expect(safetyOf(action, path)).toEqual(Option.none());
   });

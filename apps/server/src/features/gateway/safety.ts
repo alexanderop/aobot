@@ -78,11 +78,15 @@ const safetyLists = {
     pattern: anyOf(
       /payment|\bpay(ing)?\b|pay[-_ ]?now|checkout|purchase|billing/,
       /\bbuy\b|place[-_ ]?(your[-_ ]?)?order|order[-_ ]?now/,
+      // From a word's start: "Notebook now in stock" books nothing.
+      /(complete|confirm|submit)[-_ ]?(your[-_ ]?)?(order|purchase|booking)|\bbook[-_ ]?now/,
       /\bsubscri(be|ptions?)\b|upgrade[-_ ]?(your[-_ ]?)?(plan|account|subscription)/,
-      /kaufen|bestellen|bezahlen|zahlung/,
+      /kaufen|bestellen|bezahlen|zahlung|abonnieren|überweis/,
       /(add|update|change|remove)[-_ ]?(a[-_ ]?)?card\b|name[-_ ]?on[-_ ]?card|card[-_ ]?(details|number)/,
-      /(credit|debit)[-_ ]?card|\bcv[cv]\b/,
-      /\btransfers?\b|withdraw|send[-_ ]?money|donat(e|ion)/,
+      /(credit|debit)[-_ ]?card|\bcv[cv]\b|expir(y|ation)/,
+      /karte[-_ ]?hinzufügen|kartennummer|prüfnummer|ablaufdatum/,
+      // The send page, not every Send button: "Send message" sends a message.
+      /\btransfers?\b|withdraw|send[-_ ]?money|\/send\b|donat(e|ion)/,
       /bank[-_ ]?account|\biban\b|routing[-_ ]?number/,
       // A wire of money, not a news wire: "Business Wire" is where press releases go out.
       /(?<!\b(business|news|press)[-_ ]?)\bwire\b/,
