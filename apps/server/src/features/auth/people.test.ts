@@ -58,7 +58,7 @@ const count = (table: "people" | "sessions") =>
 describe("signing in", () => {
   it.effect("lets an allowed address in with a session, recorded as theirs", () =>
     Effect.gen(function* () {
-      const { token } = yield* enter(alice);
+      const token = yield* enter(alice);
 
       expect(yield* whoIs(token)).toEqual(Option.some("alice@example.com"));
       expect(yield* trail).toEqual([
@@ -88,7 +88,7 @@ describe("signing in", () => {
     "stops a domain's next sign-in, and its open sessions, once it is no longer allowed",
     () =>
       Effect.gen(function* () {
-        const { token } = yield* enter(alice).pipe(
+        const token = yield* enter(alice).pipe(
           Effect.provide(testSignIn({ allowedDomains: ["example.com"] })),
         );
 
@@ -102,7 +102,7 @@ describe("signing in", () => {
 
   it.effect("ends a session after its lifetime, however much it was used", () =>
     Effect.gen(function* () {
-      const { token } = yield* enter(alice);
+      const token = yield* enter(alice);
 
       yield* TestClock.adjust("6 days");
       expect(yield* whoIs(token)).toEqual(Option.some("alice@example.com"));
@@ -116,7 +116,7 @@ describe("signing in", () => {
     const tracing = recordedSpans();
 
     return Effect.gen(function* () {
-      const { token } = yield* enter(alice);
+      const token = yield* enter(alice);
       const before = tracing.spans.length;
 
       expect(yield* whoIs(token)).toEqual(Option.some("alice@example.com"));
@@ -133,10 +133,10 @@ describe("signing in", () => {
       const first = yield* enter(alice);
       const second = yield* enter(alice);
 
-      yield* People.use((people) => people.signOut(Redacted.value(first.token)));
+      yield* People.use((people) => people.signOut(Redacted.value(first)));
 
-      expect(yield* whoIs(first.token)).toEqual(Option.none());
-      expect(yield* whoIs(second.token)).toEqual(Option.some("alice@example.com"));
+      expect(yield* whoIs(first)).toEqual(Option.none());
+      expect(yield* whoIs(second)).toEqual(Option.some("alice@example.com"));
     }).pipe(Effect.provide(testSignIn()), Effect.provide(testAuthDatabase)),
   );
 });
@@ -144,7 +144,7 @@ describe("signing in", () => {
 describe("removing a person", () => {
   it.effect("ends their sessions, and refuses them when they sign in again", () =>
     Effect.gen(function* () {
-      const { token } = yield* enter(alice);
+      const token = yield* enter(alice);
 
       const removed = yield* People.use((people) => people.remove(alice.email));
       const refused = yield* Effect.flip(enter(alice));

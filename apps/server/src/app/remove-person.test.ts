@@ -39,7 +39,7 @@ describe("vp run people:remove", () => {
       const server = testSignIn().pipe(Layer.provideMerge(authDatabaseAt(databasePath)));
 
       return Effect.gen(function* () {
-        const { token } = yield* People.use((people) =>
+        const token = yield* People.use((people) =>
           people.enter({ email: Email.make("alice@example.com"), subject: "a", name: "Alice" }),
         );
 

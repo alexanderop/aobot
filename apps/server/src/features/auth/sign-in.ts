@@ -139,7 +139,7 @@ export const signInRoutes = (publicUrl: URL) =>
             return yield* new SignInRefused({ code });
           }
 
-          const { token } = yield* people.enter({
+          const token = yield* people.enter({
             email: email.value,
             subject: claims.subject,
             name: Option.getOrElse(claims.name, () => email.value),

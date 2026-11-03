@@ -74,7 +74,7 @@ beforeAll(async () => {
 
   people = context;
 
-  const { token } = await Effect.runPromise(
+  const token = await Effect.runPromise(
     People.use((store) =>
       store.enter({ email: Email.make("alice@example.com"), subject: "a", name: "Alice" }),
     ).pipe(Effect.provide(people)),

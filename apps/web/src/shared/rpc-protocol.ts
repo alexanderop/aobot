@@ -4,10 +4,7 @@ import { Effect, Equivalence, Layer, Option, Predicate } from "effect";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { RpcClient, type RpcMessage, RpcSerialization } from "effect/rpc";
 import type { Socket } from "effect/socket";
-import { session } from "./session.ts";
-
-/** A session the page's sockets follow: the page's own, or a fake one in a test. */
-type Session = typeof session;
+import { session as pageSession } from "./session.ts";
 
 /** Whether `response` refuses its call because the page's session is gone. */
 function signedOut(response: RpcMessage.FromServerEncoded): boolean {
@@ -25,13 +22,16 @@ function signedOut(response: RpcMessage.FromServerEncoded): boolean {
 const closed = Layer.effect(RpcClient.Protocol, Effect.never);
 
 /**
-The protocol of an RPC client whose socket, from `socket`, is open only while `session` says someone is
-signed in, and for whom: it is built again whenever that changes, so signing out, a removal or an expiry
-closes the socket, and every atom on the client waits instead of asking again. The server's refusal reads
-the session again: a socket it would not open, which a browser cannot tell from a server it cannot
-reach, and a call it answered `SignedOut`.
+The protocol of an RPC client whose socket, from `socket`, is open only while `session`, the page's own or
+a fake one in a test, says someone is signed in, and for whom: it is built again whenever that changes,
+so signing out, a removal or an expiry closes the socket, and every atom on the client waits instead of
+asking again. The server's refusal reads the session again: a socket it would not open, which a browser
+cannot tell from a server it cannot reach, and a call it answered `SignedOut`.
 */
-export function sessionSockets(session: Session, socket: () => Layer.Layer<Socket.Socket>) {
+export function sessionSockets(
+  session: typeof pageSession,
+  socket: () => Layer.Layer<Socket.Socket>,
+) {
   const openFor = Atom.make((get) =>
     Option.flatMap(
       AsyncResult.value(get(session)),
@@ -77,7 +77,7 @@ export function sessionSockets(session: Session, socket: () => Layer.Layer<Socke
 }
 
 /** The server's RPC socket on the page's own origin, JSON on the wire. Each client opens its own. */
-export const rpcProtocol = sessionSockets(session, () => {
+export const rpcProtocol = sessionSockets(pageSession, () => {
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
 
   return BrowserSocket.layerWebSocket(`${scheme}://${window.location.host}/rpc`);

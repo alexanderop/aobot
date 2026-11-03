@@ -54,7 +54,7 @@ import {
   type ToolTimedOut,
   toolResult,
 } from "../../shared/tool-result.ts";
-import { type Actor, CurrentActor, deployment } from "../../shared/actor.ts";
+import { CurrentActor, deployment } from "../../shared/actor.ts";
 import { redact, redactCommand, redactUrl } from "../../shared/redact.ts";
 import { actionFacts, hostOf } from "./action-facts.ts";
 import {
@@ -1091,7 +1091,7 @@ export const gatewayLayer = Layer.effectContext(
     Who `turn` runs for, or {@link TurnEnded} once it no longer runs. Read as a call starts and again once
     the door lets it in, since a command may wait there for the one before it while its turn ends.
     */
-    const actorOfTurn = ({ conversation, run }: TurnRef): Effect.Effect<Actor, TurnEnded> =>
+    const actorOfTurn = ({ conversation, run }: TurnRef) =>
       Effect.flatMap(
         turns.actorOf(conversation, run),
         Option.match({
@@ -1099,17 +1099,6 @@ export const gatewayLayer = Layer.effectContext(
           onSome: Effect.succeed,
         }),
       );
-
-    /**
-    The actor a call acts for: the person its turn runs for, so a call from an `api` runtime and one from
-    an `acp` CLI over `/mcp` name the same person. A call that names no turn is the deployment's, which
-    is refused as {@link NoPerson}.
-    */
-    const actorOfCall = (turn: Option.Option<TurnRef>) =>
-      Option.match(turn, {
-        onNone: () => Effect.succeed(deployment),
-        onSome: actorOfTurn,
-      });
 
     /**
     `effect`, an action of `tool` in `turn`, through the door once its turn is checked again. Commands run
@@ -1457,9 +1446,14 @@ export const gatewayLayer = Layer.effectContext(
             );
       });
 
-      // Every row and rule below names the person the turn runs for. A call whose turn ended is
-      // refused before anyone is named, so its row is the deployment's.
-      const actor = yield* actorOfCall(turn).pipe(recordRefusals(request.action, { bot }));
+      // Every row and rule below names the person the turn runs for, so a call from an `api` runtime and
+      // one from an `acp` CLI over `/mcp` name the same person. A call that names no turn is the
+      // deployment's, refused as NoPerson; one whose turn ended is refused before anyone is named, so
+      // its row is the deployment's too.
+      const actor = yield* Option.match(turn, {
+        onNone: () => Effect.succeed(deployment),
+        onSome: actorOfTurn,
+      }).pipe(recordRefusals(request.action, { bot }));
 
       return yield* carried.pipe(
         untilStopped(request.action, turn),

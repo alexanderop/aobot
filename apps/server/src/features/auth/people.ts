@@ -16,11 +16,6 @@ export interface VerifiedPerson {
   readonly name: string;
 }
 
-/** A session just made. Its token goes to the person's browser only; the database keeps its hash. */
-export interface IssuedSession {
-  readonly token: Redacted.Redacted<string>;
-}
-
 /** A sign-in was refused, for `code`, after its `auth.refused` row. */
 export class SignInRefused extends Schema.TaggedError<SignInRefused>()("SignInRefused", {
   code: SignInRefusalCode,
@@ -74,12 +69,15 @@ export class People extends Context.Service<
   People,
   {
     /**
-    Lets `person` in: their domain must be allowed and their address not removed before anyone is
-    recorded, then they are recorded,
-    made an admin when the configuration says so for the first time, and given a session, with an
-    `auth.signed_in` row, all in one transaction. Refused, it writes `auth.refused` and records nothing.
+    Lets `person` in and returns their new session's token, which goes to their browser only: the
+    database keeps its hash. Their domain must be allowed and their address not removed before anything
+    is written. Then, in one transaction, they are recorded, made an admin when the configuration says so
+    for the first time, and given a session, with an `auth.signed_in` row. Refused, it writes
+    `auth.refused` and records nothing else.
     */
-    readonly enter: (person: VerifiedPerson) => Effect.Effect<IssuedSession, SignInRefused>;
+    readonly enter: (
+      person: VerifiedPerson,
+    ) => Effect.Effect<Redacted.Redacted<string>, SignInRefused>;
     /**
     Writes the `auth.refused` row of a sign-in refused for `code`, naming the address that tried when the
     provider vouched for one, with `detail`. Only logged when it cannot be written.
@@ -195,7 +193,7 @@ export const peopleLayer = (settings: Pick<SignInSettings, "allowedDomains" | "a
           }),
         );
 
-        return { token: Redacted.make(token) };
+        return Redacted.make(token);
       });
 
       /** Refuses a sign-in the database could not record. */
