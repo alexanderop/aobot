@@ -1,16 +1,9 @@
 import type { Email } from "@aobot/domain";
-import { SqliteClient } from "@effect/sql-sqlite-node";
-import { type Array, Effect, Layer } from "effect";
-import { auditLogLayer, migrateAudit } from "../../audit/public.ts";
+import { type Array, Layer } from "effect";
+import { auditLogLayer } from "../../audit/public.ts";
 import { identitySignIn } from "../identity.ts";
-import { migrateAuth } from "../migrations.ts";
+import { authDatabaseAt } from "../migrations.ts";
 import { peopleLayer } from "../people.ts";
-
-/** A SQLite database at `filename` with the audit and auth tables, as the server's. */
-export const authDatabaseAt = (filename: string) =>
-  Layer.effectDiscard(Effect.all([migrateAudit, migrateAuth])).pipe(
-    Layer.provideMerge(SqliteClient.layer({ filename })),
-  );
 
 /** A fresh in-memory {@link authDatabaseAt}, one per test. */
 export const testAuthDatabase = authDatabaseAt(":memory:").pipe(Layer.fresh);

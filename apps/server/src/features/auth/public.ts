@@ -40,7 +40,7 @@ export { normalizeEmail } from "./email.ts";
 
 export { Identity } from "./identity.ts";
 
-export { migrateAuth } from "./migrations.ts";
+export { authDatabaseAt, migrateAuth } from "./migrations.ts";
 
 export { People, peopleLayer } from "./people.ts";
 

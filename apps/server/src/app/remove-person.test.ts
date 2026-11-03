@@ -9,7 +9,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Redacted } from "effect";
 import { Headers } from "effect/http";
 import { Identity, People, sessionCookie } from "../features/auth/public.ts";
-import { authDatabaseAt, testSignIn } from "../features/auth/testing/test-auth.ts";
+import { authDatabaseAt } from "../features/auth/public.ts";
+import { testSignIn } from "../features/auth/testing/test-auth.ts";
 
 const command = fileURLToPath(new URL("./remove-person.ts", import.meta.url));
 

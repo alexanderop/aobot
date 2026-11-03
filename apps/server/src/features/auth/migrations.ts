@@ -1,6 +1,7 @@
-import { SqliteMigrator } from "@effect/sql-sqlite-node";
-import { Effect } from "effect";
+import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-node";
+import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/sql";
+import { migrateAudit } from "../audit/public.ts";
 
 const createPeople = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -44,3 +45,9 @@ export const migrateAuth = SqliteMigrator.run({
     "0002_create_sessions": createSessions,
   }),
 });
+
+/** A SQLite database at `filename` with the audit and auth tables, as the server's. */
+export const authDatabaseAt = (filename: string) =>
+  Layer.effectDiscard(Effect.all([migrateAudit, migrateAuth])).pipe(
+    Layer.provideMerge(SqliteClient.layer({ filename })),
+  );

@@ -1,11 +1,10 @@
 import { NodeRuntime } from "@effect/platform-node";
-import { SqliteClient } from "@effect/sql-sqlite-node";
-import { Config, ConfigProvider, Console, Effect, Layer, Option } from "effect";
-import { auditLogLayer, migrateAudit } from "../features/audit/public.ts";
+import { Config, ConfigProvider, Console, Effect, Option } from "effect";
+import { auditLogLayer } from "../features/audit/public.ts";
 import {
   AuthSettings,
   authConfig,
-  migrateAuth,
+  authDatabaseAt,
   normalizeEmail,
   People,
   peopleLayer,
@@ -45,11 +44,7 @@ const removal = Effect.gen(function* () {
   const ended = yield* People.use((people) => people.remove(email)).pipe(
     Effect.provide(peopleLayer(auth.signIn)),
     Effect.provide(auditLogLayer),
-    Effect.provide(
-      Layer.effectDiscard(Effect.all([migrateAudit, migrateAuth])).pipe(
-        Layer.provideMerge(SqliteClient.layer({ filename: databasePath })),
-      ),
-    ),
+    Effect.provide(authDatabaseAt(databasePath)),
   );
 
   yield* Console.log(
