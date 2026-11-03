@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Option } from "effect";
-import { admission } from "./admission.ts";
-import { normalizeEmail } from "./email.ts";
+import { isAllowedDomain, normalizeEmail } from "./email.ts";
 
 describe("normalizeEmail", () => {
   it.each([
@@ -26,21 +25,17 @@ describe("normalizeEmail", () => {
   });
 });
 
-describe("admission", () => {
+describe("isAllowedDomain", () => {
   const alice = Option.getOrThrow(normalizeEmail("alice@example.com"));
 
-  it("lets in an address of an allowed domain that was not removed", () => {
-    expect(admission(alice, ["example.com"], false)).toEqual(Option.none());
+  it("lets in an address of an allowed domain", () => {
+    expect(isAllowedDomain(alice, ["other.com", "example.com"])).toBe(true);
   });
 
   it("refuses another domain, a subdomain of an allowed one included", () => {
-    expect(admission(alice, ["other.com"], false)).toEqual(Option.some("domain"));
+    expect(isAllowedDomain(alice, ["other.com"])).toBe(false);
     expect(
-      admission(Option.getOrThrow(normalizeEmail("a@mail.example.com")), ["example.com"], false),
-    ).toEqual(Option.some("domain"));
-  });
-
-  it("refuses an address that was removed", () => {
-    expect(admission(alice, ["example.com"], true)).toEqual(Option.some("removed"));
+      isAllowedDomain(Option.getOrThrow(normalizeEmail("a@mail.example.com")), ["example.com"]),
+    ).toBe(false);
   });
 });

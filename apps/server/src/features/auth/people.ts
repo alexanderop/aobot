@@ -4,8 +4,7 @@ import { Clock, Context, Duration, Effect, Layer, Option, Redacted, Schema } fro
 import { SqlClient } from "effect/sql";
 import { Actor, CurrentActor, deployment } from "../../shared/actor.ts";
 import { auditRows } from "../audit/public.ts";
-import { admission } from "./admission.ts";
-import { domainOf } from "./email.ts";
+import { domainOf, isAllowedDomain } from "./email.ts";
 import type { SignInSettings } from "./settings.ts";
 
 /** How long a session lasts from its sign-in, however much it is used. */
@@ -32,6 +31,12 @@ export class SignInRefused extends Schema.TaggedError<SignInRefused>()("SignInRe
 /** A removal did not happen: it could not be stored together with its row. */
 export class PersonNotRemoved extends Schema.TaggedError<PersonNotRemoved>()("PersonNotRemoved", {
   message: Schema.String,
+}) {}
+
+/** Who signed in may not, for `code`, with what its `auth.refused` row says beside it. */
+class NotLetIn extends Schema.TaggedError<NotLetIn>()("NotLetIn", {
+  code: SignInRefusalCode.pick(["domain", "removed"]),
+  detail: Schema.Record(Schema.String, Schema.String),
 }) {}
 
 /** The admins the configuration names could not be recorded. */
@@ -81,7 +86,8 @@ export class People extends Context.Service<
   People,
   {
     /**
-    Lets `person` in: their address must be admitted before anyone is recorded, then they are recorded,
+    Lets `person` in: their domain must be allowed and their address not removed before anyone is
+    recorded, then they are recorded,
     made an admin when the configuration says so for the first time, and given a session, with an
     `auth.signed_in` row, all in one transaction. Refused, it writes `auth.refused` and records nothing.
     */
@@ -153,14 +159,16 @@ export const peopleLayer = (settings: Pick<SignInSettings, "allowedDomains" | "a
         const actor = Actor.cases.Person.make({ email, name: person.name });
 
         const entered = Effect.gen(function* () {
+          if (!isAllowedDomain(email, settings.allowedDomains)) {
+            return yield* new NotLetIn({ code: "domain", detail: { domain: domainOf(email) } });
+          }
+
           const [known] = yield* sql`
             SELECT removed_at IS NOT NULL AS removed, admin_granted FROM people WHERE email = ${email}
           `.pipe(Effect.flatMap(decodeKnown));
 
           // Read inside the transaction, so a removal committed since the provider answered still counts.
-          const refusal = admission(email, settings.allowedDomains, known?.removed ?? false);
-
-          if (Option.isSome(refusal)) return yield* new SignInRefused({ code: refusal.value });
+          if (known?.removed ?? false) return yield* new NotLetIn({ code: "removed", detail: {} });
 
           const admin = settings.admins.has(email);
 
@@ -188,14 +196,10 @@ export const peopleLayer = (settings: Pick<SignInSettings, "allowedDomains" | "a
 
         yield* entered.pipe(
           Effect.catchTags({
-            SignInRefused: (refused) =>
+            NotLetIn: ({ code, detail }) =>
               Effect.andThen(
-                refuse(
-                  refused.code,
-                  Option.some(email),
-                  refused.code === "domain" ? { domain: domainOf(email) } : {},
-                ),
-                Effect.fail(refused),
+                refuse(code, Option.some(email), detail),
+                Effect.fail(new SignInRefused({ code })),
               ),
             SqlError: (error) => unavailable(email, error.message),
             SchemaError: (error) => unavailable(email, error.message),

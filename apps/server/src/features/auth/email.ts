@@ -42,3 +42,8 @@ export function normalizeEmail(raw: string): Option.Option<Email> {
 export function domainOf(email: Email): string {
   return email.slice(email.lastIndexOf("@") + 1);
 }
+
+/** Whether `email` may sign in by its domain: one of `domains` exactly, never a subdomain of one. */
+export function isAllowedDomain(email: Email, domains: ReadonlyArray<string>): boolean {
+  return domains.includes(domainOf(email));
+}

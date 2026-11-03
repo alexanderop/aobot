@@ -3,7 +3,7 @@ import { Clock, Context, Effect, Layer, Option, Schema } from "effect";
 import { Cookies, type Headers } from "effect/http";
 import { SqlClient } from "effect/sql";
 import { Actor, singleUser } from "../../shared/actor.ts";
-import { admission } from "./admission.ts";
+import { isAllowedDomain } from "./email.ts";
 import { tokenHash } from "./people.ts";
 import type { SignInSettings } from "./settings.ts";
 
@@ -75,9 +75,9 @@ export const identitySignIn = (settings: Pick<SignInSettings, "allowedDomains">)
         );
 
         return Option.flatMap(Option.fromUndefinedOr(session), ({ email, name }) =>
-          Option.isSome(admission(email, settings.allowedDomains, false))
-            ? Option.none()
-            : Option.some(Actor.cases.Person.make({ email, name })),
+          isAllowedDomain(email, settings.allowedDomains)
+            ? Option.some(Actor.cases.Person.make({ email, name }))
+            : Option.none(),
         );
       });
 

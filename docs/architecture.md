@@ -343,15 +343,16 @@ session every half minute, on focus, and whenever the server refuses a socket or
 `SignedOut`; a browser cannot tell a 401 upgrade from a server it cannot reach, so only the session's
 answer decides whether to keep knocking.
 
-**Who may sign in.** One pure rule, `admission`: the address's domain is one of
-`SIGNIN_ALLOWED_EMAIL_DOMAINS` exactly, and the address was not removed. It is read before a person is
-recorded, so `mallory@other.com` leaves no row in `people`, again inside the transaction that makes the
-session, and on every request, so removing a domain also ends its open sessions. Each sign-in writes
-`auth.signed_in` and each refusal `auth.refused` with its reason, under the address that tried when the
-provider vouched for one; the page shows the reason from one table of words in `@aobot/domain`. A grant
-by configuration writes `auth.admin_granted` once; dropping someone from `ADMIN_EMAILS` writes nothing,
-and naming them again writes it again. Being an admin grants nothing yet: roles come later, and anyone
-signed in may pause a Bot and read the trail.
+**Who may sign in.** An address whose domain is one of `SIGNIN_ALLOWED_EMAIL_DOMAINS` exactly
+(`isAllowedDomain`), and which was not removed. `People.enter` decides both inside the transaction that
+makes the session, the domain before any row is read, so `mallory@other.com` leaves no row in `people`,
+and a removal committed since the provider answered still counts. Every request reads both again:
+`Identity` resolves a session only for a person not removed whose domain is still allowed, so removing a
+domain also ends its open sessions. Each sign-in writes `auth.signed_in` and each refusal `auth.refused`
+with its reason, under the address that tried when the provider vouched for one; the page shows the
+reason from one table of words in `@aobot/domain`. A grant by configuration writes `auth.admin_granted`
+once; dropping someone from `ADMIN_EMAILS` writes nothing, and naming them again writes it again. Being
+an admin grants nothing yet: roles come later, and anyone signed in may pause a Bot and read the trail.
 
 **Removing a person.** `vp run people:remove <email>` marks the address removed and deletes its sessions
 in one transaction with `person.removed`, by the deployment. A running server refuses the person at their
