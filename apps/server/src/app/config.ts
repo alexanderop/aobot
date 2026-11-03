@@ -11,6 +11,11 @@ const botsAtTheRoot = fileURLToPath(new URL("../../../../bots.yaml", import.meta
 
 const rulesAtTheRoot = fileURLToPath(new URL("../../../../rules.yaml", import.meta.url));
 
+/** Where the SQLite database is, shared by the server and its operator commands. */
+export const databasePathConfig = Config.String("DATABASE_PATH").pipe(
+  Config.withDefault("data/aobot.db"),
+);
+
 const settings = Config.all({
   deployment: Config.Literals(["development", "production"], "AOBOT_ENV").pipe(
     Config.withDefault("development"),
@@ -23,7 +28,7 @@ const settings = Config.all({
   publicUrl: Config.option(Config.URL("PUBLIC_URL")),
   auth: authConfig,
   webDistDir: Config.String("WEB_DIST_DIR").pipe(Config.withDefault(builtWebApp)),
-  databasePath: Config.String("DATABASE_PATH").pipe(Config.withDefault("data/aobot.db")),
+  databasePath: databasePathConfig,
   // The Bots this server knows. Read once at start-up: an edit takes effect on the next start.
   botsFile: Config.String("BOTS_FILE").pipe(Config.withDefault(botsAtTheRoot)),
   // The rules every Bot action is judged by, read once at start-up like the Bots.

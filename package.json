@@ -13,6 +13,7 @@
     "test:contract:agents": "vp test run --config vite.contract.config.ts",
     "knip": "knip",
     "verify": "node verify/run.ts",
+    "people:remove": "node apps/server/src/app/remove-person.ts",
     "dev:acp": "cd apps/web && vp build && cd ../.. && AGENT_RUNTIME=acp ACP_AGENT=${ACP_AGENT:-claude-code} SINGLE_USER=true HOST=127.0.0.1 PORT=${PORT:-3100} node apps/server/src/app/main.ts"
   },
   "dependencies": {
