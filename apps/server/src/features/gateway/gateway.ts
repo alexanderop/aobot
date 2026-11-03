@@ -54,7 +54,7 @@ import {
   type ToolTimedOut,
   toolResult,
 } from "../../shared/tool-result.ts";
-import { type Actor, actsThroughBots, CurrentActor, deployment } from "../../shared/actor.ts";
+import { type Actor, CurrentActor, deployment } from "../../shared/actor.ts";
 import { redact, redactCommand, redactUrl } from "../../shared/redact.ts";
 import { actionFacts, hostOf } from "./action-facts.ts";
 import {
@@ -1103,25 +1103,13 @@ export const gatewayLayer = Layer.effectContext(
     /**
     The actor a call acts for: the person its turn runs for, so a call from an `api` runtime and one from
     an `acp` CLI over `/mcp` name the same person. A call that names no turn is the deployment's, which
-    {@link personsTurn} refuses.
+    is refused as {@link NoPerson}.
     */
     const actorOfCall = (turn: Option.Option<TurnRef>) =>
       Option.match(turn, {
         onNone: () => Effect.succeed(deployment),
         onSome: actorOfTurn,
       });
-
-    /** The turn of a call made for a person, or {@link NoPerson}. */
-    const personsTurn = (turn: Option.Option<TurnRef>) =>
-      Effect.flatMap(CurrentActor, (actor) =>
-        Option.match(
-          Option.filter(turn, () => actsThroughBots(actor)),
-          {
-            onNone: () => Effect.fail(new NoPerson()),
-            onSome: Effect.succeed,
-          },
-        ),
-      );
 
     /**
     `effect`, an action of `tool` in `turn`, through the door once its turn is checked again. Commands run
@@ -1447,7 +1435,12 @@ export const gatewayLayer = Layer.effectContext(
 
       const carried = Effect.gen(function* () {
         const granted = yield* grant(claim, request.action);
-        const ofPerson = yield* personsTurn(turn);
+
+        // Every turn runs for a person, so a call that names none is no person's.
+        const ofPerson = yield* Option.match(turn, {
+          onNone: () => Effect.fail(new NoPerson()),
+          onSome: Effect.succeed,
+        });
 
         // A command cut off while it waits has written nothing yet, so its turn's end is its deny row.
         const leftQueue = Effect.fail(new TurnEnded()).pipe(

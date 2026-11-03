@@ -320,8 +320,9 @@ one. When the database does not answer, the request is refused with 503, never t
 
 **A Bot acts for its turn's person.** `Turns.start` keeps the actor of the call that started the turn,
 and the gateway reads it with the turn's liveness, so a call from the `api` runtime and one an `acp` CLI
-makes over `/mcp`, which carries no cookie, act for the same person. A call that names no turn, or a turn
-no person started, is refused as `no person to act for`, right after its grant. A Stop or a pause names
+makes over `/mcp`, which carries no cookie, act for the same person. `Turns.start` takes a `PersonActor`, a
+person or the single user, so every turn is someone's by type, and a call that names no turn is refused
+as `no person to act for`, right after its grant. A Stop or a pause names
 whoever pressed it, the pause check's stop the person whose turn it was, and an approval's answer row
 whoever answered it.
 

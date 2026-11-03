@@ -80,15 +80,15 @@ describe("Turns", () => {
         yield* turns.pause(assistant.id);
         yield* turns.pause(assistant.id);
 
-        const refused = yield* turns.start(first, run, assistant.id).pipe(Effect.flip);
+        const refused = yield* turns.start(first, run, assistant.id, alice).pipe(Effect.flip);
         expect(refused._tag).toBe("BotPaused");
         expect(yield* turns.isRunning(first)).toBe(false);
 
-        yield* turns.start(second, run, researcher.id);
+        yield* turns.start(second, run, researcher.id, alice);
 
         yield* turns.resume(assistant.id);
         yield* turns.resume(assistant.id);
-        yield* turns.start(first, run, assistant.id);
+        yield* turns.start(first, run, assistant.id, alice);
 
         expect(yield* trail).toEqual([
           "bot.paused · allow | person | assistant",
@@ -103,8 +103,8 @@ describe("Turns", () => {
   it.effect("stops a running turn of a Bot at once when it is paused, and only that Bot's", () =>
     Effect.gen(function* () {
       const turns = yield* Turns;
-      const paused = yield* turns.start(first, run, assistant.id);
-      const other = yield* turns.start(second, run, researcher.id);
+      const paused = yield* turns.start(first, run, assistant.id, alice);
+      const other = yield* turns.start(second, run, researcher.id, alice);
 
       yield* turns.pause(assistant.id).pipe(Effect.provideService(CurrentActor, bob));
 
@@ -120,8 +120,8 @@ describe("Turns", () => {
     () =>
       Effect.gen(function* () {
         const turns = yield* Turns;
-        const claim = yield* turns.start(first, run, assistant.id);
-        const other = yield* turns.start(second, run, assistant.id);
+        const claim = yield* turns.start(first, run, assistant.id, alice);
+        const other = yield* turns.start(second, run, assistant.id, alice);
 
         yield* turns.stop(first).pipe(Effect.provideService(CurrentActor, bob));
         yield* turns.stop(first);
@@ -140,12 +140,8 @@ describe("Turns", () => {
 
       yield* Effect.scoped(
         Effect.gen(function* () {
-          yield* turns
-            .start(first, run, assistant.id)
-            .pipe(Effect.provideService(CurrentActor, alice));
-          yield* turns
-            .start(second, run, assistant.id)
-            .pipe(Effect.provideService(CurrentActor, bob));
+          yield* turns.start(first, run, assistant.id, alice);
+          yield* turns.start(second, run, assistant.id, bob);
 
           expect(yield* live.actorOf(first, run)).toEqual(Option.some(alice));
           expect(yield* live.actorOf(second, run)).toEqual(Option.some(bob));
@@ -202,7 +198,7 @@ describe("Turns", () => {
         const turns = yield* Turns;
         yield* firstCheck(turns);
 
-        const starting = yield* Effect.scoped(turns.start(first, run, assistant.id)).pipe(
+        const starting = yield* Effect.scoped(turns.start(first, run, assistant.id, alice)).pipe(
           Effect.flip,
           Effect.forkChild,
         );
@@ -225,12 +221,12 @@ describe("Turns", () => {
     Effect.gen(function* () {
       const turns = yield* Turns;
 
-      yield* Effect.scoped(turns.start(first, run, assistant.id));
+      yield* Effect.scoped(turns.start(first, run, assistant.id, alice));
 
       expect(yield* turns.isRunning(first)).toBe(false);
-      yield* turns.start(first, run, assistant.id);
+      yield* turns.start(first, run, assistant.id, alice);
       expect(yield* turns.isRunning(first)).toBe(true);
-      expect((yield* turns.start(first, run, assistant.id).pipe(Effect.flip))._tag).toBe(
+      expect((yield* turns.start(first, run, assistant.id, alice).pipe(Effect.flip))._tag).toBe(
         "ConversationBusy",
       );
     }).pipe(Effect.provide(server())),
@@ -270,7 +266,7 @@ describe("Turns", () => {
     return Effect.gen(function* () {
       const turns = yield* Turns;
       yield* firstCheck(turns);
-      yield* turns.start(second, run, assistant.id);
+      yield* turns.start(second, run, assistant.id, alice);
       yield* turns.pause(assistant.id);
 
       yield* Ref.set(hold, true);
@@ -278,7 +274,7 @@ describe("Turns", () => {
       yield* Deferred.await(reading);
 
       yield* turns.resume(assistant.id);
-      const claim = yield* turns.start(first, run, assistant.id);
+      const claim = yield* turns.start(first, run, assistant.id, alice);
       yield* Deferred.succeed(answer, undefined);
       yield* TestClock.adjust("5 seconds");
 
@@ -293,7 +289,7 @@ describe("Turns", () => {
       return Effect.gen(function* () {
         const turns = yield* Turns;
         yield* firstCheck(turns);
-        const claim = yield* turns.start(first, run, assistant.id);
+        const claim = yield* turns.start(first, run, assistant.id, alice);
 
         yield* Ref.set(failures, 2);
         yield* TestClock.adjust("15 seconds");
@@ -313,11 +309,11 @@ describe("Turns", () => {
       return Effect.gen(function* () {
         const turns = yield* Turns;
         yield* firstCheck(turns);
-        const claim = yield* turns.start(first, run, assistant.id);
+        const claim = yield* turns.start(first, run, assistant.id, alice);
 
         yield* Ref.set(failures, 2);
         yield* TestClock.adjust("10 seconds");
-        yield* turns.start(second, run, researcher.id);
+        yield* turns.start(second, run, researcher.id, alice);
 
         yield* Ref.set(failures, 1);
         yield* TestClock.adjust("5 seconds");
@@ -333,9 +329,7 @@ describe("Turns", () => {
         const turns = yield* Turns;
         yield* firstCheck(turns);
 
-        const claim = yield* turns
-          .start(first, run, assistant.id)
-          .pipe(Effect.provideService(CurrentActor, alice));
+        const claim = yield* turns.start(first, run, assistant.id, alice);
 
         yield* Ref.set(failures, 3);
         yield* TestClock.adjust("10 seconds");

@@ -2,7 +2,7 @@ import { Email, SessionState } from "@aobot/domain";
 import { Clock, Context, Effect, Layer, Option, Schema } from "effect";
 import { Cookies, type Headers } from "effect/http";
 import { SqlClient } from "effect/sql";
-import { Actor, singleUser } from "../../shared/actor.ts";
+import { Actor, type PersonActor, singleUser } from "../../shared/actor.ts";
 import { isAllowedDomain } from "./email.ts";
 import { tokenHash } from "./people.ts";
 import type { SignInSettings } from "./settings.ts";
@@ -34,7 +34,7 @@ export class Identity extends Context.Service<
     */
     readonly resolve: (
       headers: Headers.Headers,
-    ) => Effect.Effect<Option.Option<Actor>, IdentityUnreadable>;
+    ) => Effect.Effect<Option.Option<PersonActor>, IdentityUnreadable>;
   }
 >()("aobot/auth/Identity") {}
 
@@ -61,7 +61,7 @@ export const identitySignIn = (settings: Pick<SignInSettings, "allowedDomains">)
       const lookUp = Effect.fnUntraced(function* (headers: Headers.Headers) {
         const token = sessionToken(headers);
 
-        if (Option.isNone(token)) return Option.none<Actor>();
+        if (Option.isNone(token)) return Option.none<PersonActor>();
 
         const now = new Date(yield* Clock.currentTimeMillis).toISOString();
 
@@ -89,18 +89,13 @@ export const identitySignIn = (settings: Pick<SignInSettings, "allowedDomains">)
     }),
   );
 
-const signedOut = SessionState.cases.SignedOut.make({});
-
 /** What the page is told of who it is open for, from what {@link Identity} resolved. */
-export function sessionStateOf(actor: Option.Option<Actor>): SessionState {
+export function sessionStateOf(actor: Option.Option<PersonActor>): SessionState {
   return Option.match(actor, {
-    onNone: () => signedOut,
-    onSome: Actor.match({
-      Person: (person): SessionState =>
-        SessionState.cases.SignedIn.make({ person: { email: person.email, name: person.name } }),
-      SingleUser: () => SessionState.cases.SingleUser.make({}),
-      Visitor: () => signedOut,
-      Deployment: () => signedOut,
-    }),
+    onNone: () => SessionState.cases.SignedOut.make({}),
+    onSome: (someone) =>
+      Actor.guards.Person(someone)
+        ? SessionState.cases.SignedIn.make({ person: { email: someone.email, name: someone.name } })
+        : SessionState.cases.SingleUser.make({}),
   });
 }

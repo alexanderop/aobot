@@ -62,7 +62,7 @@ describe("given a turn the person stopped", () => {
     return Effect.gen(function* () {
       const turns = yield* Turns;
       const gateway = yield* Gateway;
-      yield* turns.start(conversation, run, assistant.id);
+      yield* turns.start(conversation, run, assistant.id, alice);
 
       yield* gateway.act(inTurn, navigate);
       yield* turns.stop(conversation);
@@ -94,7 +94,7 @@ describe("given a turn the person stopped", () => {
     return Effect.gen(function* () {
       const turns = yield* Turns;
       const gateway = yield* Gateway;
-      yield* turns.start(conversation, run, assistant.id);
+      yield* turns.start(conversation, run, assistant.id, alice);
 
       const acting = yield* gateway.act(inTurn, navigate).pipe(Effect.flip, Effect.forkChild);
       yield* Deferred.await(reached);
@@ -126,8 +126,8 @@ describe("given a command waiting for one from another turn", () => {
     return Effect.gen(function* () {
       const turns = yield* Turns;
       const gateway = yield* Gateway;
-      yield* turns.start(otherConversation, run, assistant.id);
-      yield* turns.start(conversation, run, assistant.id);
+      yield* turns.start(otherConversation, run, assistant.id, alice);
+      yield* turns.start(conversation, run, assistant.id, alice);
 
       yield* Effect.forkChild(gateway.act(inOtherTurn, sleep));
       yield* Deferred.await(reached);
@@ -173,8 +173,8 @@ describe("given a command waiting for one from another turn", () => {
       const turns = yield* Turns;
       const gateway = yield* Gateway;
       const turn = yield* Scope.make();
-      yield* turns.start(otherConversation, run, assistant.id);
-      yield* Scope.provide(turns.start(conversation, run, assistant.id), turn);
+      yield* turns.start(otherConversation, run, assistant.id, alice);
+      yield* Scope.provide(turns.start(conversation, run, assistant.id, alice), turn);
 
       const first = yield* Effect.forkChild(gateway.act(inOtherTurn, sleep));
       yield* Deferred.await(reached);

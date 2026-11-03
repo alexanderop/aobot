@@ -1,10 +1,10 @@
-import { Email } from "@aobot/domain";
+import { Email, Person } from "@aobot/domain";
 import { Context, Option, Schema } from "effect";
 
 /** Whose authority something happens on. */
 export const Actor = Schema.TaggedUnion({
   /** A person signed in with their company account. */
-  Person: { email: Email, name: Schema.String },
+  Person: Person.fields,
   /** The one person of a server in single-user mode. */
   SingleUser: {},
   /** Someone who tried to sign in and was not let in, by the address the provider vouched for, if any. */
@@ -20,7 +20,7 @@ export type Actor = typeof Actor.Type;
 export const deployment: Actor = Actor.cases.Deployment.make({});
 
 /** The one person of a server in single-user mode. */
-export const singleUser: Actor = Actor.cases.SingleUser.make({});
+export const singleUser: PersonActor = Actor.cases.SingleUser.make({});
 
 /**
 Who the current call is on the authority of. Unprovided, it is the deployment: a row written outside any
@@ -41,10 +41,10 @@ export const actorId: (actor: Actor) => string = Actor.match({
   Deployment: () => "deployment",
 });
 
-/** Whether a Bot may act on `actor`'s authority: a person's or the single user's, never anyone else's. */
-export const actsThroughBots: (actor: Actor) => boolean = Actor.match({
-  Person: () => true,
-  SingleUser: () => true,
-  Visitor: () => false,
-  Deployment: () => false,
-});
+/** Someone a Bot may act for, and so every turn runs for: a person signed in, or the single user. */
+export type PersonActor = Extract<Actor, { readonly _tag: "Person" | "SingleUser" }>;
+
+/** Whether `actor` is someone a Bot may act for. */
+export function isPersonActor(actor: Actor): actor is PersonActor {
+  return Actor.guards.Person(actor) || Actor.guards.SingleUser(actor);
+}

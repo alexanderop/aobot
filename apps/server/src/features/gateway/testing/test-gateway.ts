@@ -6,7 +6,7 @@ import { auditLogLayer, migrateAudit } from "../../audit/public.ts";
 import { testBots } from "../../bots/testing/test-bots.ts";
 import { type Computer, Computers } from "../../computers/public.ts";
 import { everyTurnRunsFor } from "../../lifecycle/testing/test-lifecycle.ts";
-import type { Actor } from "../../../shared/actor.ts";
+import type { PersonActor } from "../../../shared/actor.ts";
 import { alice } from "../../../shared/testing/people.ts";
 import { fakeComputer } from "../../computers/testing/fake-computer.ts";
 import type { Policy } from "../../policy/public.ts";
@@ -73,7 +73,7 @@ every turn a call names still runs, for `actor`.
 export function startGateway(
   computers: Layer.Layer<Computers>,
   policy: Layer.Layer<Policy> = allowEverything,
-  actor: Actor = alice,
+  actor: PersonActor = alice,
 ) {
   return gatewayLayer.pipe(
     Layer.provide(auditLogLayer),

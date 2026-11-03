@@ -48,7 +48,7 @@ import {
   Computers,
   ComputerUnavailable,
 } from "../computers/public.ts";
-import { allowEverything, policyFrom } from "../policy/testing/test-policy.ts";
+import { policyFrom } from "../policy/testing/test-policy.ts";
 import { ComputerControl } from "./control.ts";
 import { Claim, Gateway } from "./gateway.ts";
 import { FileTransfers } from "./transfers.ts";
@@ -62,7 +62,7 @@ import {
   startGateway,
 } from "./testing/test-gateway.ts";
 import { ActingBot, botToolHandlers } from "./tools.ts";
-import { CurrentActor, deployment } from "../../shared/actor.ts";
+import { CurrentActor } from "../../shared/actor.ts";
 import { alice, bob } from "../../shared/testing/people.ts";
 
 const exampleDomain = (action: PageAction): Effect.Effect<PageRead> =>
@@ -368,35 +368,22 @@ allow:
     }).pipe(Effect.provide(database)),
   );
 
-  it.effect(
-    "refuses a granted call that is no person's, as the deployment, forwarding nothing",
-    () =>
-      Effect.gen(function* () {
-        const computer = shell({});
-        const noTurn = Claim.cases.Named.make({ bot: assistant.id });
+  it.effect("refuses a granted call in no turn, as the deployment, forwarding nothing", () =>
+    Effect.gen(function* () {
+      const computer = shell({});
+      const noTurn = Claim.cases.Named.make({ bot: assistant.id });
 
-        const [outside, deployments] = yield* Effect.all([
-          Gateway.use((gateway) => Effect.flip(gateway.act(noTurn, makeNotes))).pipe(
-            Effect.provide(startGateway(computer.layer)),
-          ),
-          Gateway.use((gateway) => Effect.flip(gateway.act(bot, makeNotes))).pipe(
-            Effect.provide(startGateway(computer.layer, allowEverything, deployment)),
-          ),
-        ]);
+      const refused = yield* Gateway.use((gateway) =>
+        Effect.flip(gateway.act(noTurn, makeNotes)),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
 
-        for (const refused of [outside, deployments]) {
-          expect(refused.message).toBe(
-            "run did not run: it came from no conversation a person started, and a Bot acts only for its person.",
-          );
-        }
-
-        expect(computer.actions).toEqual([]);
-        expect(yield* trailWithReasons).toEqual([
-          ["run · deny", "no person to act for"],
-          ["run · deny", "no person to act for"],
-        ]);
-        expect((yield* actors).map(([, actor]) => actor)).toEqual(["deployment", "deployment"]);
-      }).pipe(Effect.provide(database)),
+      expect(refused.message).toBe(
+        "run did not run: it came from no conversation a person started, and a Bot acts only for its person.",
+      );
+      expect(computer.actions).toEqual([]);
+      expect(yield* trailWithReasons).toEqual([["run · deny", "no person to act for"]]);
+      expect((yield* actors).map(([, actor]) => actor)).toEqual(["deployment"]);
+    }).pipe(Effect.provide(database)),
   );
 
   it.effect("refuses an ungranted call for that first, whoever's it is", () =>

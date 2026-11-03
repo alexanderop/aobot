@@ -27,7 +27,7 @@ import {
   SubscriptionRef,
 } from "effect";
 import { SqlClient, type SqlError } from "effect/sql";
-import { Actor, CurrentActor } from "../../shared/actor.ts";
+import { Actor, CurrentActor, type PersonActor } from "../../shared/actor.ts";
 import { auditRows } from "../audit/public.ts";
 import { PauseStore, type PauseUnreadable } from "./pause-store.ts";
 
@@ -73,7 +73,7 @@ interface StartedTurn {
 interface Running {
   readonly bot: BotId;
   readonly run: RunId;
-  readonly actor: Actor;
+  readonly actor: PersonActor;
   readonly stopped: Deferred.Deferred<never, TurnStopped>;
 }
 
@@ -85,15 +85,17 @@ export class Turns extends Context.Service<
   Turns,
   {
     /**
-    Claims `conversation` for run `run` of `bot`, on the authority of the {@link CurrentActor}, until the
-    scope closes, then reads whether `bot` is paused. A paused Bot is refused with `BotPaused`, and one whose pause cannot be read in three tries
-    with `PauseUnknown`: a Bot that may be paused never starts on a guess. Each refusal writes a
-    `turn · deny` row and leaves the conversation free.
+    Claims `conversation` for run `run` of `bot`, on the authority of `actor`, until the scope closes,
+    then reads whether `bot` is paused. A turn runs only for someone a Bot may act for, so `actor` is a
+    person or the single user, never the deployment. A paused Bot is refused with `BotPaused`, and one
+    whose pause cannot be read in three tries with `PauseUnknown`: a Bot that may be paused never starts
+    on a guess. Each refusal writes a `turn · deny` row and leaves the conversation free.
     */
     readonly start: (
       conversation: ConversationId,
       run: RunId,
       bot: BotId,
+      actor: PersonActor,
     ) => Effect.Effect<StartedTurn, ConversationBusy | BotPaused | PauseUnknown, Scope.Scope>;
     readonly isRunning: (conversation: ConversationId) => Effect.Effect<boolean>;
     /** The person's Stop: stops the turn running in `conversation`, if one is. */
@@ -119,7 +121,7 @@ export class LiveTurns extends Context.Service<
     readonly actorOf: (
       conversation: ConversationId,
       run: RunId,
-    ) => Effect.Effect<Option.Option<Actor>>;
+    ) => Effect.Effect<Option.Option<PersonActor>>;
     /** Completes once run `run` in `conversation` is stopped, and at once when it no longer runs here. */
     readonly stopped: (conversation: ConversationId, run: RunId) => Effect.Effect<void>;
   }
@@ -261,9 +263,9 @@ export const turnsLayer = Layer.effectContext(
       conversation: ConversationId,
       run: RunId,
       bot: BotId,
+      actor: PersonActor,
     ) {
       const stopped = yield* Deferred.make<never, TurnStopped>();
-      const actor = yield* CurrentActor;
 
       // Removes this turn's entry only. By the time a finalizer calls it again, the next turn may
       // already hold the conversation.
@@ -303,6 +305,7 @@ export const turnsLayer = Layer.effectContext(
               : Effect.void,
         }),
         Effect.onError(() => release),
+        Effect.provideService(CurrentActor, actor),
       );
 
       return { stopped, recordStop: recordStop(conversation, bot), release };
