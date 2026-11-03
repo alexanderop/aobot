@@ -5,7 +5,8 @@ import { ToolAction } from "./tool-action.ts";
 
 /**
 The kinds of action a Bot never takes on its own, whatever the rules say: entering or changing a credential,
-changing a security setting, and paying. An audit row names one as `safety:credentials`.
+changing a security setting, and paying. A `hand_off` row stores the list as `safety: "credentials"`,
+which the audit page shows as `safety:credentials`.
 */
 export const SafetyList = Schema.Literals(["credentials", "security", "payments"]);
 
