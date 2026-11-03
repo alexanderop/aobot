@@ -1,4 +1,4 @@
-import { BotId, MessageId } from "@aobot/domain";
+import { BotId, ConversationId, RunId, MessageId } from "@aobot/domain";
 import { describe, expect, it } from "@effect/vitest";
 import { Duration, Effect, Layer, Stream } from "effect";
 import { Toolkit } from "effect/ai";
@@ -23,6 +23,8 @@ describe("the configured real model", () => {
         const events = yield* Stream.runCollect(
           agent.run({
             bot: BotId.make("assistant"),
+            conversation: ConversationId.make("conversation-1"),
+            run: RunId.make("run-1"),
             instructions: "Answer in one short sentence.",
             history: [{ id: MessageId.make("smoke-1"), role: "user", text: "Say hello." }],
           }),

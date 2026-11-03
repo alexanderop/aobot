@@ -2,8 +2,11 @@ import type { AuditAction, AuditDecision, InitiatorKind } from "@aobot/domain";
 import { Context, Effect, Layer, Option, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 
-/** What the gateway decided about a call. */
-export type Decision = Extract<AuditDecision, "allow" | "deny">;
+/**
+What the gateway decided about a call: `allow` or `deny`, or `ask` and `answered` for a question it put
+to the person first.
+*/
+export type Decision = Extract<AuditDecision, "allow" | "deny" | "ask" | "answered">;
 
 /**
 What became of an allowed call. `unknown` means the server stopped hearing about it before it heard back,

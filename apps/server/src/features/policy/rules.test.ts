@@ -1,3 +1,4 @@
+import { Option } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import { blankFacts, type Facts } from "./facts.ts";
 import { judge, RuleName, Verdict } from "./rules.ts";
@@ -19,6 +20,18 @@ function running(command: string): Facts {
 const numberOnly = 'command == "" || int(command) > 0';
 
 const { Allowed, Denied, DenyRuleFailed, NoneAllowed } = Verdict.cases;
+
+/** Allowed by the allow rule `rule`, with no ask rule holding. */
+const allowedBy = (rule: string) =>
+  Allowed.make({ rule: RuleName.make(rule), broken: [], ask: Option.none() });
+
+/** Allowed by `granted-tools` once the person says yes to the ask rule `rule`, which `failed` or held. */
+const askedBy = (rule: string, failed = false) =>
+  Allowed.make({
+    rule: RuleName.make("granted-tools"),
+    broken: [],
+    ask: Option.some({ rule: RuleName.make(rule), failed }),
+  });
 
 /** The facts of a browser action on an element of a page on shop.example, pressing `key` when it is `press`. */
 function onTheShop(tool: "click" | "press", role: string, name: string, key = ""): Facts {
@@ -70,7 +83,7 @@ allow:
   - name: granted-tools
     when: "true"`,
       "ls",
-      Allowed.make({ rule: RuleName.make("only-ls"), broken: [] }),
+      allowedBy("only-ls"),
     ],
     [
       "the first deny rule in the file refuses, when two hold",
@@ -110,7 +123,7 @@ allow:
     when: "true"`,
       "ls",
       {
-        ...Allowed.make({ rule: RuleName.make("granted-tools"), broken: [] }),
+        ...allowedBy("granted-tools"),
         broken: [brokenWith("number-only", "int()")],
       },
     ],
@@ -137,6 +150,69 @@ allow:
       "deny: []\nallow: []",
       "ls",
       NoneAllowed.make({ broken: [] }),
+    ],
+  ])("%s", (_case, file, command, verdict) => {
+    expect(judge(rulesFrom(file), running(command))).toEqual(verdict);
+  });
+});
+
+describe("judge with ask rules", () => {
+  const askBeforeDelete = `
+ask:
+  - name: ask-before-delete
+    when: command.contains("delete")`;
+
+  it.each([
+    [
+      "an action an allow rule allows asks the person first when an ask rule holds",
+      `deny: []${allowAll}${askBeforeDelete}`,
+      "delete notes.txt",
+      askedBy("ask-before-delete"),
+    ],
+    [
+      "an action no ask rule holds for is allowed without asking",
+      `deny: []${allowAll}${askBeforeDelete}`,
+      "ls",
+      allowedBy("granted-tools"),
+    ],
+    [
+      "a deny rule refuses before any ask rule is read",
+      `deny:
+  - name: no-delete
+    when: command.contains("delete")${allowAll}${askBeforeDelete}`,
+      "delete notes.txt",
+      Denied.make({ rule: RuleName.make("no-delete") }),
+    ],
+    [
+      "an action no allow rule allows is refused, though an ask rule holds, so asking never allows",
+      `deny: []
+allow:
+  - name: only-ls
+    when: command == "ls"${askBeforeDelete}`,
+      "delete notes.txt",
+      NoneAllowed.make({ broken: [] }),
+    ],
+    [
+      "an ask rule that fails asks the person, and says it failed",
+      `deny: []${allowAll}
+ask:
+  - name: number-only
+    when: ${numberOnly}`,
+      "ls",
+      askedBy("number-only", true),
+    ],
+    [
+      "the first ask rule in the file that holds is the one that asks",
+      `deny: []${allowAll}
+ask:
+  - name: ask-before-rm
+    when: command.startsWith("rm")
+  - name: ask-before-delete
+    when: command.contains("delete")
+  - name: ask-before-anything
+    when: "true"`,
+      "delete notes.txt",
+      askedBy("ask-before-delete"),
     ],
   ])("%s", (_case, file, command, verdict) => {
     expect(judge(rulesFrom(file), running(command))).toEqual(verdict);
@@ -177,17 +253,13 @@ allow:
     [
       "allows pressing Enter in a field on another host",
       { ...onTheShop("press", "textbox", "Name", "Enter"), page: { host: "elsewhere.example" } },
-      Allowed.make({ rule: RuleName.make("granted-tools"), broken: [] }),
+      allowedBy("granted-tools"),
     ],
-    [
-      "allows clicking Cancel",
-      onTheShop("click", "button", "Cancel"),
-      Allowed.make({ rule: RuleName.make("granted-tools"), broken: [] }),
-    ],
+    ["allows clicking Cancel", onTheShop("click", "button", "Cancel"), allowedBy("granted-tools")],
     [
       "allows pressing Tab in the field",
       onTheShop("press", "textbox", "Name", "Tab"),
-      Allowed.make({ rule: RuleName.make("granted-tools"), broken: [] }),
+      allowedBy("granted-tools"),
     ],
   ])("%s", (_case, facts, verdict) => {
     expect(judge(rules, facts)).toEqual(verdict);

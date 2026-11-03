@@ -353,6 +353,19 @@ export function isRunning(state: ConversationState): boolean {
   return ConversationStatus.$is("Running")(state.status);
 }
 
+function isPersonMessage(
+  item: TranscriptItem,
+): item is Data.TaggedEnum.Value<TranscriptItem, "Message"> {
+  return TranscriptItem.$is("Message")(item) && item.role === "user";
+}
+
+/** The person's message the run in flight answers, which names its turn; none while nothing runs. */
+export function runningTurn(state: ConversationState): Option.Option<MessageId> {
+  return isRunning(state)
+    ? Option.map(Arr.findLast(state.transcript, isPersonMessage), ({ id }) => id)
+    : Option.none();
+}
+
 /** Whether a tool call came after the person's last message. */
 function calledToolThisTurn(transcript: ReadonlyArray<TranscriptItem>): boolean {
   return Option.exists(

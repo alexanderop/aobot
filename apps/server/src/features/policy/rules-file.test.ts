@@ -19,12 +19,13 @@ function reason(text: string): string {
 }
 
 describe("readRulesFile", () => {
-  it("reads the rules.yaml the server starts with: no rm -rf, then whatever a Bot was granted", () => {
+  it("reads the rules.yaml the server starts with: no rm -rf, whatever a Bot was granted, ask before delete", () => {
     const shipped = readFileSync(new URL("../../../../../rules.yaml", import.meta.url), "utf8");
     const rules = Result.getOrThrow(readRulesFile(shipped));
 
     expect(rules.deny.map((rule) => rule.name)).toEqual(["no-rm-rf"]);
     expect(rules.allow.map((rule) => rule.name)).toEqual(["granted-tools"]);
+    expect(rules.ask.map((rule) => rule.name)).toEqual(["ask-before-delete"]);
   });
 
   it("reads each list's rules by name, in the order the file gives them", () => {
@@ -37,7 +38,17 @@ describe("readRulesFile", () => {
   it("reads empty lists as a policy that allows nothing", () => {
     const rules = Result.getOrThrow(readRulesFile("deny: []\nallow: []"));
 
-    expect(rules).toEqual({ deny: [], allow: [] });
+    expect(rules).toEqual({ deny: [], allow: [], ask: [] });
+  });
+
+  it("reads the ask rules, in the order the file gives them, when the file has them", () => {
+    const rules = Result.getOrThrow(
+      readRulesFile(
+        `deny: []\nallow:${granted}\nask:\n  - name: ask-before-delete\n    when: command.contains("delete")\n  - name: ask-always\n    when: "true"`,
+      ),
+    );
+
+    expect(rules.ask.map((rule) => rule.name)).toEqual(["ask-before-delete", "ask-always"]);
   });
 
   it.each([
@@ -70,6 +81,21 @@ describe("readRulesFile", () => {
       "gives two rules one name, across both lists",
       `deny:${rmRf}\nallow:${granted.replace("granted-tools", "no-rm-rf")}`,
       'no-rm-rf names two rules\n  at ["allow"][0]["name"]',
+    ],
+    [
+      "gives an ask rule the name of an allow rule",
+      `deny: []\nallow:${granted}\nask:${granted}`,
+      'granted-tools names two rules\n  at ["ask"][0]["name"]',
+    ],
+    [
+      "misspells the ask list",
+      `deny: []\nallow:${granted}\naks:${granted}`,
+      'Expected no excess property\n  at ["aks"]',
+    ],
+    [
+      "gives an ask rule an expression that does not parse",
+      `deny: []\nallow:${granted}\nask:${granted.replace('"true"', "tool.name ==")}`,
+      '["ask"][0]["when"]',
     ],
     [
       "gives a rule an expression that does not parse",

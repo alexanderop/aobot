@@ -1,5 +1,6 @@
 import {
   type AcpClientMethod,
+  type ApprovalAnsweredBy,
   type AuditAction,
   BotId,
   ComputerAction,
@@ -16,10 +17,27 @@ import {
   type ToolName,
   workspaceRoot,
 } from "@aobot/domain";
-import { Context, Duration, Effect, Layer, Match, Option, Redacted, Result, Schema } from "effect";
-import { AuditLog, type AuditRowId, type Outcome } from "../audit/public.ts";
+import {
+  Context,
+  Duration,
+  Effect,
+  Exit,
+  Layer,
+  Match,
+  Option,
+  Redacted,
+  Result,
+  Schema,
+} from "effect";
+import {
+  AuditLog,
+  type AuditRowId,
+  type AuditWriteFailed,
+  type Decision,
+  type Outcome,
+} from "../audit/public.ts";
 import { Bots, isGranted } from "../bots/public.ts";
-import { Policy, Refused, Verdict } from "../policy/public.ts";
+import { type Allowed, Policy, Refused, Verdict } from "../policy/public.ts";
 import {
   type Computer,
   type ComputerActFailed,
@@ -35,8 +53,22 @@ import {
 } from "../../shared/tool-result.ts";
 import { redact, redactCommand, redactUrl } from "../../shared/redact.ts";
 import { actionFacts, hostOf } from "./action-facts.ts";
-import { ComputerControl, controlDoors } from "./control.ts";
-import { type ComputerFailure, failureOutcome, personAudit } from "./person-audit.ts";
+import {
+  type ActionChanged,
+  type AlreadySpent,
+  type AlreadyWaiting,
+  type Answered,
+  ApprovalRequests,
+  approvalRequests,
+  type DeclinedEarlier,
+  type HeldQuestion,
+  type LeftOpen,
+  type LedgerFailed,
+  type OpenApproval,
+  type OutcomeUnknown,
+} from "./approvals.ts";
+import { ComputerControl, controlDoors, type PersonHasControl } from "./control.ts";
+import { type ComputerFailure, failureOutcome, personAudit, singleUser } from "./person-audit.ts";
 import { fileTarget } from "./file-target.ts";
 import {
   endAttributes,
@@ -47,8 +79,9 @@ import {
 } from "./present.ts";
 import { snapshotStore } from "./snapshot-store.ts";
 import { spanEvent } from "./span-event.ts";
-import { secretRequests, SecretRequests } from "./secrets.ts";
-import { auditAction, type DirectAction, SecretRequest, ToolAction } from "./tool-action.ts";
+import { type AlreadyAsked, secretRequests, SecretRequests } from "./secrets.ts";
+import { auditAction, DirectAction, SecretRequest, ToolAction } from "./tool-action.ts";
+import { TurnRef } from "./turn.ts";
 import { FileTransfers, fileTransfers } from "./transfers.ts";
 
 /** Something an agent asked for that the gateway turned down. `detail` is already redacted. */
@@ -97,11 +130,12 @@ export const BotRequest = Schema.Union([
 export type BotRequest = typeof BotRequest.Type;
 
 /**
-The Bot a call says it is made for: one named by its id, or, from an `acp` CLI whose `aobot-bot` header
-is no Bot id, that header as it was written. Only a named Bot can have been granted anything.
+The Bot a call says it is made for: one named by its id, with the turn it is made in when the call says,
+or, from an `acp` CLI whose `aobot-bot` header is no Bot id, that header as it was written. Only a named
+Bot can have been granted anything, and only a call in a turn has a person to ask.
 */
 export const Claim = Schema.TaggedUnion({
-  Named: { bot: BotId },
+  Named: { bot: BotId, turn: Schema.optionalKey(TurnRef) },
   Unreadable: { header: Schema.String },
   Unnamed: {},
 });
@@ -139,6 +173,13 @@ const namedBot = Claim.match({
   Named: ({ bot }) => Option.some(bot),
   Unreadable: () => Option.none<BotId>(),
   Unnamed: () => Option.none<BotId>(),
+});
+
+/** The turn a call named, which a question to the person is asked in. */
+const turnOf = Claim.match({
+  Named: ({ turn }) => Option.fromUndefinedOr(turn),
+  Unreadable: () => Option.none<TurnRef>(),
+  Unnamed: () => Option.none<TurnRef>(),
 });
 
 /** How a refusal names the Bot a call claimed: its id, the header as written, or none. */
@@ -179,6 +220,46 @@ class RuleRefused extends Schema.TaggedError<RuleRefused>()("RuleRefused", {
   action: ToolAction,
   verdict: Refused,
 }) {}
+
+/**
+The ask rule `askRule` holds for `action`, on a page at `host`, which the allow rule `allowRule` allows:
+it runs only once the person says yes.
+*/
+class NeedsApproval extends Schema.TaggedError<NeedsApproval>()("NeedsApproval", {
+  action: DirectAction,
+  host: Schema.String,
+  allowRule: Schema.String,
+  askRule: Schema.String,
+}) {}
+
+/** An ask rule holds for an action from a call that names no turn, so there is no person to ask. */
+class NoOneToAsk extends Schema.TaggedError<NoOneToAsk>()("NoOneToAsk", {}) {}
+
+/** The person, or the time limit on their answer, said no to an asked action. */
+class Declined extends Schema.TaggedError<Declined>()("Declined", {
+  by: Schema.Literals(["person", "time limit"]),
+}) {}
+
+/** Why the gateway did not carry out a Bot's call: each is one `deny` row, and what the model reads. */
+type Denial =
+  | NotGranted
+  | AlreadyAsked
+  | PersonHasControl
+  | UnknownRef
+  | UnknownPage
+  | RuleRefused
+  | OutsideWorkspace
+  | NoTextField
+  | NoSite
+  | NoOneToAsk
+  | AlreadyWaiting
+  | Declined
+  | DeclinedEarlier
+  | OutcomeUnknown
+  | ActionChanged
+  | AlreadySpent
+  | LedgerFailed
+  | AuditWriteFailed;
 
 /** How much of a failed rule's error a deny row keeps. */
 const ruleErrorLimit = 500;
@@ -269,12 +350,41 @@ function notGrantedAnswer(action: ToolName, claim: Claim): string {
   return `${action} did not run: it is not granted to ${claimedName(claim)}. Use only the tools your instructions name.`;
 }
 
+/** What the model reads when a row of what it asked for could not be written. */
+function unrecordedAnswer(action: ToolName): string {
+  return `${action} did not run: it could not be recorded, and nothing runs unrecorded.`;
+}
+
 /** What the model reads when it asks for a secret while its last request still waits. */
 const alreadyAskedAnswer =
   "request_secret did not run: you already asked your person for a secret, and they have not answered yet. Wait for that answer before asking again.";
 
 /** How long a Bot's request for a secret waits for its person. */
 export const secretWaitLimit = Duration.minutes(10);
+
+/** How long an action a rule asks the person about waits for their answer, which is no after it. */
+export const approvalWaitLimit = Duration.minutes(10);
+
+/** Why a call ended early: the person stopped the turn it was made in. */
+const turnStopped = "the turn was stopped";
+
+/** Why a question an earlier run left open was answered no and refused at start-up. */
+const serverStopped = "the server stopped" satisfies ApprovalAnsweredBy;
+
+/** What a Bot is told after its person, or the time limit, said no. */
+const holdOff =
+  "Do not try it, or another way to do it, until they write to you; tell them it did not run.";
+
+/** Why an asked action did not run after a no, by who said it: its deny row's reason, and why the model reads. */
+const declined: Readonly<
+  Record<Answered["by"], { readonly reason: string; readonly why: string }>
+> = {
+  person: { reason: "declined", why: "your person said no" },
+  "time limit": {
+    reason: "no answer",
+    why: `your person did not answer within ${Duration.format(approvalWaitLimit)}, which counts as no`,
+  },
+};
 
 /** How much of the field a Bot named for its secret its audit rows keep. */
 const fieldLimit = 200;
@@ -330,11 +440,11 @@ const forwarding = {
 } satisfies { readonly [Name in ActionName]: Forwarding };
 
 /**
-The longest a tool call runs in the gateway: a request for a secret that waits for its person, then the
-longest a forwarded action may take.
+The longest a tool call runs in the gateway: a request for a secret or an action a rule asks about, which
+waits for its person, then the longest a forwarded action may take.
 */
 export const longestToolCall = Duration.sum(
-  secretWaitLimit,
+  Duration.max(secretWaitLimit, approvalWaitLimit),
   Object.values(forwarding).reduce(
     (longest, { timeout }) => Duration.max(longest, timeout),
     Duration.zero,
@@ -374,13 +484,42 @@ const auditDetail = ToolAction.match({
   }),
 });
 
+/** A page element as a question names it, such as `the button "Delete" on shop.example`. */
+const elementOn = ({ role, name, url }: RefTarget) =>
+  `the ${role} ${JSON.stringify(name)} on ${hostOf(url) || "a page with no site"}`;
+
+/**
+The question a person is asked about an action: worded by the server from the action as it resolved, and
+showing what they approve as the Bot wrote it, the whole command, address or text. Only the person's own
+page sees it, never an audit row, a log, a span or the conversation, so nothing in it is redacted or cut:
+a redacted command can hide the very part a rule asks about.
+*/
+const questionOf = DirectAction.match({
+  navigate: ({ url }) => `Open ${url}?`,
+  snapshot: () => "Read the page?",
+  click: ({ target }) => `Click ${elementOn(target)}?`,
+  type: ({ target, text }) => `Type ${JSON.stringify(text)} into ${elementOn(target)}?`,
+  press: ({ target, key }) => `Press ${key} on ${elementOn(target)}?`,
+  run: ({ command }) => `Run \`${command}\`?`,
+  read_file: ({ path }) => `Read the file ${path}?`,
+  write_file: ({ path, contents }) =>
+    `Write ${new TextEncoder().encode(contents).length} bytes to the file ${path}?`,
+  list_files: ({ path }) => `List the files in ${path}?`,
+});
+
+/**
+What an audit row's `detail` holds, as a record: lint refuses spreading `Schema.JsonObject`, an interface
+it cannot tell from a class instance.
+*/
+type Detail = Readonly<Record<string, Schema.Json>>;
+
 /** Why a forwarded call did not come back with a result. */
 type ForwardFailure = ComputerFailure | ToolTimedOut;
 
 /** What a forwarded call became: its outcome row, and what the model is told. */
 interface Settled {
   readonly outcome: Outcome;
-  readonly detail: Readonly<Record<string, Schema.Json>>;
+  readonly detail: Detail;
   readonly answer: Result.Result<string, ToolFailed>;
 }
 
@@ -433,8 +572,9 @@ function settle(
 /**
 The {@link Gateway}: one audit row per decision, and one outcome row per allowed call. The same layer
 provides {@link ComputerControl}, so a person's take and every Bot's actions meet at the computer's one
-door, {@link FileTransfers}, so a person's files are audited in the same trail, and {@link SecretRequests},
-where a person answers the secret a Bot asked for.
+door, {@link FileTransfers}, so a person's files are audited in the same trail, {@link SecretRequests},
+where a person answers the secret a Bot asked for, and {@link ApprovalRequests}, where they answer an
+action a rule asks them about.
 */
 export const gatewayLayer = Layer.effectContext(
   Effect.gen(function* () {
@@ -447,6 +587,31 @@ export const gatewayLayer = Layer.effectContext(
     const doors = yield* controlDoors;
     const transfers = yield* fileTransfers;
     const secrets = yield* secretRequests;
+    const approvals = yield* approvalRequests;
+
+    /** A row the deployment writes at start-up to close a question an earlier run left open. */
+    const byDeployment = (decision: Decision, action: AuditAction, detail: Schema.JsonObject) =>
+      audit.record({
+        traceId: Option.none(),
+        initiatorKind: "deployment",
+        actorId: singleUser,
+        decision,
+        action,
+        detail,
+      });
+
+    const closeInTrail = ({ approval, bot, tool, rule, answered }: LeftOpen) =>
+      Effect.andThen(
+        answered
+          ? Effect.void
+          : byDeployment("answered", "approval.answered", {
+              bot,
+              approval,
+              answer: "no",
+              by: serverStopped,
+            }),
+        byDeployment("deny", auditAction(tool), { bot, rule, approval, reason: serverStopped }),
+      );
 
     // Before anything is forwarded: a call an earlier run allowed and never heard back from is
     // recorded as unknown, never run again.
@@ -456,6 +621,16 @@ export const gatewayLayer = Layer.effectContext(
       yield* Effect.logWarning(
         "Allowed calls from an earlier run had no outcome; recorded unknown",
       ).pipe(Effect.annotateLogs({ calls: unfinished }));
+    }
+
+    // Before any question is asked: one an earlier run left open, still waiting for the person or with
+    // its yes never spent, is answered no and refused, so every ask row in the trail is closed.
+    const leftOpen = yield* approvals.closeLeftOpen(closeInTrail);
+
+    if (leftOpen.length > 0) {
+      yield* Effect.logWarning(
+        "Questions from an earlier run were left open; answered no and refused",
+      ).pipe(Effect.annotateLogs({ questions: leftOpen.length }));
     }
 
     const refuse = Effect.fn("Gateway.refuse")(function* (refusal: Refusal) {
@@ -585,82 +760,99 @@ export const gatewayLayer = Layer.effectContext(
     };
 
     /**
-    The allow rule that allows `action`, or a {@link RuleRefused}. A rule that failed is logged by its name
-    and list only, never its error, which can echo what the action holds. A refusal's deny row keeps the
-    error of every rule that failed, capped; an allowed action's allow rules that failed are only logged.
+    The verdict that allows `bot` taking `action` on a page at `host`, naming the ask rule that asks the
+    person first when one holds, or a {@link RuleRefused}. A rule that failed is logged by its name and
+    list only, never its error, which can echo what the action holds. A refusal's deny row keeps the error
+    of every rule that failed, capped; an allowed action's rules that failed are only logged.
     */
-    const allowedBy = (action: ToolAction, verdict: Verdict) => {
-      const failed = (list: "deny" | "allow") => (rule: string) =>
+    const allowedBy = (
+      bot: BotId,
+      action: ToolAction,
+      host: string,
+    ): Effect.Effect<Allowed, RuleRefused> => {
+      const failed = (list: "deny" | "allow" | "ask", rule: string) =>
         Effect.logWarning("A rule failed while it was checked").pipe(
           Effect.annotateLogs({ rule, list, action: action.action }),
         );
 
-      const failedAllowRules = (broken: ReadonlyArray<{ readonly rule: string }>) =>
-        Effect.forEach(broken, ({ rule }) => failed("allow")(rule), { discard: true });
+      const failedRules = (broken: ReadonlyArray<{ readonly rule: string }>) =>
+        Effect.forEach(broken, ({ rule }) => failed("allow", rule), { discard: true });
 
       const refused = (verdict: Refused) => Effect.fail(new RuleRefused({ action, verdict }));
 
-      return Verdict.match(verdict, {
-        Allowed: ({ rule, broken }) => Effect.as(failedAllowRules(broken), rule),
+      return Verdict.match(policy.judge(actionFacts(bot, action, host)), {
+        Allowed: (allowed) =>
+          failedRules(allowed.broken).pipe(
+            Effect.andThen(
+              Option.match(
+                Option.filter(allowed.ask, (ask) => ask.failed),
+                {
+                  onNone: () => Effect.void,
+                  onSome: (ask) => failed("ask", ask.rule),
+                },
+              ),
+            ),
+            Effect.as(allowed),
+          ),
         Denied: refused,
-        DenyRuleFailed: (failure) => Effect.andThen(failed("deny")(failure.rule), refused(failure)),
-        NoneAllowed: (none) => Effect.andThen(failedAllowRules(none.broken), refused(none)),
+        DenyRuleFailed: (failure) => Effect.andThen(failed("deny", failure.rule), refused(failure)),
+        NoneAllowed: (none) => Effect.andThen(failedRules(none.broken), refused(none)),
       });
     };
 
-    /** Records a `deny` row as `audited` and tells the model `answer`. */
+    /** Writes a refusal's `deny` row, and only logs it when it cannot be written: the refusal stands. */
+    type DenyRow = (audited: AuditAction, detail: Schema.JsonObject) => Effect.Effect<void>;
+
+    /** Records a `deny` row as `audited` with `write` and tells the model `answer`. */
     const denyAs = Effect.fnUntraced(function* (
       audited: AuditAction,
       detail: Schema.JsonObject,
       answer: string,
+      write: DenyRow = rows.deny,
     ) {
       yield* Effect.annotateCurrentSpan({ "gateway.decision": "deny", "gateway.outcome": "deny" });
-      yield* rows.deny(audited, detail);
+      yield* write(audited, detail);
 
       return yield* new ToolFailed({ message: answer });
     });
 
-    /** Records a `deny` row for the tool `action` and tells the model `answer`. */
-    const deny = (action: ToolName, detail: Schema.JsonObject, answer: string) =>
-      denyAs(auditAction(action), detail, answer);
-
-    /** Writes the `allow` row for `action` as `audited`, or tells the model it did not run. */
-    const recordAllowed = (
-      tool: ToolName,
-      audited: AuditAction,
-      detail: Schema.JsonObject,
-    ): Effect.Effect<AuditRowId, ToolFailed> =>
-      rows.decide("allow", audited, detail).pipe(
-        Effect.tapError((error) =>
-          Effect.logError(
-            "An audit row could not be written, so the action was not forwarded",
-          ).pipe(Effect.annotateLogs({ action: audited, reason: error.message })),
-        ),
-        Effect.mapError(
-          () =>
-            new ToolFailed({
-              message: `${tool} did not run: it could not be recorded, and nothing runs unrecorded.`,
-            }),
-        ),
-      );
-
     /**
-    Judges `action` on a page at `host` by the rules and writes its `allow` row: the rule that allowed it,
-    and that row, or why it is refused.
+    Writes the `decision` row as `audited`; the action does not go ahead when it fails. Once the person is
+    asked, that is refused like any refusal after asking, so a `deny` row closes the question.
     */
-    const decide = Effect.fnUntraced(function* (bot: BotId, action: ToolAction, host: string) {
-      const rule = yield* allowedBy(action, policy.judge(actionFacts(bot, action, host)));
+    const record = (decision: Decision, audited: AuditAction, detail: Schema.JsonObject) =>
+      rows
+        .decide(decision, audited, detail)
+        .pipe(
+          Effect.tapError((error) =>
+            Effect.logError(
+              "An audit row could not be written, so the action was not forwarded",
+            ).pipe(Effect.annotateLogs({ action: audited, decision, reason: error.message })),
+          ),
+        );
 
-      const allowRow = yield* recordAllowed(action.action, auditAction(action.action), {
+    /** The `allow` row of `action`, allowed by the allow rule `allowRule`, with `more` in its detail. */
+    const allowRow = (bot: BotId, action: ToolAction, allowRule: string, more: Detail) =>
+      record("allow", auditAction(action.action), {
         bot,
         ...auditDetail(action),
-        rule,
+        rule: allowRule,
+        ...more,
       });
 
-      yield* Effect.annotateCurrentSpan({ "gateway.decision": "allow", "gateway.rule": rule });
+    /** Marks the call's span as allowed by the allow rule `allowRule`. */
+    const allowedByRule = (allowRule: string) =>
+      Effect.annotateCurrentSpan({ "gateway.decision": "allow", "gateway.rule": allowRule });
 
-      return { rule, allowRow };
-    });
+    /**
+    Writes the `allow` row of `action`, allowed by the allow rule `allowRule`, with `more` in its detail.
+    When it fails, the model is told, and the call has no decision.
+    */
+    const allow = (bot: BotId, action: ToolAction, allowRule: string, more: Detail) =>
+      allowRow(bot, action, allowRule, more).pipe(
+        Effect.mapError(() => new ToolFailed({ message: unrecordedAnswer(action.action) })),
+        Effect.tap(allowedByRule(allowRule)),
+      );
 
     /** Forwards `action` for `tool`, writes its outcome row on `allowRow`, and answers what the model reads. */
     const forwardAndSettle = Effect.fnUntraced(function* (
@@ -675,9 +867,7 @@ export const gatewayLayer = Layer.effectContext(
         return yield* forward(computer, bot, action).pipe(toolResult(forwarding[action.action]));
       }).pipe(
         Effect.result,
-        Effect.onInterrupt(() =>
-          rows.settle(allowRow, "unknown", { bot, reason: "the turn was stopped" }),
-        ),
+        Effect.onInterrupt(() => rows.settle(allowRow, "unknown", { bot, reason: turnStopped })),
       );
 
       const settled = settle(action.action, tool, forwarded);
@@ -687,30 +877,259 @@ export const gatewayLayer = Layer.effectContext(
       return yield* Effect.fromResult(settled.answer);
     });
 
+    /**
+    Resolves `request`, judges it by the rules, writes its `allow` row and forwards it. An action an ask
+    rule holds for leaves the door as {@link NeedsApproval}, before any row is written.
+    */
     const carryOut = Effect.fnUntraced(function* (bot: BotId, request: DirectRequest) {
       // A ref is resolved before any rule, so the rules judge the element the server's snapshot names,
       // and a ref that does not resolve is denied for that. A path outside the workspace is denied here;
       // the computer still confines every path itself.
       const { action, host } = yield* resolve(bot, request);
-      const { allowRow } = yield* decide(bot, action, host);
+
+      const allowed = yield* allowedBy(bot, action, host);
+
+      if (Option.isSome(allowed.ask)) {
+        return yield* new NeedsApproval({
+          action,
+          host,
+          allowRule: allowed.rule,
+          askRule: allowed.ask.value.rule,
+        });
+      }
+
+      const allowRow = yield* allow(bot, action, allowed.rule, {});
 
       return yield* forwardAndSettle(bot, action.action, action, allowRow);
     });
 
     /**
+    Writes the deny row of each refusal `self` fails with, `base` first in its detail, with `write`, and
+    tells the model why `tool` did not run. A `ToolFailed` is already what the model reads, so it passes on.
+    */
+    const denyRefusals =
+      (tool: ToolName, base: Detail, write: DenyRow = rows.deny) =>
+      <A, R>(self: Effect.Effect<A, ToolFailed | Denial, R>): Effect.Effect<A, ToolFailed, R> =>
+        Effect.catchTag(self, "ToolFailed", Effect.fail, refused(tool, base, write));
+
+    /** The deny row of `refusal`, `base` first in its detail, written with `write`, and why `tool` did not run. */
+    const refused = (tool: ToolName, base: Detail, write: DenyRow) => {
+      const deny = (detail: Detail, answer: string) =>
+        denyAs(auditAction(tool), { ...base, ...detail }, answer, write);
+
+      const notRun = (why: string) => `${tool} did not run: ${why}.`;
+
+      const unrecorded = () => deny({ reason: "not recorded" }, unrecordedAnswer(tool));
+
+      return Match.typeTags<Denial, Effect.Effect<never, ToolFailed>>()({
+        AlreadyAsked: () => deny({ reason: "already asked" }, alreadyAskedAnswer),
+        NotGranted: ({ claim }) =>
+          deny({ reason: `not granted to ${claimedName(claim)}` }, notGrantedAnswer(tool, claim)),
+        PersonHasControl: () =>
+          spanEvent("control.refused").pipe(
+            Effect.andThen(deny({ reason: "a person has control" }, personHasControlAnswer(tool))),
+          ),
+        UnknownRef: (unknown) =>
+          deny({ ref: unknown.ref, reason: unknown.reason }, unknownRefAnswer(tool, unknown)),
+        UnknownPage: () => deny({ reason: unreadSnapshot }, unknownPageAnswer(tool)),
+        RuleRefused: ({ action, verdict }) => {
+          const { detail, why } = ruleRefusal(verdict);
+
+          return Effect.andThen(
+            Refused.guards.NoneAllowed(verdict)
+              ? Effect.void
+              : Effect.annotateCurrentSpan({ "gateway.rule": verdict.rule }),
+            deny({ ...auditDetail(action), ...detail }, ruleRefusedAnswer(tool, why)),
+          );
+        },
+        OutsideWorkspace: ({ action }) =>
+          deny(
+            { ...fileTarget(action.path), reason: "outside workspace" },
+            outsideWorkspaceAnswer(action),
+          ),
+        NoTextField: ({ action }) =>
+          deny({ ...auditDetail(action), reason: "not a text field" }, noTextFieldAnswer(action)),
+        NoSite: ({ action }) =>
+          deny({ ...auditDetail(action), reason: "no site" }, noSiteAnswer(action)),
+        NoOneToAsk: () =>
+          deny(
+            { reason: "no one to ask" },
+            notRun(
+              "a rule asks your person first, and this call came from no conversation they could answer in",
+            ),
+          ),
+        AlreadyWaiting: () =>
+          deny(
+            { reason: "already waiting" },
+            notRun(
+              "you already asked your person and they have not answered. Wait for that answer",
+            ),
+          ),
+        Declined: ({ by }) =>
+          deny({ reason: declined[by].reason }, `${notRun(declined[by].why)} ${holdOff}`),
+        DeclinedEarlier: () =>
+          deny(
+            { reason: "declined earlier" },
+            notRun(
+              "your person already said no to this in this conversation. Do not ask again until they write to you",
+            ),
+          ),
+        OutcomeUnknown: () =>
+          deny(
+            { reason: "outcome unknown" },
+            notRun(
+              "an action like it that your person approved was started, and its turn ended before you were told what became of it, so whether it happened is unknown, and it was not run again. Check what became of it, for example with ls or a snapshot, before asking again",
+            ),
+          ),
+        ActionChanged: ({ action }) =>
+          deny(
+            { ...auditDetail(action), reason: "action changed" },
+            notRun(
+              "what it acts on changed after your person answered, so their answer does not cover it. Take a snapshot and ask again",
+            ),
+          ),
+        AlreadySpent: () =>
+          deny(
+            { reason: "already spent" },
+            notRun("your person's yes was already used once. Ask again"),
+          ),
+        LedgerFailed: unrecorded,
+        AuditWriteFailed: unrecorded,
+      });
+    };
+
+    /**
+    Writes the `deny` row that ends `approval` without its action, in one write with lapsing it. When that
+    fails, the question stays open in the ledger, and the next start-up closes it in the trail.
+    */
+    const closing =
+      (approval: OpenApproval): DenyRow =>
+      (audited, detail) =>
+        approval
+          .close(rows.decide("deny", audited, detail))
+          .pipe(
+            Effect.ignore({ log: "Error", message: "A refused question could not be closed" }),
+            Effect.annotateLogs({ action: audited, approval: approval.id }),
+          );
+
+    /**
+    Shows `question` to the person and takes their answer to `approval`, in a span of its own that names
+    the ask rule `askRule`, the answer and who gave it. A turn stopped meanwhile answers no.
+    */
+    const askPerson = (bot: BotId, askRule: string, approval: OpenApproval, question: string) =>
+      approval
+        .ask(question, approvalWaitLimit, ({ answer, by }) =>
+          record("answered", "approval.answered", { bot, approval: approval.id, answer, by }),
+        )
+        .pipe(
+          Effect.tap(({ answer, by }) =>
+            Effect.annotateCurrentSpan({ "approval.answer": answer, "approval.by": by }),
+          ),
+          Effect.onInterrupt(() =>
+            Effect.annotateCurrentSpan({ "approval.answer": "no", "approval.by": turnStopped }),
+          ),
+          Effect.withSpan("Gateway.awaitApproval", { attributes: { "gateway.rule": askRule } }),
+        );
+
+    /**
+    Carries out `request` once its person said yes to `approval`, only as the action they were asked
+    about, and once: its `allow` row names the allow rule `allowRule`, the ask rule `askRule` and the
+    approval. A turn stopped after the yes was spent leaves it spent, so the next run is told its outcome
+    is unknown.
+    */
+    const carryOutApproved = Effect.fnUntraced(function* (
+      bot: BotId,
+      request: DirectRequest,
+      approval: OpenApproval,
+      allowRule: string,
+      askRule: string,
+    ) {
+      const { action, host } = yield* resolve(bot, request);
+
+      const allowRowId = yield* approval.spend(
+        { bot, action, host },
+        allowRow(bot, action, allowRule, { asked: askRule, approval: approval.id }),
+      );
+
+      yield* allowedByRule(allowRule);
+
+      return yield* forwardAndSettle(bot, action.action, action, allowRowId).pipe(
+        Effect.onExit((exit) => (Exit.hasInterrupts(exit) ? Effect.void : approval.finish)),
+      );
+    });
+
+    /**
+    An action the ask rule of `needs` holds for, put to the person in the conversation of `turn`, outside
+    the door, before it runs once on their yes. From its `ask` row on, every way it ends is a row that
+    names the approval: its `allow` row, or a `deny` row, also when the turn is stopped before it ran.
+    */
+    const askThenCarryOut = (
+      bot: BotId,
+      turn: Option.Option<TurnRef>,
+      request: DirectRequest,
+      needs: NeedsApproval,
+      queued: boolean,
+    ) => {
+      const { action, host, askRule, allowRule } = needs;
+      const tool = action.action;
+      const asked = { bot, ...auditDetail(action), rule: askRule };
+
+      const answerThenCarryOut = Effect.fnUntraced(function* (approval: OpenApproval) {
+        const { answer, by } = yield* askPerson(bot, askRule, approval, questionOf(action));
+
+        if (answer === "no") return yield* new Declined({ by });
+
+        return yield* doors.admit(carryOutApproved(bot, request, approval, allowRule, askRule), {
+          queued,
+        });
+      });
+
+      return Effect.scoped(
+        Effect.gen(function* () {
+          if (Option.isNone(turn)) return yield* new NoOneToAsk();
+
+          const approval = yield* approvals.open(turn.value, askRule, { bot, action, host }, (id) =>
+            record("ask", auditAction(tool), { ...asked, approval: id, allowedBy: allowRule }),
+          );
+
+          yield* Effect.annotateCurrentSpan({
+            "gateway.decision": "ask",
+            "gateway.asked": askRule,
+          });
+
+          const named = { ...asked, approval: approval.id };
+          const closed = closing(approval);
+
+          return yield* answerThenCarryOut(approval).pipe(
+            Effect.onInterrupt(() =>
+              Effect.flatMap(approval.spent, (spent) =>
+                spent ? Effect.void : closed(auditAction(tool), { ...named, reason: turnStopped }),
+              ),
+            ),
+            denyRefusals(tool, named, closed),
+          );
+        }),
+      ).pipe(denyRefusals(tool, asked));
+    };
+
+    /**
     Types what the person gave for `request` into its field, through the door, as `secret.supplied` with
     the secret's length. A person who holds the computer by now keeps it, and nothing is typed.
     */
-    const supply = (bot: BotId, request: SecretRequest, secret: SecretValue, rule: string) =>
+    const supply = (bot: BotId, request: SecretRequest, secret: SecretValue, allowRule: string) =>
       doors
         .admit(
           Effect.gen(function* () {
-            const allowRow = yield* recordAllowed("request_secret", "secret.supplied", {
+            const allowRow = yield* record("allow", "secret.supplied", {
               bot,
               ...auditDetail(request),
               chars: Redacted.value(secret).length,
-              rule,
-            });
+              rule: allowRule,
+            }).pipe(
+              Effect.mapError(
+                () => new ToolFailed({ message: unrecordedAnswer("request_secret") }),
+              ),
+            );
 
             const page = yield* forwardAndSettle(
               bot,
@@ -743,14 +1162,16 @@ export const gatewayLayer = Layer.effectContext(
     action, and its `secret.requested` row written; only then is it shown to the person, as its field on
     the host of its page, and it waits for their answer outside the door, so a person can take the
     computer meanwhile. Its row's outcome says how the person answered, and what they typed is forwarded
-    as `type_secret`, through the door again.
+    as `type_secret`, through the door again. Under an ask rule, the secret card is the person's question
+    in the conversation of `turn`: it holds that conversation as an approval card would, and their no to
+    it, or no answer, is a no to that rule for the rest of the run.
     */
-    const askForSecret = (bot: BotId, ref: string, field: string) =>
+    const askForSecret = (bot: BotId, turn: Option.Option<TurnRef>, ref: string, field: string) =>
       Effect.scoped(
         Effect.gen(function* () {
           const open = yield* secrets.open(bot);
 
-          const { action, host, allowRow, rule } = yield* doors.admit(
+          const { action, host, allowRow, allowRule, question } = yield* doors.admit(
             Effect.gen(function* () {
               const asked = yield* onElement(bot, ref, (target): SecretRequest => ({
                 action: "request_secret",
@@ -764,21 +1185,63 @@ export const gatewayLayer = Layer.effectContext(
 
               if (asked.host === "") return yield* new NoSite({ action: asked.action });
 
-              return { ...asked, ...(yield* decide(bot, asked.action, asked.host)) };
+              const allowed = yield* allowedBy(bot, asked.action, asked.host);
+              const askRule = Option.map(allowed.ask, ({ rule }) => rule);
+
+              const question =
+                Option.isSome(askRule) && Option.isSome(turn)
+                  ? Option.some(
+                      yield* approvals.hold(turn.value, askRule.value).pipe(
+                        denyRefusals("request_secret", {
+                          bot,
+                          ...auditDetail(asked.action),
+                          rule: askRule.value,
+                        }),
+                      ),
+                    )
+                  : Option.none<HeldQuestion>();
+
+              // The secret card already asks the person, so an ask rule only names itself in the row.
+              const allowRow = yield* allow(
+                bot,
+                asked.action,
+                allowed.rule,
+                Option.match(askRule, {
+                  onNone: () => ({}),
+                  onSome: (named) => ({ asked: named }),
+                }),
+              );
+
+              return { ...asked, allowRow, allowRule: allowed.rule, question };
             }),
             { queued: false },
           );
 
           const answered = yield* open.ask(capText(field, fieldLimit), host).pipe(
             Effect.andThen(open.wait(secretWaitLimit)),
-            Effect.onInterrupt(() =>
-              rows.settle(allowRow, "failed", { bot, reason: "the turn was stopped" }),
-            ),
+            Effect.onInterrupt(() => rows.settle(allowRow, "failed", { bot, reason: turnStopped })),
           );
 
           const unanswered = (reason: string, message: string) =>
             Effect.annotateCurrentSpan({ "gateway.outcome": "failed" }).pipe(
-              Effect.andThen(rows.settle(allowRow, "failed", { bot, reason })),
+              Effect.andThen(
+                Option.match(question, {
+                  onNone: () => rows.settle(allowRow, "failed", { bot, reason }),
+                  onSome: (held) =>
+                    held
+                      .declined(
+                        bot,
+                        "request_secret",
+                        rows.outcome(allowRow, "failed", { bot, reason }),
+                      )
+                      .pipe(
+                        Effect.ignore({
+                          log: "Warn",
+                          message: "A declined secret could not be recorded",
+                        }),
+                      ),
+                }),
+              ),
               Effect.andThen(Effect.fail(new ToolFailed({ message }))),
             );
 
@@ -789,7 +1252,7 @@ export const gatewayLayer = Layer.effectContext(
               Supplied: ({ value }) =>
                 rows
                   .settle(allowRow, "succeeded", { bot })
-                  .pipe(Effect.andThen(supply(bot, action, value, rule))),
+                  .pipe(Effect.andThen(supply(bot, action, value, allowRule))),
             }),
           });
         }),
@@ -826,80 +1289,22 @@ export const gatewayLayer = Layer.effectContext(
         const granted = yield* grant(claim, request.action);
 
         return yield* BotRequest.guards.request_secret(request)
-          ? askForSecret(granted, request.ref, request.field)
-          : doors.admit(carryOut(granted, request), { queued });
-      }).pipe(
-        Effect.catchTags({
-          AlreadyAsked: () =>
-            deny(request.action, { bot, reason: "already asked" }, alreadyAskedAnswer),
-          NotGranted: (refused) =>
-            deny(
-              request.action,
-              { bot, reason: `not granted to ${claimedName(refused.claim)}` },
-              notGrantedAnswer(request.action, refused.claim),
-            ),
-          PersonHasControl: () =>
-            spanEvent("control.refused").pipe(
-              Effect.andThen(
-                deny(
-                  request.action,
-                  { bot, reason: "a person has control" },
-                  personHasControlAnswer(request.action),
+          ? askForSecret(granted, turnOf(claim), request.ref, request.field)
+          : doors
+              .admit(carryOut(granted, request), { queued })
+              .pipe(
+                Effect.catchTag("NeedsApproval", (needs) =>
+                  askThenCarryOut(granted, turnOf(claim), request, needs, queued),
                 ),
-              ),
-            ),
-          UnknownRef: (unknown) =>
-            deny(
-              request.action,
-              { bot, ref: unknown.ref, reason: unknown.reason },
-              unknownRefAnswer(request.action, unknown),
-            ),
-          UnknownPage: () =>
-            deny(
-              request.action,
-              { bot, reason: unreadSnapshot },
-              unknownPageAnswer(request.action),
-            ),
-          RuleRefused: ({ action, verdict }) => {
-            const { detail, why } = ruleRefusal(verdict);
-
-            return Effect.andThen(
-              Refused.guards.NoneAllowed(verdict)
-                ? Effect.void
-                : Effect.annotateCurrentSpan({ "gateway.rule": verdict.rule }),
-              deny(
-                action.action,
-                { bot, ...auditDetail(action), ...detail },
-                ruleRefusedAnswer(action.action, why),
-              ),
-            );
-          },
-          OutsideWorkspace: ({ action }) =>
-            deny(
-              action.action,
-              { bot, ...fileTarget(action.path), reason: "outside workspace" },
-              outsideWorkspaceAnswer(action),
-            ),
-          NoTextField: ({ action }) =>
-            deny(
-              action.action,
-              { bot, ...auditDetail(action), reason: "not a text field" },
-              noTextFieldAnswer(action),
-            ),
-          NoSite: ({ action }) =>
-            deny(
-              action.action,
-              { bot, ...auditDetail(action), reason: "no site" },
-              noSiteAnswer(action),
-            ),
-        }),
-      );
+              );
+      }).pipe(denyRefusals(request.action, { bot }));
     });
 
     return Context.make(Gateway, Gateway.of({ refuse, act })).pipe(
       Context.add(ComputerControl, doors.control),
       Context.add(FileTransfers, transfers),
       Context.add(SecretRequests, secrets.requests),
+      Context.add(ApprovalRequests, approvals.requests),
     );
   }),
 );

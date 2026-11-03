@@ -27,6 +27,16 @@ export {
   isDecision,
 } from "./audit.ts";
 
+export {
+  answerLabels,
+  ApprovalAnswer,
+  ApprovalAnsweredBy,
+  ApprovalId,
+  ApprovalRpcs,
+  NoApprovalWaiting,
+  PendingApproval,
+} from "./approval-rpcs.ts";
+
 export { BotRpcs, BotSummary, ToolName, UnknownBot } from "./bot.ts";
 
 export { BotId, ConversationId, MessageId, RunId, ToolCallId } from "./ids.ts";

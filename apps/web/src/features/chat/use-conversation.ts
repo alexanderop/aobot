@@ -2,9 +2,9 @@ import { useAtomMount, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { MessageId } from "@aobot/domain";
 import type { BotId, BotSummary, ConversationId } from "@aobot/domain";
 import { Option } from "effect";
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { conversation } from "./conversation.ts";
-import { ConversationStatus, isRunning, usesComputer } from "./conversation-state.ts";
+import { ConversationStatus, isRunning, runningTurn, usesComputer } from "./conversation-state.ts";
 import type { FailureCode, TranscriptItem, Unsent } from "./conversation-state.ts";
 
 /** What went wrong with the last attempt, in words the person can read. */
@@ -20,6 +20,8 @@ export interface UseConversation {
   /** Messages and tool calls, in the order they happened. */
   readonly transcript: ReadonlyArray<TranscriptItem>;
   readonly isRunning: boolean;
+  /** The person's message the turn in flight answers, which names it; none while nothing runs. */
+  readonly turn: Option.Option<MessageId>;
   /** Whether the Bot uses its computer this turn, as {@link usesComputer} decides. */
   readonly usesComputer: boolean;
   readonly error: Option.Option<ConversationError>;
@@ -41,6 +43,7 @@ export function useConversation(id: ConversationId, botId: BotId): UseConversati
   const sendMessage = useAtomSet(conversation.send(id));
   const stopRun = useAtomSet(conversation.stop(id));
   const running = isRunning(state);
+  const turn = useMemo(() => runningTurn(state), [state]);
   const ready = Option.isSome(state.bot);
 
   const send = useCallback(
@@ -63,6 +66,7 @@ export function useConversation(id: ConversationId, botId: BotId): UseConversati
     bot: state.bot,
     transcript: state.transcript,
     isRunning: running,
+    turn,
     usesComputer: usesComputer(state),
     error: ConversationStatus.$match(state.status, {
       Idle: () => Option.none(),

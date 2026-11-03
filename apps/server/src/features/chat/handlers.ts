@@ -151,7 +151,13 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
             isStopped
               ? Stream.fail(new TurnStopped())
               : agent
-                  .run({ bot: bot.id, instructions: turnInstructions(bot), history })
+                  .run({
+                    bot: bot.id,
+                    conversation: conversationId,
+                    run: ids.runId,
+                    instructions: turnInstructions(bot),
+                    history,
+                  })
                   .pipe(
                     Stream.interruptWhen(
                       Effect.andThen(Deferred.await(stopped), Effect.fail(new TurnStopped())),

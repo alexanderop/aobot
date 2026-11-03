@@ -1,4 +1,4 @@
-import { BotId, MessageId } from "@aobot/domain";
+import { BotId, ConversationId, RunId, MessageId } from "@aobot/domain";
 import { describe, expect, it } from "@effect/vitest";
 import { Duration, Effect, Layer, Option, Redacted, Ref, Schema, Stream } from "effect";
 import { Tool, Toolkit } from "effect/ai";
@@ -37,6 +37,8 @@ const page = `- generic [ref=e1]:
 
 const turn: Turn = {
   bot: BotId.make("assistant"),
+  conversation: ConversationId.make("conversation-1"),
+  run: RunId.make("run-1"),
   instructions: "Answer briefly.",
   history: [{ id: MessageId.make("message-1"), role: "user", text: "Weather in Vienna?" }],
 };

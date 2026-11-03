@@ -1,8 +1,10 @@
 import {
+  ConversationId,
   NoSecretRequested,
   type PageAction,
   type PageRead,
   type PendingSecret,
+  RunId,
   SecretAnswer,
   SecretRequestId,
 } from "@aobot/domain";
@@ -25,6 +27,7 @@ import { TestClock } from "effect/testing";
 import { recordedSpans } from "../../shared/testing/recorded-spans.ts";
 import { assistant } from "../bots/testing/test-bots.ts";
 import { policyFrom } from "../policy/testing/test-policy.ts";
+import { ApprovalRequests } from "./approvals.ts";
 import { ComputerControl } from "./control.ts";
 import { Claim, Gateway } from "./gateway.ts";
 import { botHeader, gatewayMcpLayer } from "./mcp.ts";
@@ -102,6 +105,32 @@ const shownNow = SecretRequests.use((secrets) =>
   secrets.pending(assistant.id).pipe(Stream.runHead, Effect.map(Option.flatten)),
 );
 
+const conversation = ConversationId.make("conversation-1");
+
+/** The assistant's call in run `run` of the conversation. */
+const inRun = (run: string) =>
+  Claim.cases.Named.make({ bot: assistant.id, turn: { conversation, run: RunId.make(run) } });
+
+const inTurn = inRun("run-1");
+
+const askBeforePassword = policyFrom(`deny: []
+allow:
+  - name: granted-tools
+    when: "true"
+ask:
+  - name: ask-before-password
+    when: element.name == "Password"
+`);
+
+/** The approval card the person is shown in the conversation now, if any. */
+const approvalShownNow = ApprovalRequests.use((approvals) =>
+  approvals.pending(conversation).pipe(Stream.runHead, Effect.map(Option.flatten)),
+);
+
+/** What the model reads of a call under `ask-before-password` after a no to that rule in its run. */
+const declinedEarlier = (tool: string) =>
+  `${tool} did not run: your person already said no to this in this conversation. Do not ask again until they write to you.`;
+
 describe("request_secret", () => {
   it.effect("types what the person supplied into the field, and no row or span holds it", () =>
     Effect.gen(function* () {
@@ -151,6 +180,182 @@ describe("request_secret", () => {
       expect(JSON.stringify(recorded)).not.toContain(password);
       expect(JSON.stringify(yield* trail)).not.toContain(password);
     }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("asks no second question of a secret an ask rule holds for, and names the rule", () =>
+    Effect.gen(function* () {
+      const computer = signInComputer();
+
+      const policy = policyFrom(`deny: []
+allow:
+  - name: granted-tools
+    when: "true"
+ask:
+  - name: ask-for-secrets
+    when: tool.name == "request_secret"
+`);
+
+      yield* Effect.gen(function* () {
+        const asking = yield* readThenAsk;
+        yield* answerOnceShown(supplied);
+        yield* Fiber.join(asking);
+      }).pipe(Effect.provide(startGateway(computer.layer, policy)));
+
+      expect((yield* trail).filter(([row]) => row === "secret.requested · allow")).toEqual([
+        [
+          "secret.requested · allow",
+          {
+            bot: "assistant",
+            ref: "e3",
+            role: "textbox",
+            name: "Password",
+            host: "shop.example",
+            field: "the password for shop.example",
+            rule: "granted-tools",
+            asked: "ask-for-secrets",
+          },
+        ],
+      ]);
+      expect(computer.actions.at(-1)?.action).toBe("type_secret");
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("refuses a secret for a field its person said no to typing into, in that run", () =>
+    Effect.gen(function* () {
+      const computer = signInComputer();
+
+      const [refused, shownAfter] = yield* Effect.gen(function* () {
+        yield* Gateway.use((gateway) => gateway.act(inTurn, { action: "snapshot" }));
+
+        const typing = yield* Gateway.use((gateway) =>
+          Effect.forkChild(
+            Effect.result(gateway.act(inTurn, { action: "type", ref: "e3", text: "guess" })),
+          ),
+        );
+
+        yield* ApprovalRequests.use((approvals) =>
+          approvals.pending(conversation).pipe(
+            Stream.filter(Option.isSome),
+            Stream.runHead,
+            Effect.flatMap((shown) =>
+              approvals.answer(
+                conversation,
+                Option.getOrThrow(Option.flatten(shown)).approval,
+                "no",
+              ),
+            ),
+          ),
+        );
+        yield* Fiber.join(typing);
+
+        const refused = yield* Gateway.use((gateway) =>
+          Effect.flip(gateway.act(inTurn, askForPassword)),
+        );
+
+        return [refused, yield* shownNow] as const;
+      }).pipe(Effect.provide(startGateway(computer.layer, askBeforePassword)));
+
+      expect(refused.message).toBe(declinedEarlier("request_secret"));
+      expect(shownAfter).toEqual(Option.none());
+      expect((yield* trail).at(-1)).toEqual([
+        "secret.requested · deny",
+        {
+          bot: "assistant",
+          ref: "e3",
+          role: "textbox",
+          name: "Password",
+          host: "shop.example",
+          field: "the password for shop.example",
+          rule: "ask-before-password",
+          reason: "declined earlier",
+        },
+      ]);
+      expect(computer.actions.map((action) => action.action)).toEqual(["snapshot"]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("shows no approval card beside a secret card an ask rule holds for", () =>
+    Effect.gen(function* () {
+      const computer = signInComputer();
+
+      const [refused, cardShown] = yield* Effect.gen(function* () {
+        yield* Gateway.use((gateway) => gateway.act(inTurn, { action: "snapshot" }));
+
+        const asking = yield* Gateway.use((gateway) =>
+          Effect.forkChild(gateway.act(inTurn, askForPassword)),
+        );
+
+        yield* untilShown;
+
+        const refused = yield* Gateway.use((gateway) =>
+          Effect.flip(gateway.act(inTurn, { action: "type", ref: "e3", text: "guess" })),
+        );
+
+        const cardShown = yield* approvalShownNow;
+
+        yield* answerOnceShown(supplied);
+        yield* Fiber.join(asking);
+
+        return [refused, cardShown] as const;
+      }).pipe(Effect.provide(startGateway(computer.layer, askBeforePassword)));
+
+      expect(refused.message).toBe(
+        "type did not run: you already asked your person and they have not answered. Wait for that answer.",
+      );
+      expect(cardShown).toEqual(Option.none());
+      expect(computer.actions.map(({ action }) => action)).toEqual(["snapshot", "type_secret"]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect.each([
+    [
+      "declines it",
+      (shown: PendingSecret) => answerTo(shown, SecretAnswer.cases.Declined.make({})),
+    ],
+    ["does not answer it in time", () => TestClock.adjust("10 minutes")],
+  ] as const)(
+    "takes a person who %s under an ask rule as a no to that rule for the rest of the run",
+    ([, unanswered]) =>
+      Effect.gen(function* () {
+        const computer = signInComputer();
+
+        const [secretAgain, typing, shownAfter, nextRun] = yield* Effect.gen(function* () {
+          yield* Gateway.use((gateway) => gateway.act(inTurn, { action: "snapshot" }));
+
+          const asking = yield* Gateway.use((gateway) =>
+            Effect.forkChild(Effect.result(gateway.act(inTurn, askForPassword))),
+          );
+
+          yield* unanswered(yield* untilShown);
+          yield* Fiber.join(asking);
+
+          const secretAgain = yield* Gateway.use((gateway) =>
+            Effect.flip(gateway.act(inTurn, askForPassword)),
+          );
+
+          const typing = yield* Gateway.use((gateway) =>
+            Effect.flip(gateway.act(inTurn, { action: "type", ref: "e3", text: "guess" })),
+          );
+
+          const shownAfter = [yield* shownNow, yield* approvalShownNow];
+
+          const askingNextRun = yield* Gateway.use((gateway) =>
+            Effect.forkChild(Effect.result(gateway.act(inRun("run-2"), askForPassword))),
+          );
+
+          const nextRun = yield* untilShown;
+          yield* answerTo(nextRun, supplied);
+          yield* Fiber.join(askingNextRun);
+
+          return [secretAgain, typing, shownAfter, nextRun] as const;
+        }).pipe(Effect.provide(startGateway(computer.layer, askBeforePassword)));
+
+        expect(secretAgain.message).toBe(declinedEarlier("request_secret"));
+        expect(typing.message).toBe(declinedEarlier("type"));
+        expect(shownAfter).toEqual([Option.none(), Option.none()]);
+        expect(nextRun.field).toBe("the password for shop.example");
+        expect(computer.actions.map(({ action }) => action)).toEqual(["snapshot", "type_secret"]);
+      }).pipe(Effect.provide(database)),
   );
 
   it.effect("takes no answer for another request than the one waiting", () =>

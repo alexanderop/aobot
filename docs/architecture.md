@@ -124,18 +124,21 @@ computer never hears of it, and the model reads:
 
 ## Rules that fail closed
 
-Security writes deny and allow rules in `rules.yaml` at the repository root (`RULES_FILE` points
+Security writes deny, allow and ask rules in `rules.yaml` at the repository root (`RULES_FILE` points
 elsewhere; Compose mounts it into the server next to `bots.yaml`). The grant decides which tools a Bot
 has; the rules narrow what it may do with them. Each rule has a name, which the audit row and the model's
 answer give, and a `when` in [CEL](https://cel.dev), through `@marcbachmann/cel-js`.
 
 ```yaml
 deny:
-  - name: no-rm-rf # lowercase letters, digits and dashes, unique across both lists
+  - name: no-rm-rf # lowercase letters, digits and dashes, unique across every list
     when: tool.name == "run" && command.contains("rm -rf")
 allow:
   - name: granted-tools
     when: "true"
+ask: # optional
+  - name: ask-before-delete
+    when: tool.name == "run" && command.contains("delete")
 ```
 
 A rule reads one record of facts about the action, declared once in `features/policy/facts.ts`, where the
@@ -167,14 +170,17 @@ The order in `Gateway.act` is grant, door, ref or path, rules, `allow` row, forw
 resolve is refused for that and never judged on an empty element. Then every deny rule in the order the
 file gives them: the first that holds refuses. Then every allow rule in order: the first that holds
 allows. Anything no allow rule allows is refused, so empty lists refuse everything; the server logs a
-warning at start-up when the allow list is empty.
+warning at start-up when the allow list is empty. Then every ask rule in order: the first that holds asks
+the person first (see [Asking the person](#asking-the-person)). An ask rule is read only for an action an
+allow rule allowed, so adding one never allows anything, and every action that runs is still allowed by
+an allow rule.
 
 It fails closed. A deny rule that fails while it is evaluated, such as
 `command == "" || int(command) > 0` on `ls`, refuses. An allow rule that fails allows nothing, and a
-later allow rule still can. A failed rule is logged by its name and list only, never its error, which can
-echo what the action holds. The error goes into the action's deny row, capped: a failed deny rule's as
-`error`, and when nothing allowed the action, each failed allow rule's as `failed: [{ rule, error }]`.
-When a later allow rule allows the action anyway, the errors of the allow rules that failed before it are
+later allow rule still can. An ask rule that fails asks the person. A failed rule is logged by its name
+and list only, never its error, which can echo what the action holds. The error goes into the action's
+deny row, capped: a failed deny rule's as `error`, and when nothing allowed the action, each failed allow
+rule's as `failed: [{ rule, error }]`. When a later allow rule allows the action anyway, the errors of the allow rules that failed before it are
 not kept; only their warnings are. A file that is missing, empty or not YAML, misses a list or misspells
 a key, gives a name that is not a slug or names two rules, or has a `when` that does not parse, names a
 field the facts do not have, does not answer `bool` (a `dyn` answer included), calls `matches`, or fails
@@ -219,7 +225,8 @@ there at all. Judging the page an action lands on is a follow-up (`docs/backlog/
 2. The server starts an agent turn on behalf of that Bot, with its instructions, which name the tools it
    was granted.
 3. The agent asks for a tool, for example `navigate`.
-4. The gateway checks the grant, then the rules, and writes one audit row either way.
+4. The gateway checks the grant, then the rules, and writes one audit row either way. When an ask rule
+   holds, it asks the person in the chat first and waits for their answer.
 5. Only on "yes", the gateway asks the person's computer to act, and never when its row could not be
    written. Every `allow` row then gets exactly one outcome row, `succeeded`, `failed` or `unknown`, so
    "allowed" never reads as "done". `unknown` means the server lost track, by a timeout or a restart; such a
@@ -442,6 +449,101 @@ writes it, keeps only the length of a value under a key that may hold a secret o
 output, in any spelling (`toolResult`, `tool_result`, `x-api-key`, `accessToken`), and every address in
 any other value loses its query values, fragment and userinfo.
 
+## Asking the person
+
+An ask rule makes an allowed action wait for the person's yes. The question is a card in the chat (see
+`docs/design.md`), never a modal, and the answer is part of the audit trail.
+
+**The turn names its conversation.** A tool call knows the conversation and the run it is made in: the
+`api` runtime puts them in the `ActingBot` claim, and the `acp` runtime sends them with the Bot on every MCP
+call, as the `aobot-conversation` and `aobot-run` headers next to `aobot-bot`. Every message the person
+writes starts a new run. A call that names no turn, such as one whose headers do not decode, has no person
+to ask, so an action an ask rule holds for is refused with `no one to ask`.
+
+**The gateway asks before anything runs.** An `Allowed` verdict names the allow rule, and the ask rule
+as `ask` when one holds. The action leaves the door before any row is written, and the gateway, in
+`gateway/approvals.ts`:
+
+1. Holds a question for the conversation. One waits per conversation at a time, so a second action is
+   refused with `already waiting` and gets no second card.
+2. Reads the ledger. A no to the same ask rule earlier in this run refuses it with `declined earlier`,
+   without a card. A yes an earlier run spent and never finished, as when the person stopped the turn or
+   the server stopped while the action ran, refuses it once with `outcome unknown`; the action is never
+   run again, and the next one gets a card.
+3. Writes `<tool> · ask` with the action's audit detail, `rule` (the ask rule), `allowedBy` and the
+   `approval` id, and the ledger row `asked`, in one transaction, then shows the card. `Approval.pending { conversation }`
+   streams it as `{ approval, tool, question }`. The server words the question from the action as it
+   resolved, and shows what the person approves as the Bot wrote it: the whole command, the address and
+   the text it would type (``Run `rm notes.txt`?``, `Click the button "Delete" on shop.example?`). The
+   question reaches only the person's own page, never an audit row, a log, a span or the conversation, so
+   it is neither redacted nor cut: `redactCommand` turns `API_TOKEN="$(find . -name notes.txt -delete)"`
+   into `API_TOKEN="[33 chars]"`, which would hide the very part an ask rule asks about. The audit rows
+   keep their redaction.
+4. Waits outside the door, at most ten minutes, in a `Gateway.awaitApproval` span with `gateway.rule`,
+   `approval.answer` and `approval.by`. `Approval.answer { conversation, approval, answer }` answers it;
+   an answer for another question, or one after the wait ended, fails with `NoApprovalWaiting`. Whoever
+   takes the card down first answers: the person, or the time limit, which answers no. A stopped turn
+   answers no too. `approval.answered · answered` records `{ bot, approval, answer, by }`, in one
+   transaction with the ledger's `yes` or `no`, with `by` one of `ApprovalAnsweredBy` in the domain
+   package: `person`, `time limit`, `the turn was stopped` or `the server stopped`.
+5. On no, writes `<tool> · deny` with `reason: "declined"` or `"no answer"`, and the model reads that its
+   person said no and not to try it another way until they write.
+6. On yes, resolves the request again through the door. The approval is bound to a digest of the action
+   as it resolved, the element a ref names and a file's contents included, so a ref that names another
+   element by now is refused with `action changed`. It then spends the approval and writes `<tool> ·
+   allow` naming the allow rule as `rule`, the ask rule as `asked` and the approval, in one transaction
+   a stopped turn cannot split, and forwards it once. An asked `run` waits for the command queue before it
+   is judged, so its card shows only once the commands asked for before it ran.
+
+**Every asked action closes in the trail.** From its `ask` row on, an asked action ends in one row that
+names its `approval`: its `allow` row, which an outcome row settles, or a `deny` row. A refusal after a
+yes (`action changed`, `a person has control`, a ref that no longer resolves) keeps the action as it
+resolves now. A turn stopped before the action ran, while the card was up or while the approved command
+waited its turn, writes a `deny` row with `reason: "the turn was stopped"`. Each `deny` row after the
+`ask` row is written in one transaction with lapsing the question when it is still `asked` or a `yes`
+not spent. A row that cannot be written once the person was asked, its answer or its `allow` row, is
+refused as `not recorded` the same way. A server that stopped while a question was open closes it at
+the next start-up, beside the sweep of `allow` rows without an outcome: an `asked` question gets
+`approval.answered` with `by: "the server stopped"`, and the question, or a yes never spent, a `deny` row
+with the same reason, both written by the deployment in one transaction with the ledger's move. A
+second start finds nothing left to close.
+
+**The ledger never runs ahead of the trail.** The ledger and the audit trail share one SQLite client, so
+every move of a ledger row commits in one `sql.withTransaction` with the audit rows that record it, or
+neither does: `approvalRequests` takes each move's rows as an argument, so no move can be written
+without them. A failed write leaves the row where it was. A question whose closing rows failed stays
+`asked` or `yes`, and the next start-up's sweep closes it with its own rows; one whose rows fail there
+too stays for the start after.
+
+The ledger is the `approvals` table, one row per question:
+`(id, conversation_id, run_id, bot_id, tool, rule, state)`, no action, digest or typed text; the Bot and
+the tool are kept only so a question a stopped server left open can be closed in the trail. A row only
+moves forward, each move one compare-and-set `UPDATE`: `asked → yes | no | lapsed`, `yes → spent |
+lapsed`, `spent → finished | told`. A trigger refuses any other change, and any delete. A yes is spent by
+moving it to `spent`, so a second spend finds nothing to move and is refused with `already spent`. A
+yes not spent when its question is refused, as after `action changed` or a stopped turn, moves to
+`lapsed` with the `deny` row, and so does a question still `asked` whose answer could not be recorded. The row
+moves to `finished` once the Bot was told what became of the action. A row left `spent` belongs to a run
+that stopped before that, and the next run's equivalent action moves it to `told` and is refused, once.
+
+"Equivalent" means the same ask rule. A no to `rm notes.txt` under `ask-before-rm` also covers
+`rm ./notes.txt`, for the rest of the run. That is coarse on purpose: a Bot cannot ask again under a new
+spelling, and the person writing again starts a new run.
+
+`request_secret` under an ask rule is not asked twice: the secret card already asks the person, so its
+`allow` row only names the ask rule as `asked`. The card is that rule's question in both directions. It
+holds the conversation's one question while it waits, so it is refused with `already waiting` while an
+approval card waits there, and an action under the same rule gets no approval card beside it, only
+`already waiting`. A no to that rule earlier in this run refuses it with `declined earlier`, so a Bot told
+no to typing into a field cannot put a secret card up for it. And declining the secret card, or not
+answering it within ten minutes, is a no to that rule: a ledger row `no` for the conversation, run and
+rule, written in one transaction with the request's `failed` outcome row, so a second secret card or an
+action under the rule is refused with `declined earlier` for the rest of the run.
+
+The wait is as long as a secret's, so `longestToolCall` covers both and the stall limit does not end the
+turn. The known gap is the same as for secrets: Codex stops waiting on an MCP call after two minutes
+without cancelling it, so a yes given later runs an action the Bot already read as failed.
+
 ## Gateway tools
 
 Every tool a Bot can be granted, in either runtime. The tool map test (`apps/server/src/features/gateway/tool-map.test.ts`)
@@ -612,6 +714,7 @@ const conversation = Atom.family((id: ConversationId) => /* fold ChatEvents into
 | `useBots()`                   | (none)                               | The Bots the server knows, as `bots.yaml` lists them, for the sidebar                                                                                                                        | E2-1 |
 | `useSelection()`              | (none)                               | The Bot and conversation the page has open, as the server confirmed it, and `pick` to open another Bot                                                                                       | E2-1 |
 | `useSecretRequest(call, bot)` | `useHumanInTheLoop`                  | What a `request_secret` card shows, with the request `Secret.pending` streams for the Bot, `supply`, which sends the typed secret over `Secret.answer` with that request's id, and `decline` | E2-3 |
+| `useApproval(id, turn)`       | `useHumanInTheLoop`, `useInterrupt`  | The approval card of the conversation: the question `Approval.pending` streams, the answer for the rest of its turn, and `choose`, which sends yes or no over `Approval.answer`              | E2-5 |
 | `useAuditTrail()`             | (none)                               | The audit rows the URL's filters let through, newest first, whether older ones are left, why the last page failed, `filter`, `loadMore` and `reload`, which reads the trail again            | E2-4 |
 
 The page opens the Bot and the conversation the URL names as `?bot=<id>&c=<id>`, or the first Bot in
@@ -743,8 +846,11 @@ reaches when it does not, until network limits (E5-3). These hold locally as muc
   in every spelling (IPv4-mapped IPv6, NAT64), and connects only to the address it checked.
 - **The audit trail cannot be rewritten.** A trigger refuses UPDATE and DELETE on audit rows, and an action
   whose audit row cannot be written does not run.
-- **An approval is spent once.** It is bound to the exact action, refused if that changes, never repeated
-  after a crash, and a "No" covers equivalent actions. Credentials, security settings and payments always go
+- **An approval is spent once.** It is bound to a digest of the action as it resolved and refused if that
+  changes, spent by one compare-and-set move in a ledger that only moves forward, never repeated after a
+  crash, closed in the audit trail however it ends, and a "No" covers every action under the same ask
+  rule, `request_secret` included, until the person writes again (see
+  [Asking the person](#asking-the-person)). Credentials, security settings and payments always go
   to the person, whatever the rules say (E2-6).
 - **An `acp` CLI names its own Bot.** Every MCP call carries the `aobot-bot` header the `acp` runtime
   set for the turn, and the gateway grants by it, so a process on the host that reaches `/mcp` can name

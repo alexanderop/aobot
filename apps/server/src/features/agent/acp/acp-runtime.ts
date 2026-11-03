@@ -16,7 +16,7 @@ import {
 } from "effect";
 import { HttpTraceContext } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { botHeader, Gateway, gatewayMcpName, longestToolCall } from "../../gateway/public.ts";
+import { Gateway, gatewayMcpName, longestToolCall, turnHeaders } from "../../gateway/public.ts";
 import {
   type AgentEvent,
   AgentRuntime,
@@ -214,8 +214,8 @@ export function layerAcp(options: AcpRuntimeOptions) {
 
         // The CLI sends these on every call to the gateway, so its tool calls are this turn's Bot's and
         // land in this turn's trace.
-        const turnHeaders = [
-          { name: botHeader, value: turn.bot },
+        const headers = [
+          ...turnHeaders(turn),
           ...Option.match(yield* Effect.option(Effect.currentSpan), {
             onNone: () => [],
             onSome: (span) => [
@@ -235,7 +235,7 @@ export function layerAcp(options: AcpRuntimeOptions) {
                     type: "http",
                     name: gatewayMcpName,
                     url: options.gatewayMcpUrl,
-                    headers: turnHeaders,
+                    headers,
                   },
                 ]
               : [],

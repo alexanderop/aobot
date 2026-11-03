@@ -59,7 +59,10 @@ in the app, previews and unread dots for E3-2, and the bottom bar for people (E3
 - **Rich text:** bold, bullet lists, line breaks render inside the bubble.
 - **Approval card:** a grey card with the question in muted bold text and one or more answer rows, each
   with a lettered key (`A`, `B`) in an accent square. Choosing one sends it as your reply and writes an
-  audit row.
+  audit row. Built in E2-5 below the transcript: the question the server worded from the action, with
+  the whole command, address or text as the Bot wrote it, wrapped and scrolling when long, rows `A Yes`
+  and `B No` on `--row-active`, disabled while the answer is on its way, why the server refused it in
+  `--danger`, and "You answered Yes" or "You answered No" for the rest of that turn only.
 - **Secret entry:** when a Bot asks for a password with `request_secret`, its card says what it asks for
   in the Bot's words, on the host of the page the server read ("Asks for the password on
   shop.example"), so a Bot cannot pass one site's field off as another's. Until the server shows the

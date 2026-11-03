@@ -2,6 +2,7 @@ export {
   AuditLog,
   auditLogLayer,
   type AuditRowId,
+  type AuditWriteFailed,
   type Decision,
   type Outcome,
 } from "./audit-log.ts";

@@ -1,10 +1,11 @@
-import { BotId, MessageId, ToolCallId } from "@aobot/domain";
+import { BotId, ConversationId, RunId, MessageId, ToolCallId } from "@aobot/domain";
 import { describe, expect, it } from "@effect/vitest";
 import { Duration, Effect, Fiber, Layer, Queue, Ref, Schema, Stream } from "effect";
 import { Tool, Toolkit } from "effect/ai";
 import { TestClock } from "effect/testing";
 import { AgentEvent, AgentRuntime, Stalled, StepLimit, type Turn } from "./agent-runtime.ts";
 import { layerApi } from "./api-runtime.ts";
+import { ActingBot, Claim } from "../gateway/public.ts";
 import { ModelStep } from "./testing/model-script.ts";
 import {
   replay,
@@ -36,6 +37,8 @@ const limits = { maxSteps: 8, stallTimeout: Duration.seconds(60) };
 
 const turn: Turn = {
   bot: BotId.make("assistant"),
+  conversation: ConversationId.make("conversation-1"),
+  run: RunId.make("run-1"),
   instructions: "Answer briefly.",
   history: [{ id: MessageId.make("message-1"), role: "user", text: "Say hi" }],
 };
@@ -189,6 +192,42 @@ describe("AgentRuntime (api)", () => {
         ),
       ),
   );
+
+  it.effect("calls each tool for the turn's Bot, in its conversation and run", () => {
+    const claims: Array<Claim> = [];
+
+    return Effect.gen(function* () {
+      yield* runTurn;
+
+      expect(claims).toEqual([
+        Claim.cases.Named.make({
+          bot: turn.bot,
+          turn: { conversation: turn.conversation, run: turn.run },
+        }),
+      ]);
+    }).pipe(
+      Effect.provide(
+        layerApi(PingToolkit, limits).pipe(
+          Layer.provide([
+            scriptedModel(
+              replay([
+                ModelStep.CallTools({ calls: [{ name: "ping", params: {} }] }),
+                ModelStep.Say({ words: ["Done"] }),
+              ]),
+            ),
+            PingToolkit.toLayer({
+              ping: () =>
+                Effect.gen(function* () {
+                  claims.push(yield* ActingBot);
+
+                  return "pong";
+                }),
+            }),
+          ]),
+        ),
+      ),
+    );
+  });
 
   it.effect("still stops a model that goes silent after a tool call it never finished", () =>
     Effect.gen(function* () {

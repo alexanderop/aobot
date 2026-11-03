@@ -1,7 +1,9 @@
+import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option } from "effect";
 import { SqlClient } from "effect/sql";
-import { AuditLog, type DecisionEntry } from "./audit-log.ts";
+import { AuditLog, auditLogLayer, type DecisionEntry } from "./audit-log.ts";
+import { auditMigrations, migrateAudit } from "./migrations.ts";
 import { testAuditDatabase } from "./testing/test-audit-database.ts";
 
 const entry = {
@@ -153,5 +155,71 @@ describe("AuditLog", () => {
         },
       ]);
     }).pipe(Effect.provide(testAuditDatabase)),
+  );
+
+  it.effect(
+    "keeps asking the person and their answer as decisions no outcome follows or settles",
+    () =>
+      Effect.gen(function* () {
+        const audit = yield* AuditLog;
+
+        const asked = yield* audit.record({ ...allow, decision: "ask", action: "run" });
+        yield* audit.record({ ...allow, decision: "answered", action: "approval.answered" });
+
+        const outcome = yield* Effect.flip(
+          audit.recordOutcome({
+            allowRow: asked,
+            initiatorKind: "person",
+            outcome: "succeeded",
+            detail: {},
+          }),
+        );
+
+        expect(outcome._tag).toBe("AuditWriteFailed");
+        expect(yield* audit.settleUnfinished).toBe(0);
+
+        expect((yield* auditRows).map((row) => [row["decision"], row["outcome_of"]])).toEqual([
+          ["ask", null],
+          ["answered", null],
+        ]);
+      }).pipe(Effect.provide(testAuditDatabase)),
+  );
+
+  it.effect(
+    "keeps every row a server before approvals wrote, each outcome after its allow row",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const { "0004_add_approval_rows": _added, ...before } = auditMigrations;
+
+        yield* SqliteMigrator.run({
+          table: "audit_migrations",
+          loader: SqliteMigrator.fromRecord(before),
+        });
+
+        const written = yield* Effect.gen(function* () {
+          const audit = yield* AuditLog;
+          const allowRow = yield* audit.record(allow);
+          yield* audit.recordOutcome({
+            allowRow,
+            initiatorKind: "person",
+            outcome: "succeeded",
+            detail: {},
+          });
+
+          return yield* auditRows;
+        }).pipe(Effect.provide(auditLogLayer));
+
+        yield* migrateAudit;
+
+        expect(yield* auditRows).toEqual(written);
+        expect(
+          yield* sql`SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'audit_rows' ORDER BY name`,
+        ).toEqual([
+          { name: "audit_rows_newest_first" },
+          { name: "audit_rows_one_outcome" },
+          { name: "sqlite_autoindex_audit_rows_1" },
+        ]);
+      }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
   );
 });
