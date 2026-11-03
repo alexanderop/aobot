@@ -1,4 +1,5 @@
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
+import { checkSingleUserAddress, lookupLayer } from "./addresses.ts";
 import { signedInGate, sessionRoute } from "./http.ts";
 import { identitySignIn, identitySingleUser } from "./identity.ts";
 import { People, peopleLayer } from "./people.ts";
@@ -7,19 +8,22 @@ import { AuthSettings } from "./settings.ts";
 import { signInRoutes } from "./sign-in.ts";
 
 /**
-What the server wires for `settings`: `identity`, who each request and RPC call is for, which the RPC
-socket's {@link signedInRpc} reads too; and `http`, the gate in front of every route, `/auth/*`, and in
-sign-in mode signing in at the provider, which sends people back to `publicUrl`, and the admins the
-configuration names, recorded at start-up. `shell` is the web app's page, which a signed-out person
-opening any page is sent.
+What the server wires for `settings`: `beforeListening`, which in single-user mode refuses to start where
+someone else could reach `publicUrl` or `host`, the address the server listens on; `identity`, who each
+request and RPC call is for, which the RPC socket's {@link signedInRpc} reads too; and `http`, the gate in
+front of every route, `/auth/*`, and in sign-in mode signing in at the provider, which sends people back to
+`publicUrl`, and the admins the configuration names, recorded at start-up. `shell` is the web app's page,
+which a signed-out person opening any page is sent.
 */
-export const authLayers = (settings: AuthSettings, publicUrl: URL, shell: string) =>
+export const authLayers = (settings: AuthSettings, publicUrl: URL, host: string, shell: string) =>
   AuthSettings.$match(settings, {
     SingleUser: () => ({
+      beforeListening: checkSingleUserAddress(publicUrl, host).pipe(Effect.provide(lookupLayer)),
       identity: identitySingleUser,
       http: Layer.mergeAll(signedInGate(shell), sessionRoute),
     }),
     SignIn: ({ signIn }) => ({
+      beforeListening: Effect.void,
       identity: identitySignIn(signIn),
       http: Layer.mergeAll(
         signedInGate(shell),
@@ -31,8 +35,6 @@ export const authLayers = (settings: AuthSettings, publicUrl: URL, shell: string
       ).pipe(Layer.provide(peopleLayer(signIn))),
     }),
   });
-
-export { checkSingleUserAddress, lookupLayer } from "./addresses.ts";
 
 export { signedInRpc } from "./http.ts";
 

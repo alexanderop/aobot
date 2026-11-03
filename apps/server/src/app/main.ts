@@ -29,14 +29,7 @@ import {
   layerApi,
 } from "../features/agent/public.ts";
 import { auditLogLayer, auditTrailLayer, migrateAudit } from "../features/audit/public.ts";
-import {
-  AuthSettings,
-  authLayers,
-  checkSingleUserAddress,
-  lookupLayer,
-  migrateAuth,
-  signedInRpc,
-} from "../features/auth/public.ts";
+import { authLayers, migrateAuth, signedInRpc } from "../features/auth/public.ts";
 import { botHandlers, botsFileLayer, botToolkit } from "../features/bots/public.ts";
 import { chatLayer, migrateChat } from "../features/chat/public.ts";
 import { lifecycleLayer, migrateLifecycle, pauseHandlers } from "../features/lifecycle/public.ts";
@@ -64,11 +57,14 @@ const server = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* serverConfig;
 
-    if (AuthSettings.$is("SingleUser")(config.auth)) {
-      yield* checkSingleUserAddress(config.publicUrl, config.host).pipe(
-        Effect.provide(lookupLayer),
-      );
-    }
+    const auth = authLayers(
+      config.auth,
+      config.publicUrl,
+      config.host,
+      join(config.webDistDir, "index.html"),
+    );
+
+    yield* auth.beforeListening;
 
     const publicHost = bareHost(config.publicUrl);
 
@@ -177,8 +173,6 @@ const server = Layer.unwrap(
     const webApp = HttpStaticServer.layer({ root: config.webDistDir, spa: true });
 
     const healthCheck = HttpRouter.add("GET", "/healthz", HttpServerResponse.text("ok"));
-
-    const auth = authLayers(config.auth, config.publicUrl, join(config.webDistDir, "index.html"));
 
     const identity = auth.identity.pipe(Layer.provide(database));
 
