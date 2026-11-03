@@ -9,14 +9,14 @@ import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Layer, Queue, Stream } from "effect";
 import { RpcTest } from "effect/rpc";
 import { SqlClient } from "effect/sql";
-import { actorId, type PersonActor } from "../../shared/actor.ts";
+import { actorId, type PersonActor, singleUser } from "../../shared/actor.ts";
 import { alice, bob } from "../../shared/testing/people.ts";
 import { signedInAs } from "../../shared/testing/signed-in.ts";
 import { AgentEvent, AgentRuntime, type Turn } from "../agent/public.ts";
 import { assistant, researcher } from "../bots/testing/test-bots.ts";
 import { ConversationStore, conversationStoreLayer, Standing } from "./conversation-store.ts";
 import { chatHandlersLayer } from "./handlers.ts";
-import { chatLayer } from "./public.ts";
+import { adoptUnowned, chatLayer } from "./public.ts";
 import { testDatabase } from "./testing/test-database.ts";
 import { testServer } from "./testing/test-server.ts";
 
@@ -345,6 +345,31 @@ describe("a conversation from before conversations had owners", () => {
         yield* Effect.flip(asAlice["Chat.open"]({ conversationId: first, botId: assistant.id })),
       ).toEqual(new NotYourConversation({ conversationId: first }));
       expect(yield* asAlice["Chat.list"]()).toEqual([]);
+    }).pipe(Effect.provide(chat.layer));
+  });
+
+  it.effect("is the single user's once a single-user server started, however often", () => {
+    const chat = answering();
+
+    return Effect.gen(function* () {
+      const asAlice = yield* clientFor(alice);
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* asAlice["Chat.send"](message(second, "Mine")).pipe(Stream.runCollect);
+      yield* sql`INSERT INTO conversations (id, bot_id) VALUES (${first}, 'assistant')`;
+      yield* sql`
+        INSERT INTO messages (id, conversation_id, role, text) VALUES ('m', ${first}, 'user', 'Old')
+      `;
+
+      yield* adoptUnowned(singleUser);
+      yield* adoptUnowned(singleUser);
+
+      const asSingleUser = yield* clientFor(singleUser);
+      expect(yield* texts(asSingleUser, first)).toEqual(["Old"]);
+      expect(yield* texts(asAlice, second)).toEqual(["Mine", "Ok"]);
+      expect(yield* Effect.flip(asSingleUser["Chat.read"]({ conversationId: second }))).toEqual(
+        new NotYourConversation({ conversationId: second }),
+      );
     }).pipe(Effect.provide(chat.layer));
   });
 });

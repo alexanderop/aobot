@@ -77,8 +77,9 @@ export class ConversationOfAnotherBot extends Schema.TaggedError<ConversationOfA
 ) {}
 
 /**
-The conversation is someone else's, or one from before conversations had an owner, which is nobody's. Its
-messages, its turn and its questions are refused as one, whoever asks. A conversation nobody has written
+The conversation is someone else's, or one from before conversations had an owner, which is nobody's
+unless the server runs in single-user mode. Its messages, its turn and its questions are refused as one,
+whoever asks. A conversation nobody has written
 to yet is free: it opens empty, and the first message makes it the sender's.
 */
 export class NotYourConversation extends Schema.TaggedError<NotYourConversation>()(

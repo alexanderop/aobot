@@ -934,8 +934,9 @@ A conversation belongs to the person who wrote to it first, and to the Bot of th
 starts, in one `INSERT … ON CONFLICT DO UPDATE … RETURNING` that answers the stored owner, so of two people
 racing on one new id the database lets one have it, and a turn only ever runs in its person's
 conversation. `Chat.open`, `Chat.send`, `Chat.stop` and `Chat.read` refuse anyone else's with
-`NotYourConversation`, and so does a conversation from before owners were recorded, which is nobody's. A
-conversation nobody has written to is free and opens empty. The page leaves a conversation that is not the
+`NotYourConversation`, and so does a conversation from before owners were recorded, which is nobody's,
+except on a server in single-user mode, which makes each the one person's at start-up. A conversation
+nobody has written to is free and opens empty. The page leaves a conversation that is not the
 person's for a new one with the same Bot and remembers that one instead, so an address someone else's
 browser remembered never shows their messages. Continuing a conversation needs nothing more: every turn
 passes the stored messages to the runtime, which rebuilds the `effect/ai` chat from them, or, for `acp`,

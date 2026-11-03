@@ -29,9 +29,9 @@ import {
   layerApi,
 } from "../features/agent/public.ts";
 import { auditLogLayer, auditTrailLayer, migrateAudit } from "../features/audit/public.ts";
-import { authLayers, migrateAuth, signedInRpc } from "../features/auth/public.ts";
+import { AuthSettings, authLayers, migrateAuth, signedInRpc } from "../features/auth/public.ts";
 import { botHandlers, botsFileLayer, botToolkit } from "../features/bots/public.ts";
-import { chatLayer, migrateChat } from "../features/chat/public.ts";
+import { adoptUnowned, chatLayer, migrateChat } from "../features/chat/public.ts";
 import { lifecycleLayer, migrateLifecycle, pauseHandlers } from "../features/lifecycle/public.ts";
 import { policyFileLayer } from "../features/policy/public.ts";
 import { computersLayer } from "../features/computers/public.ts";
@@ -45,6 +45,7 @@ import {
   migrateGateway,
   screenHandlers,
 } from "../features/gateway/public.ts";
+import { singleUser } from "../shared/actor.ts";
 import { bareHost } from "../shared/reach.ts";
 import { spanAttributesRedacted } from "../shared/span-redaction.ts";
 import { auditRoutes } from "./audit-routes.ts";
@@ -77,8 +78,16 @@ const server = Layer.unwrap(
       }),
     ).pipe(Layer.provide([NodeFileSystem.layer, NodePath.layer]));
 
+    // Not in the chat's migration, which cannot know the mode: only on a single-user server are the
+    // conversations from before owners all the one person's.
+    const ownerless = AuthSettings.$is("SingleUser")(config.auth)
+      ? adoptUnowned(singleUser)
+      : Effect.void;
+
     const database = Layer.effectDiscard(
-      Effect.all([migrateChat, migrateAudit, migrateGateway, migrateLifecycle, migrateAuth]),
+      Effect.all([migrateChat, migrateAudit, migrateGateway, migrateLifecycle, migrateAuth]).pipe(
+        Effect.andThen(ownerless),
+      ),
     ).pipe(
       Layer.provideMerge(SqliteClient.layer({ filename: config.databasePath })),
       Layer.provide(databaseFolder),
