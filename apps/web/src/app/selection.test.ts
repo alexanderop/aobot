@@ -89,11 +89,11 @@ describe("follow", () => {
     ],
     [
       "a conversation that is not the person's",
-      Option.some(OpenOutcome.NotYours()),
-      { bot: assistant, conversation: "fresh" },
+      Option.some(OpenOutcome.NotYours({ conversation: ConversationId.make("own") })),
+      { bot: assistant, conversation: "own" },
     ],
   ])("shows, on %s, the conversation with its own Bot", (_what, outcome, expected) => {
-    expect(follow(requested, outcome, fresh)).toEqual(expected);
+    expect(follow(requested, outcome)).toEqual(expected);
   });
 });
 
@@ -403,11 +403,11 @@ describe("the selection", () => {
 
     expect(tab.now().conversation).toBe("theirs");
 
-    tab.answer(OpenOutcome.NotYours());
+    tab.answer(OpenOutcome.NotYours({ conversation: ConversationId.make("own") }));
     const own = tab.now();
     tab.confirm();
 
-    expect(own).toEqual({ bot: "assistant", conversation: expect.stringMatching(/^new-/u) });
+    expect(own).toEqual({ bot: "assistant", conversation: "own" });
     expect(tab.entries()).toEqual([`?bot=assistant&c=${own.conversation}`]);
     expect(readMemory(storage).get(assistant)).toBe(own.conversation);
   });

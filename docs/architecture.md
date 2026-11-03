@@ -939,7 +939,8 @@ conversation. `Chat.open`, `Chat.send`, `Chat.stop` and `Chat.read` refuse anyon
 except on a server in single-user mode, which makes each the one person's at start-up. A conversation
 nobody has written to is free and opens empty. The page leaves a conversation that is not the
 person's for a new one with the same Bot and remembers that one instead, so an address someone else's
-browser remembered never shows their messages. Continuing a conversation needs nothing more: every turn
+browser remembered never shows their messages. A message the page sent there, as when someone else's first
+message got in before it, is taken back and offered again in the new conversation's composer. Continuing a conversation needs nothing more: every turn
 passes the stored messages to the runtime, which rebuilds the `effect/ai` chat from them, or, for `acp`,
 primes a fresh CLI session with them.
 

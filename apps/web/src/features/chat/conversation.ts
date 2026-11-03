@@ -1,7 +1,7 @@
 import { Effect, Option, Schedule, Schema, Stream } from "effect";
 import type { Duration } from "effect";
 import { Atom } from "effect/reactivity";
-import type { BotId, ConversationId, MessageId, OpenConversation } from "@aobot/domain";
+import { type BotId, ConversationId, type MessageId, type OpenConversation } from "@aobot/domain";
 import { botList } from "../bots/public.ts";
 import { ChatClient } from "./chat-client.ts";
 import {
@@ -14,6 +14,7 @@ import {
   receiveEvent,
   refuseForAnotherBot,
   refuseMessage,
+  refuseNotYours,
   refuseUnknownBot,
   refuseWhilePaused,
   requestStop,
@@ -55,6 +56,19 @@ export function makeConversations(
   );
 
   /**
+  A new conversation for a page turned away from `id` as not the person's, whose composer offers again the
+  message the server turned away there.
+  */
+  const leave = (id: ConversationId) =>
+    Effect.gen(function* () {
+      const conversation = ConversationId.make(crypto.randomUUID());
+      const { unsent } = yield* Atom.get(state(id));
+      yield* Atom.update(state(conversation), (current) => ({ ...current, unsent }));
+
+      return OpenOutcome.NotYours({ conversation });
+    });
+
+  /**
   Opens the conversation with the Bot the page picked, and answers what the server said. Keyed by the
   conversation and the Bot, compared by value. A refusal is an answer, not retried: asking again would
   not make the server know the Bot, nor give the conversation another. A Bot the server does not know
@@ -82,7 +96,7 @@ export function makeConversations(
                 ),
               ConversationOfAnotherBot: ({ botId }) =>
                 Effect.succeed(OpenOutcome.OfAnotherBot({ botId })),
-              NotYourConversation: () => Effect.succeed(OpenOutcome.NotYours()),
+              NotYourConversation: () => leave(id),
             }),
           );
         }).pipe(
@@ -129,9 +143,11 @@ export function makeConversations(
                 refuseUnknownBot(current, botId, Option.some(outgoing.messageId)),
               ),
             ),
-            // The open asks again, so the page leaves for a conversation of the person's own.
+            // The open asks again, so the page leaves for a new conversation, which offers the message again.
             Effect.catchTag("NotYourConversation", () =>
-              Atom.refresh(open({ conversationId: id, botId: outgoing.botId })),
+              Atom.update(state(id), (current) => refuseNotYours(current, outgoing.messageId)).pipe(
+                Effect.andThen(Atom.refresh(open({ conversationId: id, botId: outgoing.botId }))),
+              ),
             ),
             // The open asks again, so the page follows the conversation to its own Bot.
             Effect.catchTag("ConversationOfAnotherBot", ({ botId }) =>

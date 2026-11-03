@@ -6,7 +6,7 @@ import type {
   Message,
   RunErrorCode,
 } from "@aobot/domain";
-import type { BotId, MessageId, RunId, ToolCallId } from "@aobot/domain";
+import type { BotId, ConversationId, MessageId, RunId, ToolCallId } from "@aobot/domain";
 
 /**
 Why a conversation is in the failed state. `stopped` is not here: the person asked for it, so a stopped
@@ -22,13 +22,14 @@ export type FailureCode =
 
 /**
 What the server said when the page opened a conversation with a Bot: opened, with the Bot it belongs to,
-or refused because it belongs to another Bot, the server knows no such Bot, or it is not the person's.
+or refused because it belongs to another Bot, the server knows no such Bot, or it is not the person's,
+when the page goes to `conversation`, a new one, instead.
 */
 export type OpenOutcome = Data.TaggedEnum<{
   Opened: { readonly bot: BotSummary };
   OfAnotherBot: { readonly botId: BotId };
   UnknownBot: { readonly botId: BotId };
-  NotYours: {};
+  NotYours: { readonly conversation: ConversationId };
 }>;
 
 /** Constructors and matchers for {@link OpenOutcome}. */
@@ -218,6 +219,15 @@ export function refuseForAnotherBot(
       message: `This conversation is ${botId}'s, so the message was not sent.`,
     }),
   };
+}
+
+/**
+The conversation turned out someone else's, as when they sent its first message before this page did.
+Nothing was stored, so the message is taken back, for the composer of the new conversation the page goes
+to instead to offer again.
+*/
+export function refuseNotYours(state: ConversationState, messageId: MessageId): ConversationState {
+  return { ...state, ...takeBack(state, messageId), status: ConversationStatus.Idle() };
 }
 
 /** What the page says when a message is refused for a pause. */

@@ -92,7 +92,7 @@ export function makeSelection(
             get(open({ conversationId: requested.conversation, botId: requested.bot })),
           );
 
-          const shown = follow(requested, outcome, fresh);
+          const shown = follow(requested, outcome);
           const showing = withSelection(url, shown);
 
           // Each write changes what this read depends on, so it runs again and finds nothing to write.

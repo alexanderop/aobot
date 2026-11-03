@@ -47,7 +47,11 @@ const fakeServer = (script: {
     stopped: Deferred.Deferred<void>,
   ) => Stream.Stream<
     ChatEvent,
-    ConversationBusy | MessageAlreadySent | ConversationOfAnotherBot | BotPaused
+    | ConversationBusy
+    | MessageAlreadySent
+    | ConversationOfAnotherBot
+    | NotYourConversation
+    | BotPaused
   >;
   readonly open?: Effect.Effect<
     ConversationSnapshot,
@@ -107,7 +111,22 @@ function start(script: Parameters<typeof fakeServer>[0]) {
   registry.mount(atoms.send);
   registry.mount(atoms.stop);
 
-  return { registry, atoms, botListAsked: () => botListAsked };
+  return { registry, atoms, conversations, botListAsked: () => botListAsked };
+}
+
+/** What the server answered once it said the conversation is not the person's. */
+function notYours(
+  registry: AtomRegistry.AtomRegistry,
+  atom: ReturnType<ReturnType<typeof makeConversations>["open"]>,
+) {
+  return Atom.toStream(atom).pipe(
+    Stream.map((result) => Option.filter(AsyncResult.value(result), OpenOutcome.$is("NotYours"))),
+    Stream.filter(Option.isSome),
+    Stream.runHead,
+    Effect.map((head) => Option.getOrThrow(Option.flatten(head))),
+    Effect.provideService(AtomRegistry.AtomRegistry, registry),
+    Effect.runPromise,
+  );
 }
 
 /** What the server answered once the open settled. */
@@ -212,14 +231,41 @@ describe("given a conversation served by an in-memory Bot", () => {
     expect(registry.get(atoms.state).bot).toEqual(Option.none());
   });
 
-  it("answers that the conversation is not the person's, showing none of it", async () => {
-    const { registry, atoms } = start({
+  it("answers that the conversation is not the person's with a new one to go to, showing none of it", async () => {
+    const { registry, atoms, conversations } = start({
       send: () => Stream.empty,
       open: Effect.fail(new NotYourConversation({ conversationId })),
     });
 
-    expect(await opened(registry, atoms.open)).toEqual(OpenOutcome.NotYours());
+    const { conversation } = await notYours(registry, atoms.open);
+
+    expect(conversation).not.toBe(conversationId);
     expect(registry.get(atoms.state)).toEqual(initialState);
+    expect(registry.get(conversations.state(conversation))).toEqual(initialState);
+  });
+
+  it("offers a message sent to a conversation that turned out someone else's again, in the new one", async () => {
+    let asked = 0;
+
+    const { registry, atoms, conversations } = start({
+      send: () => Stream.fail(new NotYourConversation({ conversationId })),
+      open: Effect.suspend(() => {
+        asked += 1;
+
+        return asked === 1
+          ? Effect.succeed({ bot, messages: [], isRunning: false })
+          : Effect.fail(new NotYourConversation({ conversationId }));
+      }),
+    });
+
+    await opened(registry, atoms.open);
+    registry.set(atoms.send, userMessage);
+    const { conversation } = await notYours(registry, atoms.open);
+
+    expect(registry.get(conversations.state(conversation)).unsent).toEqual(
+      Option.some({ id: userMessage.messageId, text: userMessage.text }),
+    );
+    expect(texts(registry.get(atoms.state))).toEqual([]);
   });
 
   it("lists the Bot's answer as the conversation's last message once its turn ended", async () => {
