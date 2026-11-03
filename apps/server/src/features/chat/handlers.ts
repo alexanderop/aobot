@@ -58,7 +58,7 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
           bot === picked
             ? Effect.void
             : Effect.fail(new ConversationOfAnotherBot({ conversationId, botId: bot })),
-        NotMine: () => Effect.fail(new NotYourConversation({ conversationId })),
+        NotYours: () => Effect.fail(new NotYourConversation({ conversationId })),
       });
 
       return yield* known(picked);
@@ -74,7 +74,7 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
     const ownedByCaller = Effect.fnUntraced(function* (conversationId: ConversationId) {
       const standing = yield* store.standing(conversationId, yield* Caller);
 
-      if (Standing.$is("NotMine")(standing)) {
+      if (Standing.$is("NotYours")(standing)) {
         return yield* new NotYourConversation({ conversationId });
       }
     });

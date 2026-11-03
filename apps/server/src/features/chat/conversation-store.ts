@@ -10,11 +10,14 @@ the Bot it belongs to; or someone else's, which an owner-less conversation from 
 export type Standing = Data.TaggedEnum<{
   Free: {};
   Mine: { readonly bot: BotId };
-  NotMine: {};
+  NotYours: {};
 }>;
 
 /** Constructors and matchers for {@link Standing}. */
 export const Standing = Data.taggedEnum<Standing>();
+
+/** Where a conversation someone has written to stands: it is never free again. */
+export type Stored = Exclude<Standing, { readonly _tag: "Free" }>;
 
 /** How long a preview of a conversation's last message is, at most. */
 const previewLimit = 120;
@@ -39,11 +42,8 @@ const decodeSummaries = Schema.decodeUnknownEffect(
 );
 
 /** Where a stored conversation stands for `person`. */
-function standingOf(
-  { bot_id, owner_id }: typeof Owned.Type,
-  person: PersonActor,
-): Exclude<Standing, { readonly _tag: "Free" }> {
-  return owner_id === actorId(person) ? Standing.Mine({ bot: bot_id }) : Standing.NotMine();
+function standingOf({ bot_id, owner_id }: typeof Owned.Type, person: PersonActor): Stored {
+  return owner_id === actorId(person) ? Standing.Mine({ bot: bot_id }) : Standing.NotYours();
 }
 
 /** What was said in each conversation, in order, and whose each conversation is. */
@@ -63,7 +63,7 @@ export class ConversationStore extends Context.Service<
       conversationId: ConversationId,
       bot: BotId,
       person: PersonActor,
-    ) => Effect.Effect<Exclude<Standing, { readonly _tag: "Free" }>>;
+    ) => Effect.Effect<Stored>;
     /** Append a message. Returns false, storing nothing, when the message id was seen before. */
     readonly append: (conversationId: ConversationId, message: Message) => Effect.Effect<boolean>;
     /** Every message, oldest first. Empty for a conversation never written to. */

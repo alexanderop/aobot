@@ -251,7 +251,7 @@ describe("two people claiming one new conversation at once", () => {
       );
 
       expect(claims.filter(Standing.$is("Mine"))).toHaveLength(1);
-      expect(claims.filter(Standing.$is("NotMine"))).toHaveLength(1);
+      expect(claims.filter(Standing.$is("NotYours"))).toHaveLength(1);
       expect(yield* store.standing(first, alice)).toEqual(claims[0]);
     }).pipe(Effect.provide(conversationStoreLayer), Effect.provide(testDatabase)),
   );
