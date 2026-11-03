@@ -17,11 +17,12 @@ import {
   SubscriptionRef,
 } from "effect";
 import { SqlClient } from "effect/sql";
+import { auditRows } from "../audit/public.ts";
 import { Computers } from "../computers/public.ts";
 import { capText } from "../../shared/tool-result.ts";
 import { controlStore } from "./control-store.ts";
 import { close, Door, drained, enter, inFlight, leave, reopen, view } from "./door.ts";
-import { computerMessageLimit, personAudit } from "./person-audit.ts";
+import { computerMessageLimit } from "./computer-failure.ts";
 import { snapshotStore } from "./snapshot-store.ts";
 import { spanEvent } from "./span-event.ts";
 
@@ -82,7 +83,7 @@ queue commands wait in, one at a time, since they share one shell. Who holds the
 read once here: one server process owns the database (architecture.md, "Local now, AWS later").
 */
 export const controlDoors = Effect.gen(function* () {
-  const rows = yield* personAudit;
+  const rows = yield* auditRows("person");
   const computers = yield* Computers;
   const sql = yield* SqlClient.SqlClient;
   const store = yield* controlStore;

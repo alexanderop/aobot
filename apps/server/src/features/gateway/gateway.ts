@@ -31,10 +31,12 @@ import {
 } from "effect";
 import {
   AuditLog,
+  auditRows,
   type AuditRowId,
   type AuditWriteFailed,
   type Decision,
   type Outcome,
+  type RefusalDecision,
   singleUser,
 } from "../audit/public.ts";
 import { Bots, isGranted } from "../bots/public.ts";
@@ -69,12 +71,7 @@ import {
   type OutcomeUnknown,
 } from "./approvals.ts";
 import { ComputerControl, controlDoors, type PersonHasControl } from "./control.ts";
-import {
-  type ComputerFailure,
-  failureOutcome,
-  personAudit,
-  type RefusalDecision,
-} from "./person-audit.ts";
+import { type ComputerFailure, failureOutcome } from "./computer-failure.ts";
 import { fileTarget } from "./file-target.ts";
 import {
   endAttributes,
@@ -607,7 +604,7 @@ export const gatewayLayer = Layer.effectContext(
     const audit = yield* AuditLog;
     const bots = yield* Bots;
     const policy = yield* Policy;
-    const rows = yield* personAudit;
+    const rows = yield* auditRows("person");
     const computers = yield* Computers;
     const snapshots = yield* snapshotStore;
     const doors = yield* controlDoors;
