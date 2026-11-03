@@ -41,3 +41,20 @@ describe("onThisMachine", () => {
     (url) => expect(onThisMachine(bareHost(new URL(url)))).toBe(false),
   );
 });
+
+describe("onThisMachine of a bare host", () => {
+  it.each(["127.0.0.1", "127.8.9.10", "::1", "localhost"])(
+    "counts %s as this machine only",
+    (host) => expect(onThisMachine(host)).toBe(true),
+  );
+
+  it.each([
+    "0.0.0.0",
+    "::",
+    "192.168.1.20",
+    "10.0.0.1",
+    "128.0.0.1",
+    "example.com",
+    "127.example.com",
+  ])("counts %s as reachable from elsewhere", (host) => expect(onThisMachine(host)).toBe(false));
+});

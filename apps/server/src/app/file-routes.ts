@@ -61,7 +61,7 @@ and never held whole. An upload must say its length, so one past the limit is re
 is read. Both refuse with 403 a request from a page that is not this server's own. A `HEAD` is answered
 405 without asking the computer.
 */
-export const fileRoutes = (publicHost: Option.Option<string>) =>
+export const fileRoutes = (publicHost: string) =>
   HttpRouter.use((router) =>
     Effect.gen(function* () {
       const transfers = yield* FileTransfers;

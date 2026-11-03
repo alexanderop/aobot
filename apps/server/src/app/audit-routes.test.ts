@@ -50,7 +50,7 @@ const threeRows = Effect.gen(function* () {
 
 beforeAll(async () => {
   const server = HttpRouter.serve(
-    auditRoutes(Option.none(), Option.some(new URL("http://grafana.test:3300/"))).pipe(
+    auditRoutes("localhost", Option.some(new URL("http://grafana.test:3300/"))).pipe(
       Layer.provide(auditTrailLayer),
     ),
     { disableLogger: true, disableListenLog: true },

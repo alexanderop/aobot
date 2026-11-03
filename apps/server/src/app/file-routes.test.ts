@@ -94,7 +94,7 @@ let served: Context.Context<SqlClient.SqlClient>;
 
 beforeAll(async () => {
   const server = HttpRouter.serve(
-    fileRoutes(Option.none()).pipe(
+    fileRoutes("localhost").pipe(
       Layer.provide(
         gatewayLayer.pipe(
           Layer.provide([

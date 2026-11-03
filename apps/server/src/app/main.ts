@@ -52,6 +52,7 @@ import {
   migrateGateway,
   screenHandlers,
 } from "../features/gateway/public.ts";
+import { bareHost } from "../shared/reach.ts";
 import { spanAttributesRedacted } from "../shared/span-redaction.ts";
 import { auditRoutes } from "./audit-routes.ts";
 import { serverConfig } from "./config.ts";
@@ -69,7 +70,7 @@ const server = Layer.unwrap(
       );
     }
 
-    const publicHost = Option.some(config.publicUrl.hostname);
+    const publicHost = bareHost(config.publicUrl);
 
     // SQLite creates the file but not the folder around it.
     const databaseFolder = Layer.effectDiscard(

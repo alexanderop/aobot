@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { Control, ControlRpcs } from "@aobot/domain";
 import { NodeHttpServer } from "@effect/platform-node";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { Effect, Exit, Layer, Option, Scope, Stream } from "effect";
+import { Effect, Exit, Layer, Scope, Stream } from "effect";
 import { HttpRouter } from "effect/http";
 import { RpcSerialization, RpcServer } from "effect/rpc";
 import { singleUser } from "../shared/actor.ts";
@@ -27,7 +27,7 @@ const scope = Effect.runSync(Scope.make());
 beforeAll(async () => {
   const server = HttpRouter.serve(
     RpcServer.layer(ControlRpcs).pipe(
-      Layer.provide(rpcSocket(Option.some("aobot.example.com"))),
+      Layer.provide(rpcSocket("aobot.example.com")),
       Layer.provide(RpcSerialization.layerJson),
       Layer.provide([handlers, signedInAs(singleUser)]),
     ),

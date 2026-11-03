@@ -1,14 +1,8 @@
-import { isIPv4 } from "node:net";
+import { canonicalHost } from "@aobot/domain";
 import { Option } from "effect";
 import { AgentRuntimeSettings } from "../features/agent/public.ts";
 import { AuthSettings } from "../features/auth/public.ts";
-
-/** Whether `host` is this machine only: `localhost`, `::1` or anything in 127.0.0.0/8. */
-export function isLoopback(host: string): boolean {
-  const address = host.replace(/^::ffff:/u, "");
-
-  return host === "localhost" || host === "::1" || (isIPv4(address) && address.startsWith("127."));
-}
+import { onThisMachine } from "../shared/reach.ts";
 
 /**
 Why the server must not start, if it must not. `acp` runs on one person's own subscription, so it only
@@ -27,7 +21,7 @@ export function sharedSubscriptionProblem(
     );
   }
 
-  if (!isLoopback(host)) {
+  if (!onThisMachine(canonicalHost(host))) {
     return Option.some(
       `AGENT_RUNTIME=acp must only be reachable from this machine, but HOST is ${host}. Set HOST=127.0.0.1.`,
     );

@@ -4,7 +4,7 @@ import { AgentRuntimeSettings } from "../features/agent/public.ts";
 import { AuthSettings } from "../features/auth/public.ts";
 import { ComputerProvider } from "../features/computers/public.ts";
 import { serverConfig } from "./config.ts";
-import { isLoopback, privateHostsProblem, sharedSubscriptionProblem } from "./local-only.ts";
+import { privateHostsProblem, sharedSubscriptionProblem } from "./local-only.ts";
 
 const acp = AgentRuntimeSettings.Acp({ agent: "claude-code", home: "/Users/someone" });
 
@@ -38,23 +38,6 @@ const signingIn = AuthSettings.SignIn({
 function configFrom(env: Record<string, string>) {
   return serverConfig.parse(ConfigProvider.fromEnv({ env }));
 }
-
-describe("isLoopback", () => {
-  it.each(["127.0.0.1", "127.8.9.10", "::1", "localhost", "::ffff:127.0.0.1"])(
-    "counts %s as this machine only",
-    (host) => expect(isLoopback(host)).toBe(true),
-  );
-
-  it.each([
-    "0.0.0.0",
-    "::",
-    "192.168.1.20",
-    "10.0.0.1",
-    "128.0.0.1",
-    "example.com",
-    "127.example.com",
-  ])("counts %s as reachable from elsewhere", (host) => expect(isLoopback(host)).toBe(false));
-});
 
 describe("sharedSubscriptionProblem", () => {
   it("lets acp start on loopback in single-user mode", () => {

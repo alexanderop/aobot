@@ -48,7 +48,7 @@ The audit trail for the audit page: `GET /audit/rows` answers one {@link AuditRo
 {@link AuditQuery}, each row with a link to its trace when `grafana` is set. A query or a cursor it
 cannot read is a 400. A request from a page that is not this server's own is a 403.
 */
-export const auditRoutes = (publicHost: Option.Option<string>, grafana: Option.Option<URL>) =>
+export const auditRoutes = (publicHost: string, grafana: Option.Option<URL>) =>
   HttpRouter.use((router) =>
     Effect.gen(function* () {
       const trail = yield* AuditTrail;
