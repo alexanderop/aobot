@@ -504,6 +504,20 @@ describe("approvalRequests", () => {
     }).pipe(Effect.provide(database)),
   );
 
+  it.effect("keeps whose question it was as the question moves forward", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* askAndAnswer(yield* approvalRequests, firstRun, "yes");
+
+      const reassign = yield* Effect.flip(
+        sql`UPDATE approvals SET state = 'spent', actor_id = 'mallory@example.com'`,
+      );
+
+      expect(String(reassign.reason.cause)).toContain("an approval only moves forward");
+      expect(yield* ledger).toEqual([["run-1", "yes"]]);
+    }).pipe(Effect.provide(database)),
+  );
+
   it.effect("withdraws a question it held when the scope closes before it was shown", () =>
     Effect.gen(function* () {
       const store = yield* approvalRequests;
