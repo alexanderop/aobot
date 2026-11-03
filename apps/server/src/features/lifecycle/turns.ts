@@ -134,7 +134,7 @@ type Strikes = ReadonlyMap<BotId, number>;
 
 /**
 What one check decides from what it read: which Bots' turns stop and why, and the strikes left. A read
-that answers clears every strike, and a Bot with no turn running here keeps none.
+that answered already cleared them, and a Bot with no turn running here keeps none.
 */
 function judge(
   strikes: Strikes,
@@ -143,7 +143,7 @@ function judge(
 ): readonly [Strikes, ReadonlyArray<readonly [BotId, StopCode]>] {
   return Result.match(read, {
     onSuccess: (paused) => [
-      new Map(),
+      strikes,
       running.flatMap((bot) => (paused.includes(bot) ? [[bot, "paused"] as const] : [])),
     ],
     onFailure: () => {
