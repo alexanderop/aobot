@@ -5,7 +5,8 @@ import { loginPassword } from "./login.ts";
 Pages a verify scenario sends the computer to (`verify/compose.yml`), served on the computers network as
 `http://fixture:8080`. `/injection` tells whoever reads it to go somewhere else. `/link` is one blue link
 over the whole screen, to the white `/followed`. `/search` is a search box. `/login` signs in with a
-username and `loginPassword`, posted, so the password is never in an address.
+username and `loginPassword`, posted, so the password is never in an address. `/account` is a form to
+change a password, which a Bot is never let submit.
 */
 const pages = new Map([
   [
@@ -28,6 +29,12 @@ const pages = new Map([
 <label>Username <input name="username"></label>
 <label>Password <input type="password" name="password"></label>
 <button>Sign in</button></form>`,
+  ],
+  [
+    "/account",
+    `<!doctype html><title>Account</title><h1>Account</h1><form method="post" action="/account">
+<label>New password <input type="password" name="password"></label>
+<button>Change password</button></form>`,
   ],
 ]);
 
