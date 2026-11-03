@@ -58,9 +58,10 @@ The safety list `action` falls under, read from the element it acts on as the se
 and the page at `path` that snapshot was read on, never from the text a Bot types or the key it presses:
 what a Bot types is content, and a note about a customer's purchase is not a purchase. Only an action that
 changes a page is subject to it. Opening or reading a page is not: reading a checkout page is not paying.
-Commands and files stay in the Bot's own workspace, which reaches no account. And `request_secret` is the
-person typing the credential themselves, on a card that names the field and the site; the click or key
-that submits it is judged like any other, so a "Change password" button is still the person's.
+Commands and files are workspace tools, left to the rules: a command's text is a filter, not a boundary,
+and the egress filter decides where it may reach. And `request_secret` is the person typing the credential
+themselves, on a card that names the field and the site; the click or key that submits it is judged like
+any other, so a "Change password" button is still the person's.
 */
 export const safetyOf = (action: ToolAction, path: string): Option.Option<SafetyList> =>
   ToolAction.match(action, {

@@ -35,7 +35,9 @@ OpenTelemetry for traces, logs and metrics, from the first ticket.
   `Gateway.act` span.
 
   Every `Gateway.act` span records `gateway.decision`, `allow` or `deny` for every refusal, and the rule
-  from `rules.yaml` that decided as `gateway.rule` (none when no allow rule held). An allowed call gets
+  from `rules.yaml` that decided as `gateway.rule` (none when no allow rule held). An action the safety list
+  hands to the person records `gateway.decision=hand_off`, `decision.source=safety` and the list as
+  `gateway.safety`, and no `gateway.rule`. An allowed call gets
   `gateway.decision=allow` and its `gateway.rule` only once its allow row is written. A rule that failed
   is logged by its name and list only, never with its error, which can echo the command; the error is kept
   only in a deny row, capped, as `error` for a deny rule and as `failed` for the allow rules of an action
