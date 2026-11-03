@@ -1,12 +1,7 @@
 import { SessionState } from "@aobot/domain";
-import { Effect, Schema } from "effect";
+import { Effect } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import { Atom } from "effect/reactivity";
-
-/** The server could not say who the page is open for. */
-class SessionUnreadable extends Schema.TaggedError<SessionUnreadable>()("SessionUnreadable", {
-  message: Schema.String,
-}) {}
 
 const decodeSession = HttpClientResponse.schemaBodyJson(SessionState);
 
@@ -16,12 +11,7 @@ const readSession = Effect.gen(function* () {
   const response = yield* client.get("/auth/session");
 
   return yield* decodeSession(response);
-}).pipe(
-  Effect.catchTags({
-    HttpClientError: (error) => Effect.fail(new SessionUnreadable({ message: error.message })),
-    SchemaError: (error) => Effect.fail(new SessionUnreadable({ message: error.message })),
-  }),
-);
+});
 
 /**
 The session over the HTTP client `runtime` gives: fetch on the page, a fake one in a test. Read again every
