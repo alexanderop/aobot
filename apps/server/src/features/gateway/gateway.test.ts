@@ -752,7 +752,12 @@ describe("Gateway refs", () => {
         yield* sql`DROP TABLE approvals`;
         yield* sql`
           DELETE FROM gateway_migrations
-          WHERE name IN ('keep_snapshot_url', 'create_approvals', 'keep_snapshot_path')
+          WHERE name IN (
+            'keep_snapshot_url',
+            'create_approvals',
+            'keep_snapshot_path',
+            'name_the_asker'
+          )
         `;
 
         yield* migrateGateway;
@@ -780,7 +785,11 @@ describe("Gateway refs", () => {
           INSERT INTO computer_snapshot (id, snapshot, url, read_by)
           VALUES (1, ${form}, 'https://example.com', 'assistant')
         `;
-        yield* sql`DELETE FROM gateway_migrations WHERE name = 'keep_snapshot_path'`;
+        yield* sql`DROP TABLE approvals`;
+        yield* sql`
+          DELETE FROM gateway_migrations
+          WHERE name IN ('create_approvals', 'keep_snapshot_path', 'name_the_asker')
+        `;
 
         yield* migrateGateway;
 
@@ -1555,7 +1564,8 @@ describe("Gateway control", () => {
           'share_computer_snapshot',
           'keep_snapshot_url',
           'create_approvals',
-          'keep_snapshot_path'
+          'keep_snapshot_path',
+          'name_the_asker'
         )
       `;
 

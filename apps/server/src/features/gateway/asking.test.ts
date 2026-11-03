@@ -686,6 +686,36 @@ ask:
     }).pipe(Effect.provide(database)),
   );
 
+  it.effect("closes a question a stopped server left open in the name of the person it asked", () =>
+    Effect.gen(function* () {
+      const shown = yield* Effect.gen(function* () {
+        yield* Gateway.use((gateway) =>
+          Effect.forkDetach(Effect.result(gateway.act(firstRun, removeNotes))),
+        );
+
+        return yield* untilShown;
+      }).pipe(Effect.provide(startGateway(shell().layer, askBeforeRm)));
+
+      yield* Effect.provide(Effect.void, startGateway(shell().layer, askBeforeRm));
+
+      const rows = (yield* auditRows).filter((row) =>
+        String(row["detail"]).includes(shown.approval),
+      );
+
+      expect(
+        rows.map((row) => [
+          `${String(row["action"])} · ${String(row["decision"])}`,
+          row["initiator_kind"],
+          row["actor_id"],
+        ]),
+      ).toEqual([
+        ["run · ask", "person", "alice@example.com"],
+        ["approval.answered · answered", "deployment", "alice@example.com"],
+        ["run · deny", "deployment", "alice@example.com"],
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
   it.effect("records no and refuses a question whose turn was stopped while it waited", () =>
     Effect.gen(function* () {
       const computer = shell();

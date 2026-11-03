@@ -54,13 +54,7 @@ import {
   type ToolTimedOut,
   toolResult,
 } from "../../shared/tool-result.ts";
-import {
-  type Actor,
-  actorId,
-  actsThroughBots,
-  CurrentActor,
-  deployment,
-} from "../../shared/actor.ts";
+import { type Actor, actsThroughBots, CurrentActor, deployment } from "../../shared/actor.ts";
 import { redact, redactCommand, redactUrl } from "../../shared/redact.ts";
 import { actionFacts, hostOf } from "./action-facts.ts";
 import {
@@ -633,19 +627,22 @@ export const gatewayLayer = Layer.effectContext(
     const approvals = yield* approvalRequests;
     const turns = yield* LiveTurns;
 
-    /** A row the deployment writes at start-up to close a question an earlier run left open. */
-    const byDeployment = (decision: Decision, action: AuditAction, detail: Schema.JsonObject) =>
-      audit.record({
-        traceId: Option.none(),
-        initiatorKind: "deployment",
-        actorId: actorId(deployment),
-        decision,
-        action,
-        detail,
-      });
+    /**
+    Closes a question an earlier run left open, in rows the deployment writes at start-up on the authority
+    of the person it asked.
+    */
+    const closeInTrail = ({ approval, bot, asker, tool, rule, answered }: LeftOpen) => {
+      const byDeployment = (decision: Decision, action: AuditAction, detail: Schema.JsonObject) =>
+        audit.record({
+          traceId: Option.none(),
+          initiatorKind: "deployment",
+          actorId: asker,
+          decision,
+          action,
+          detail,
+        });
 
-    const closeInTrail = ({ approval, bot, tool, rule, answered }: LeftOpen) =>
-      Effect.andThen(
+      return Effect.andThen(
         answered
           ? Effect.void
           : byDeployment("answered", "approval.answered", {
@@ -656,6 +653,7 @@ export const gatewayLayer = Layer.effectContext(
             }),
         byDeployment("deny", auditAction(tool), { bot, rule, approval, reason: serverStopped }),
       );
+    };
 
     // Before anything is forwarded: a call an earlier run allowed and never heard back from is
     // recorded as unknown, never run again.

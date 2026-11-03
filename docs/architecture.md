@@ -688,8 +688,8 @@ not spent. A row that cannot be written once the person was asked, its answer or
 refused as `not recorded` the same way. A server that stopped while a question was open closes it at
 the next start-up, beside the sweep of `allow` rows without an outcome: an `asked` question gets
 `approval.answered` with `by: "the server stopped"`, and the question, or a yes never spent, a `deny` row
-with the same reason, both written by the deployment in one transaction with the ledger's move. A
-second start finds nothing left to close.
+with the same reason, both written by the deployment on the authority of the person it asked, in one
+transaction with the ledger's move. A second start finds nothing left to close.
 
 **The ledger never runs ahead of the trail.** The ledger and the audit trail share one SQLite client, so
 every move of a ledger row commits in one `sql.withTransaction` with the audit rows that record it, or
@@ -699,8 +699,9 @@ without them. A failed write leaves the row where it was. A question whose closi
 too stays for the start after.
 
 The ledger is the `approvals` table, one row per question:
-`(id, conversation_id, run_id, bot_id, tool, rule, state)`, no action, digest or typed text; the Bot and
-the tool are kept only so a question a stopped server left open can be closed in the trail. A row only
+`(id, conversation_id, run_id, bot_id, tool, rule, state, actor_id)`, no action, digest or typed text;
+the Bot, the tool and whose authority it was asked on are kept only so a question a stopped server left
+open can be closed in the trail, a question asked before `actor_id` existed naming the deployment. A row only
 moves forward, each move one compare-and-set `UPDATE`: `asked → yes | no | lapsed`, `yes → spent |
 lapsed`, `spent → finished | told`. A trigger refuses any other change, and any delete. A yes is spent by
 moving it to `spent`, so a second spend finds nothing to move and is refused with `already spent`. A
