@@ -1,7 +1,7 @@
 import type { Email } from "@aobot/domain";
 import { Array, Config, ConfigProvider, Data, Option, type Redacted, Result } from "effect";
 import { bareHost, onThisMachine } from "../../shared/reach.ts";
-import { normalizeDomain, normalizeEmail } from "./email.ts";
+import { isAllowedDomain, normalizeDomain, normalizeEmail } from "./email.ts";
 
 /** The company's OIDC provider, and this server as a client of it. */
 export interface ProviderSettings {
@@ -130,7 +130,20 @@ const signInConfig = Config.all({
     normalizeEmail,
     "an email address, such as alice@example.com",
   ).pipe(Config.map((admins): ReadonlySet<Email> => new Set(admins))),
-});
+}).pipe(
+  Config.flatMap((settings) =>
+    Option.match(
+      Array.findFirst(settings.admins, (admin) => !isAllowedDomain(admin, settings.allowedDomains)),
+      {
+        onNone: () => Config.succeed(settings),
+        onSome: (admin) =>
+          refuse(
+            `ADMIN_EMAILS lists ${JSON.stringify(admin)}, whose domain is not in SIGNIN_ALLOWED_EMAIL_DOMAINS, so that admin could never sign in.`,
+          ),
+      },
+    ),
+  ),
+);
 
 /**
 How people reach this server, from the environment. `SINGLE_USER=true` needs nothing else and is off by

@@ -130,4 +130,14 @@ describe("authConfig", () => {
         );
       }),
   );
+
+  it.effect.each(["alice@other.com", "alice@sub.example.com"])(
+    "refuses the admin %j, whose domain may not sign in",
+    (admin) =>
+      Effect.gen(function* () {
+        expect(yield* refusalOf({ ...signIn, ADMIN_EMAILS: admin })).toContain(
+          `ADMIN_EMAILS lists ${JSON.stringify(admin)}, whose domain is not in SIGNIN_ALLOWED_EMAIL_DOMAINS`,
+        );
+      }),
+  );
 });
