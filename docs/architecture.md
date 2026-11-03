@@ -430,7 +430,9 @@ until they resume it; in single-user mode the person is the admin. Both go throu
    headers and the `api` runtime around each turn. A call in a turn that was stopped, or ended, or never
    ran on this server is refused before the grant, as `deny` with `reason: "turn ended"`, and the model
    reads that nothing more runs in it. A call still running when its turn is stopped is cut off, and its
-   `allow` row settles `unknown` with `the turn was stopped`. So a CLI that ignores `session/cancel` acts
+   `allow` row settles `unknown` with `the turn was stopped`. A command still waiting for the one before
+   it is cut off with a `deny` row, `turn ended`, and the door checks the turn again when it lets one in,
+   so a command whose turn ended while it waited never runs. So a CLI that ignores `session/cancel` acts
    no more, and a call it made over `/mcp` ends with the turn.
 
 Pausing every Bot at once waits for admin controls.

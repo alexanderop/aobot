@@ -398,7 +398,7 @@ export const secretWaitLimit = Duration.minutes(10);
 /** How long an action a rule asks the person about waits for their answer, which is no after it. */
 export const approvalWaitLimit = Duration.minutes(10);
 
-/** Why a call ended early: the person stopped the turn it was made in. */
+/** Why a call ended early: its turn was stopped, by Stop, a pause, or the deployment's check. */
 const turnStopped = "the turn was stopped";
 
 /** Why a question an earlier run left open was answered no and refused at start-up. */
@@ -1077,6 +1077,35 @@ export const gatewayLayer = Layer.effectContext(
     };
 
     /**
+    Refuses a call in a turn that no longer runs. Checked as a call starts and again once the door lets
+    it in, since a command may wait there for the one before it while its turn ends. A call that names no
+    turn has none to check.
+    */
+    const inLiveTurn = (turn: Option.Option<TurnRef>) =>
+      Option.match(turn, {
+        onNone: () => Effect.void,
+        onSome: ({ conversation, run }) =>
+          Effect.flatMap(turns.live(conversation, run), (live) =>
+            live ? Effect.void : Effect.fail(new TurnEnded()),
+          ),
+      });
+
+    /**
+    `effect`, an action of `tool` in `turn`, through the door once its turn is checked again. Commands run
+    one at a time, in the order they were asked for, and one cut off while it waits runs `leftQueue`.
+    */
+    const enter = <A, E, R>(
+      tool: ToolName,
+      turn: Option.Option<TurnRef>,
+      effect: Effect.Effect<A, E, R>,
+      leftQueue: Effect.Effect<void>,
+    ) => {
+      const checked = Effect.andThen(inLiveTurn(turn), effect);
+
+      return tool === "run" ? doors.queue(checked, leftQueue) : doors.admit(checked);
+    };
+
+    /**
     Writes the row that ends `approval` without its action, in one write with lapsing it. When that fails,
     the question stays open in the ledger, and the next start-up closes it in the trail.
     */
@@ -1146,7 +1175,6 @@ export const gatewayLayer = Layer.effectContext(
       turn: Option.Option<TurnRef>,
       request: DirectRequest,
       needs: NeedsApproval,
-      queued: boolean,
     ) => {
       const { action, host, askRule, allowRule } = needs;
       const tool = action.action;
@@ -1157,9 +1185,13 @@ export const gatewayLayer = Layer.effectContext(
 
         if (answer === "no") return yield* new Declined({ by });
 
-        return yield* doors.admit(carryOutApproved(bot, request, approval, allowRule, askRule), {
-          queued,
-        });
+        // A command cut off while it waits closes its approval, as anything cut off after the ask does.
+        return yield* enter(
+          tool,
+          turn,
+          carryOutApproved(bot, request, approval, allowRule, askRule),
+          Effect.void,
+        );
       });
 
       return Effect.scoped(
@@ -1220,7 +1252,6 @@ export const gatewayLayer = Layer.effectContext(
 
             return suppliedAnswer(request, page);
           }),
-          { queued: false },
         )
         .pipe(
           Effect.catchTag("PersonHasControl", () =>
@@ -1295,7 +1326,6 @@ export const gatewayLayer = Layer.effectContext(
 
               return { ...asked, allowRow, allowRule: allowed.rule, question };
             }),
-            { queued: false },
           );
 
           const answered = yield* open.ask(capText(field, fieldLimit), host).pipe(
@@ -1352,20 +1382,10 @@ export const gatewayLayer = Layer.effectContext(
       );
     };
 
-    /** Refuses a call in a turn that no longer runs. A call that names no turn has none to check. */
-    const inLiveTurn = (turn: Option.Option<TurnRef>) =>
-      Option.match(turn, {
-        onNone: () => Effect.void,
-        onSome: ({ conversation, run }) =>
-          Effect.flatMap(turns.live(conversation, run), (live) =>
-            live ? Effect.void : Effect.fail(new TurnEnded()),
-          ),
-      });
-
     /**
     Cuts `self` off once the turn stops, with an answer and no row of its own: what was cut off records
-    how it ended, as it does when the turn's own fiber is interrupted, an allowed call as `unknown` and a
-    question to the person as answered no.
+    how it ended, as it does when the turn's own fiber is interrupted, an allowed call as `unknown`, a
+    question to the person as answered no, and a command still waiting for the one before it as denied.
     */
     const untilStopped =
       (tool: ToolName, turn: Option.Option<TurnRef>) =>
@@ -1393,23 +1413,24 @@ export const gatewayLayer = Layer.effectContext(
       // A row's JSON says null for a call that named no Bot by its id.
       const bot = Option.getOrNull(named);
 
-      // Commands run one at a time, in the order they were asked for.
-      const queued = request.action === "run";
-
       const turn = turnOf(claim);
 
       const carried = Effect.gen(function* () {
         const granted = yield* grant(claim, request.action);
 
+        // A command cut off while it waits has written nothing yet, so its turn's end is its deny row.
+        const leftQueue = Effect.fail(new TurnEnded()).pipe(
+          recordRefusals(request.action, { bot }),
+          Effect.ignore,
+        );
+
         return yield* BotRequest.guards.request_secret(request)
           ? askForSecret(granted, turn, request.ref, request.field)
-          : doors
-              .admit(carryOut(granted, request), { queued })
-              .pipe(
-                Effect.catchTag("NeedsApproval", (needs) =>
-                  askThenCarryOut(granted, turn, request, needs, queued),
-                ),
-              );
+          : enter(request.action, turn, carryOut(granted, request), leftQueue).pipe(
+              Effect.catchTag("NeedsApproval", (needs) =>
+                askThenCarryOut(granted, turn, request, needs),
+              ),
+            );
       });
 
       return yield* inLiveTurn(turn).pipe(

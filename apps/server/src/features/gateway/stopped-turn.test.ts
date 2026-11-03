@@ -1,6 +1,6 @@
-import { ConversationId, type PageAction, type PageRead, RunId } from "@aobot/domain";
+import { CommandEnd, ConversationId, type PageAction, type PageRead, RunId } from "@aobot/domain";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Fiber, Layer } from "effect";
+import { Deferred, Effect, Exit, Fiber, Layer, Scope } from "effect";
 import { auditLogLayer } from "../audit/public.ts";
 import { assistant, testBots } from "../bots/testing/test-bots.ts";
 import { Turns } from "../lifecycle/public.ts";
@@ -15,7 +15,18 @@ const run = RunId.make("run-1");
 
 const inTurn = Claim.cases.Named.make({ bot: assistant.id, turn: { conversation, run } });
 
+const otherConversation = ConversationId.make("conversation-2");
+
+const inOtherTurn = Claim.cases.Named.make({
+  bot: assistant.id,
+  turn: { conversation: otherConversation, run },
+});
+
 const navigate = { action: "navigate", url: "https://example.com" } as const;
+
+const sleep = { action: "run", command: "sleep 600" } as const;
+
+const ls = { action: "run", command: "ls" } as const;
 
 const exampleDomain = (action: PageAction): Effect.Effect<PageRead> =>
   Effect.succeed({
@@ -89,6 +100,87 @@ describe("given a turn the person stopped", () => {
       expect(yield* trail).toEqual([
         ["navigate · allow", undefined],
         ["navigate · unknown", "the turn was stopped"],
+      ]);
+    }).pipe(Effect.provide(withTurns(computer)), Effect.provide(database));
+  });
+});
+
+describe("given a command waiting for one from another turn", () => {
+  it.effect("refuses it at once when its turn is stopped, as a deny row", () => {
+    const reached = Deferred.makeUnsafe<void>();
+
+    const computer = fakeComputers({
+      run: () => Effect.andThen(Deferred.succeed(reached, undefined), Effect.never),
+    });
+
+    return Effect.gen(function* () {
+      const turns = yield* Turns;
+      const gateway = yield* Gateway;
+      yield* turns.start(otherConversation, run, assistant.id);
+      yield* turns.start(conversation, run, assistant.id);
+
+      yield* Effect.forkChild(gateway.act(inOtherTurn, sleep));
+      yield* Deferred.await(reached);
+
+      const waiting = yield* Effect.forkChild(Effect.flip(gateway.act(inTurn, ls)), {
+        startImmediately: true,
+      });
+
+      yield* turns.stop(conversation);
+
+      expect((yield* Fiber.join(waiting)).message).toBe("run was cut off: the turn was stopped.");
+      expect(computer.actions).toEqual([sleep]);
+      expect(yield* trail).toEqual([
+        ["run · allow", undefined],
+        ["run · deny", "turn ended"],
+      ]);
+    }).pipe(Effect.provide(withTurns(computer)), Effect.provide(database));
+  });
+
+  it.effect("refuses it, once the door lets it in, when its turn ended meanwhile", () => {
+    const reached = Deferred.makeUnsafe<void>();
+    const release = Deferred.makeUnsafe<void>();
+
+    const computer = fakeComputers({
+      run: (command) =>
+        Deferred.succeed(reached, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as({
+            action: "run",
+            end: CommandEnd.cases.Exited.make({ code: 0 }),
+            stdout: { text: command.command, truncated: false },
+            stderr: { text: "", truncated: false },
+            leftOutputOpen: false,
+          } as const),
+        ),
+    });
+
+    return Effect.gen(function* () {
+      const turns = yield* Turns;
+      const gateway = yield* Gateway;
+      const turn = yield* Scope.make();
+      yield* turns.start(otherConversation, run, assistant.id);
+      yield* Scope.provide(turns.start(conversation, run, assistant.id), turn);
+
+      const first = yield* Effect.forkChild(gateway.act(inOtherTurn, sleep));
+      yield* Deferred.await(reached);
+
+      const waiting = yield* Effect.forkChild(Effect.flip(gateway.act(inTurn, ls)), {
+        startImmediately: true,
+      });
+
+      yield* Scope.close(turn, Exit.void);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(first);
+
+      expect((yield* Fiber.join(waiting)).message).toBe(
+        "run did not run: your turn has ended, so nothing more runs in it. Stop calling tools.",
+      );
+      expect(computer.actions).toEqual([sleep]);
+      expect(yield* trail).toEqual([
+        ["run · allow", undefined],
+        ["run · succeeded", undefined],
+        ["run · deny", "turn ended"],
       ]);
     }).pipe(Effect.provide(withTurns(computer)), Effect.provide(database));
   });
