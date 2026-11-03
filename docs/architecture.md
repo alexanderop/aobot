@@ -17,7 +17,7 @@ three things:
  Desktop app / web page ──► Server ──► Agent runtime (`api`: effect/ai · `acp`: your own CLI)
                               ▲              │ tool call
                               │              ▼
-                              └──── Gateway: granted? → rules? → audit row → forward
+                              └──── Gateway: granted? → the person's? → rules? → audit row → forward
                                                                    │
                                                                    ▼
                                                  Computer (container: Chromium, bash, /workspace)
@@ -166,12 +166,14 @@ host of the page's origin, so `blob:https://shop.example/…` is `shop.example`,
 stored before E2-2 has none, so the migration that adds the address forgets it rather than let a ref be
 judged on the host `""`: no ref resolves until a Bot reads the page again.
 
-The order in `Gateway.act` is grant, door, ref or path, rules, `allow` row, forward. A ref that does not
-resolve is refused for that and never judged on an empty element. Then every deny rule in the order the
-file gives them: the first that holds refuses. Then every allow rule in order: the first that holds
-allows. Anything no allow rule allows is refused, so empty lists refuse everything; the server logs a
-warning at start-up when the allow list is empty. Then every ask rule in order: the first that holds asks
-the person first (see [Asking the person](#asking-the-person)). An ask rule is read only for an action an
+The order in `Gateway.act` is grant, door, ref or path, safety list, rules, `allow` row, forward. A ref
+that does not resolve is refused for that and never judged on an empty element. An action on the safety
+list is handed to the person before any rule is read (see [Actions that are always the
+person's](#actions-that-are-always-the-persons)). Then every deny rule in the order the file gives
+them: the first that holds refuses. Then every allow rule in order: the first that holds allows.
+Anything no allow rule allows is refused, so empty lists refuse everything; the server logs a warning
+at start-up when the allow list is empty. Then every ask rule in order: the first that holds asks the
+person first (see [Asking the person](#asking-the-person)). An ask rule is read only for an action an
 allow rule allowed, so adding one never allows anything, and every action that runs is still allowed by
 an allow rule.
 
@@ -219,14 +221,69 @@ page moved to by itself. A click that follows a link, Enter that submits a form,
 `navigate` all reach a host no rule judged; the egress filter still decides whether the computer may go
 there at all. Judging the page an action lands on is a follow-up (`docs/backlog/later.md`).
 
+## Actions that are always the person's
+
+A Bot never enters or changes a credential, changes a security setting, or pays, whatever `rules.yaml`
+says. The safety list is code, in `gateway/safety.ts`, not configuration: no rule, no admin setting and
+no yes to an ask rule turns it off. It has three lists, matched in order: `credentials` (a password,
+passcode, PIN, one-time, verification or security code, a card's included, a code a page asks to enter, a
+security question), `security` (two-factor and 2-step sign-in, passkeys, authenticator apps, recovery
+codes, API keys, access tokens and SSH keys, revoking sessions, changing the account's email, making an
+admin, inviting people, changing a role, transferring ownership, authorizing an app or allowing it
+access, security, sharing and permission settings, deleting, closing or deactivating the account) and
+`payments` (paying, checkout, buying, ordering, completing or confirming an order, booking now,
+subscribing and upgrading a plan, adding or changing a card, card numbers and expiry dates, bank
+accounts, wires, transfers, a send page, withdrawals and donations, billing). Each also matches its
+German words for a password, two-factor sign-in, deleting the account, changing its email, buying,
+ordering, paying, subscribing, transfers and a card's fields.
+
+**What it reads.** A `click`, `type` or `press` is matched on the element its ref resolved to, as
+the server's snapshot names it (role and name), and the host and path of the page that snapshot was
+read at, so a "Continue" button on `/checkout` is a payment. It matches them as a person reads them:
+full-width letters folded, soft hyphens and zero-width characters dropped, typographic dashes made
+plain, and the path's percent-escapes decoded, so `/%C3%BCberweisung` is a transfer. Never on the
+text a Bot types or the key it presses: a note about a customer's purchase is not a purchase. Never
+on the address's query or fragment, which the latest snapshot does not keep. A snapshot stored
+before E2-6 has no path, so the migration that adds it forgets the snapshot, as the one that added
+its address did. The lists are deliberately broad: a false hand-off costs the person one click, a
+missed one costs them their account or their money.
+
+**What it misses.** It reads the path and never the query or fragment, so on a page routed by them,
+such as `/#/settings/password` or `index.php?page=checkout`, it rests on the element's name alone.
+Enter pressed in a field named like a password hands off even on a sign-in page, so a Bot signs in by
+clicking the page's button; that false hand-off costs one click. The path it judges is the one the
+latest snapshot read, so a page that navigates by itself after that read is judged by its old path
+until the next snapshot.
+
+**What it does not read.** `navigate` and `snapshot` only read a page, and reading a checkout page is not
+paying. `run` and the file tools are workspace tools, left to the rules: a command's text is a filter,
+not a boundary, and the egress filter decides where it may reach. `request_secret` is the person typing
+the secret themselves, on a card that names the field and the site; the click or key that submits it is
+judged like any other, so "Change password" is still the person's.
+
+**A match hands the action to the person.** It runs after the grant, the door and the ref, and before any
+rule, so a deny rule never refuses it and an ask rule never asks about it. The computer never hears of it.
+It is one `hand_off` row, a decision no outcome follows, with the action's audit detail, the page's
+`path` and the list as `safety`: `click · hand_off · safety:credentials` is
+`{ bot, ref, role, name, host, path, safety: "credentials" }`. The audit page reads it as "Handed to the
+person" and shows `safety:credentials` where another row shows its rule. The `Gateway.act` span records
+`gateway.decision=hand_off`, `decision.source=safety` and `gateway.safety`. The model reads:
+
+> click did not run: entering or changing a password, PIN, one-time code or other credential is always your person's to do, never a Bot's, whatever the rules say. Stop, tell your person what needs doing, and ask them to take control of your computer and do it themselves.
+
+The person does it on the live screen ([Taking control](#taking-control)). An action the person said yes
+to is matched again when it runs, since the page can have moved on to one where the same element is
+theirs; then the `hand_off` row closes the question, naming the approval and, as `rule`, the ask rule
+the person was asked under. The audit page still shows the list there, as `safety:security`.
+
 ## Life of one request
 
 1. A person sends a message with the Bot they picked.
 2. The server starts an agent turn on behalf of that Bot, with its instructions, which name the tools it
    was granted.
 3. The agent asks for a tool, for example `navigate`.
-4. The gateway checks the grant, then the rules, and writes one audit row either way. When an ask rule
-   holds, it asks the person in the chat first and waits for their answer.
+4. The gateway checks the grant, then the safety list, then the rules, and writes one audit row either
+   way. When an ask rule holds, it asks the person in the chat first and waits for their answer.
 5. Only on "yes", the gateway asks the person's computer to act, and never when its row could not be
    written. Every `allow` row then gets exactly one outcome row, `succeeded`, `failed` or `unknown`, so
    "allowed" never reads as "done". `unknown` means the server lost track, by a timeout or a restart; such a

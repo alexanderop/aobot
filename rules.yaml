@@ -1,12 +1,14 @@
 # The rules every Bot action is judged by, read once at start-up (RULES_FILE points elsewhere).
 #
-# The gateway first refuses a tool a Bot was not granted in bots.yaml. Every other action is judged
-# here: each deny rule in order, and the first that holds refuses it. Then each allow rule in order,
-# and the first that holds allows it. Anything no allow rule allows is refused, so an empty allow list
-# refuses everything. Then each ask rule in order, and the first that holds asks the person in the
-# chat first, showing them the whole command, address or text as the Bot wrote it: the action runs
-# once if they say yes within 10 minutes, and is refused otherwise. An ask rule is read only for an
-# action an allow rule allowed, so adding one never allows anything. The ask list may be left out.
+# The gateway first refuses a tool a Bot was not granted in bots.yaml. Then it hands to the person any
+# click, type or press that enters or changes a credential, changes a security setting or pays, before
+# any rule here is read: no rule allows one of those, and none needs to deny it. Every other action is
+# judged here: each deny rule in order, and the first that holds refuses it. Then each allow rule in
+# order, and the first that holds allows it. Anything no allow rule allows is refused, so an empty
+# allow list refuses everything. Then each ask rule in order, and the first that holds asks the person
+# in the chat first, showing them the whole command, address or text as the Bot wrote it: the action
+# runs once if they say yes within 10 minutes, and is refused otherwise. An ask rule is read only for
+# an action an allow rule allowed, so adding one never allows anything. The ask list may be left out.
 #
 # It fails closed. A deny rule that fails while it is checked, such as int(command) on a command that is
 # no number, refuses; an allow rule that fails allows nothing; an ask rule that fails asks. A file that

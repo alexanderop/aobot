@@ -3,10 +3,10 @@ import { Context, Effect, Layer, Option, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 
 /**
-What the gateway decided about a call: `allow` or `deny`, or `ask` and `answered` for a question it put
-to the person first.
+What the gateway decided about a call: `allow` or `deny`, `hand_off` for an action that is always the
+person's, or `ask` and `answered` for a question it put to the person first.
 */
-export type Decision = Extract<AuditDecision, "allow" | "deny" | "ask" | "answered">;
+export type Decision = Extract<AuditDecision, "allow" | "deny" | "hand_off" | "ask" | "answered">;
 
 /**
 What became of an allowed call. `unknown` means the server stopped hearing about it before it heard back,

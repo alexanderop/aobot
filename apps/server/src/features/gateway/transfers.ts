@@ -123,7 +123,7 @@ export const fileTransfers = Effect.gen(function* () {
   const computers = yield* Computers;
 
   const refuse = (action: Action, detail: Schema.JsonObject, error: TransferFailed) =>
-    Effect.andThen(rows.deny(action, detail), Effect.fail(error));
+    Effect.andThen(rows.refuse("deny", action, detail), Effect.fail(error));
 
   const allow = (action: Action, detail: Schema.JsonObject) =>
     rows.decide("allow", action, detail).pipe(Effect.mapError(() => notRecorded));

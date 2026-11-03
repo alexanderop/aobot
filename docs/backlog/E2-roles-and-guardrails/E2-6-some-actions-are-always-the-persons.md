@@ -2,7 +2,7 @@
 id: E2-6
 title: Some actions are always the person's
 epic: E2
-status: todo
+status: done
 depends_on: [E2-5]
 estimate: 2d
 ---

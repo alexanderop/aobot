@@ -133,12 +133,52 @@ const addApprovalRows = Effect.gen(function* () {
   yield* indexNewestFirst;
 });
 
+// `hand_off` is a decision, so it follows no row. The table is rebuilt as in 0002.
+const addHandOffRows = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+
+  yield* sql`
+    CREATE TABLE audit_rows_next (
+      seq integer PRIMARY KEY AUTOINCREMENT,
+      id text NOT NULL UNIQUE,
+      created_at text NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      trace_id text,
+      initiator_kind text NOT NULL CHECK (initiator_kind IN ('person', 'deployment')),
+      actor_id text NOT NULL,
+      decision text NOT NULL CHECK (
+        decision IN (
+          'allow', 'deny', 'hand_off', 'ask', 'answered', 'succeeded', 'failed', 'unknown'
+        )
+      ),
+      action text NOT NULL,
+      detail text NOT NULL,
+      outcome_of text,
+      CHECK ((decision IN ('allow', 'deny', 'hand_off', 'ask', 'answered')) = (outcome_of IS NULL))
+    )
+  `;
+
+  yield* sql`
+    INSERT INTO audit_rows_next
+      (seq, id, created_at, trace_id, initiator_kind, actor_id, decision, action, detail, outcome_of)
+    SELECT seq, id, created_at, trace_id, initiator_kind, actor_id, decision, action, detail, outcome_of
+    FROM audit_rows
+  `;
+
+  yield* sql`DROP TABLE audit_rows`;
+  yield* sql`ALTER TABLE audit_rows_next RENAME TO audit_rows`;
+
+  yield* refuseRewrites;
+  yield* guardOutcomes;
+  yield* indexNewestFirst;
+});
+
 /** Every migration of the audit table, in the order they run. */
 export const auditMigrations = {
   "0001_create_audit_rows": createAuditRows,
   "0002_add_outcome_rows": addOutcomeRows,
   "0003_index_newest_first": indexNewestFirst,
   "0004_add_approval_rows": addApprovalRows,
+  "0005_add_hand_off_rows": addHandOffRows,
 };
 
 /** Brings the audit table up to date. Safe to run at every boot. */

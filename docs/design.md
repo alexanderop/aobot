@@ -107,7 +107,8 @@ in the app, previews and unread dots for E3-2, and the bottom bar for people (E3
   history entry.
 - **Rows:** a table, newest first: the time, the Bot, the person (with "by the server" for a row the
   deployment wrote), the action and the decision in words ("Run a command", "Refused"), why (the rule in a
-  code chip, then the reason), and Trace, which opens the row's trace in Grafana in a new tab. Refused and
+  code chip, or the safety list as `safety:credentials` for an action handed to the person, then the
+  reason), and Trace, which opens the row's trace in Grafana in a new tab. Refused and
   Failed are `--danger`, Outcome unknown `--muted`. An action or a decision the page has no words for reads
   Unknown, never Allowed.
 - **Paging:** 50 rows at a time; Load more reads the next page after the last row shown, and is gone once

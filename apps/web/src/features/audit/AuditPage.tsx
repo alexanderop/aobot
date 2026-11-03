@@ -17,7 +17,7 @@ const shownAt = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeSt
 /** One audit row: when, for which Bot and person, what, how it was decided and why, and its trace. */
 function Row(props: { readonly row: AuditRow; readonly botName: (id: string) => string }) {
   const { row } = props;
-  const { rule, reason } = whyOf(row);
+  const { decidedBy, reason } = whyOf(row);
 
   return (
     <tr className="audit__row" data-action={row.action} data-decision={row.decision}>
@@ -35,7 +35,7 @@ function Row(props: { readonly row: AuditRow; readonly botName: (id: string) => 
       <td className="audit__decision">{decisionLabel(row.decision)}</td>
       <td>
         <span className="audit__why">
-          {Option.match(rule, {
+          {Option.match(decidedBy, {
             onNone: () => null,
             onSome: (name) => <code className="audit__rule">{name}</code>,
           })}
