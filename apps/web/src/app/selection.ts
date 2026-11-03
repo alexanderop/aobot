@@ -1,5 +1,5 @@
 import { BotId, type BotSummary, ConversationId } from "@aobot/domain";
-import { type Array, Option, Schema } from "effect";
+import { type Array, Data, Option, Schema } from "effect";
 import { OpenOutcome } from "../features/chat/public.ts";
 
 /** Which Bot the page has open, and which of its conversations. Both live in the URL, as `bot` and `c`. */
@@ -7,6 +7,19 @@ export interface Selection {
   readonly bot: BotId;
   readonly conversation: ConversationId;
 }
+
+/**
+What the person asks the page to show: a Bot, on the last conversation the page had with it; one of their
+conversations; or a new conversation with a Bot.
+*/
+export type Choice = Data.TaggedEnum<{
+  Bot: { readonly bot: BotId };
+  Conversation: { readonly selection: Selection };
+  New: { readonly bot: BotId };
+}>;
+
+/** Constructors and matchers for {@link Choice}. */
+export const Choice = Data.taggedEnum<Choice>();
 
 /** The last conversation the server opened for the page with each Bot. */
 export type Memory = ReadonlyMap<BotId, ConversationId>;
@@ -16,7 +29,7 @@ const decodeBot = Schema.decodeUnknownOption(BotId);
 const decodeConversation = Schema.decodeUnknownOption(ConversationId);
 
 /** `bot`'s last conversation, or `fresh` when the page has none for it. */
-export function pickBot(bot: BotId, memory: Memory, fresh: ConversationId): Selection {
+function pickBot(bot: BotId, memory: Memory, fresh: ConversationId): Selection {
   return {
     bot,
     conversation: Option.getOrElse(Option.fromNullishOr(memory.get(bot)), () => fresh),
@@ -83,17 +96,42 @@ export function botLink(url: URL, bot: BotId): URL {
 
 /**
 What the page shows once the server answered how `requested` opened: a conversation of another Bot with
-its own Bot, anything else as it was asked for. A Bot the server does not know stays selected, with its
-refusal on screen, until the Bot list the refusal asks for again says which Bots there are.
+its own Bot, one that is not the person's as `fresh` with the same Bot, anything else as it was asked
+for. A Bot the server does not know stays selected, with its refusal on screen, until the Bot list the
+refusal asks for again says which Bots there are.
 */
-export function follow(requested: Selection, outcome: Option.Option<OpenOutcome>): Selection {
+export function follow(
+  requested: Selection,
+  outcome: Option.Option<OpenOutcome>,
+  fresh: ConversationId,
+): Selection {
   return Option.match(outcome, {
     onNone: () => requested,
     onSome: OpenOutcome.$match({
       Opened: () => requested,
       OfAnotherBot: ({ botId }) => ({ bot: botId, conversation: requested.conversation }),
       UnknownBot: () => requested,
+      NotYours: () => ({ bot: requested.bot, conversation: fresh }),
     }),
+  });
+}
+
+/**
+What the page opens next for `choice` made on `current`: a Bot's last conversation, or `fresh` with it, a
+conversation, or `fresh` as a new one. None when it shows that already.
+*/
+export function choose(
+  current: Selection,
+  choice: Choice,
+  memory: Memory,
+  fresh: ConversationId,
+): Option.Option<Selection> {
+  return Choice.$match(choice, {
+    Bot: ({ bot }) =>
+      bot === current.bot ? Option.none() : Option.some(pickBot(bot, memory, fresh)),
+    Conversation: ({ selection }) =>
+      selection.conversation === current.conversation ? Option.none() : Option.some(selection),
+    New: ({ bot }) => Option.some({ bot, conversation: fresh }),
   });
 }
 

@@ -22,12 +22,13 @@ export type FailureCode =
 
 /**
 What the server said when the page opened a conversation with a Bot: opened, with the Bot it belongs to,
-or refused because it belongs to another Bot or the server knows no such Bot.
+or refused because it belongs to another Bot, the server knows no such Bot, or it is not the person's.
 */
 export type OpenOutcome = Data.TaggedEnum<{
   Opened: { readonly bot: BotSummary };
   OfAnotherBot: { readonly botId: BotId };
   UnknownBot: { readonly botId: BotId };
+  NotYours: {};
 }>;
 
 /** Constructors and matchers for {@link OpenOutcome}. */

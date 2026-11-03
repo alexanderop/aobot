@@ -1,5 +1,6 @@
 import type { BotId, BotSummary } from "@aobot/domain";
-import { type MouseEvent, useId } from "react";
+import { type ReactNode, useId } from "react";
+import { isPlainClick } from "../../shared/plain-click.ts";
 import { BotAvatar } from "./BotAvatar.tsx";
 import { sidebarSections } from "./sidebar-sections.ts";
 import "./sidebar.css";
@@ -10,11 +11,6 @@ interface Picking {
   /** Where a Bot's link leads, for a click that opens it elsewhere: a new tab, a copied link. */
   readonly linkTo: (bot: BotId) => string;
   readonly onPick: (bot: BotId) => void;
-}
-
-/** A click the page handles itself; one with a modifier or another button opens the link as usual. */
-function isPlainClick(event: MouseEvent): boolean {
-  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
 }
 
 const avatarSize = { tile: 52, row: 32 } as const;
@@ -86,9 +82,12 @@ function Group(props: {
 
 /**
 The Bots to talk to, as a messenger lists contacts: the pinned ones as a grid of large avatars, then a row
-per Bot under each group's heading. The selected Bot's conversation is the one open beside it.
+per Bot under each group's heading, then `children`, such as the person's conversations. The selected
+Bot's conversation is the one open beside it.
 */
-export function Sidebar(props: Picking & { readonly bots: ReadonlyArray<BotSummary> }) {
+export function Sidebar(
+  props: Picking & { readonly bots: ReadonlyArray<BotSummary>; readonly children?: ReactNode },
+) {
   const { pinned, ungrouped, groups } = sidebarSections(props.bots);
   const picking: Picking = { selected: props.selected, linkTo: props.linkTo, onPick: props.onPick };
   const paused = usePausedBots();
@@ -130,6 +129,7 @@ export function Sidebar(props: Picking & { readonly bots: ReadonlyArray<BotSumma
           picking={picking}
         />
       ))}
+      {props.children}
     </nav>
   );
 }

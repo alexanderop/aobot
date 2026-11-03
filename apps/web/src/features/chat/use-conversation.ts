@@ -1,8 +1,9 @@
 import { useAtomMount, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { MessageId } from "@aobot/domain";
-import type { BotId, BotSummary, ConversationId } from "@aobot/domain";
+import type { BotId, BotSummary, ConversationId, ConversationSummary } from "@aobot/domain";
 import { Option } from "effect";
-import { useCallback, useMemo } from "react";
+import { AsyncResult } from "effect/reactivity";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { conversation } from "./conversation.ts";
 import { ConversationStatus, isRunning, runningTurn, usesComputer } from "./conversation-state.ts";
 import type { FailureCode, TranscriptItem, Unsent } from "./conversation-state.ts";
@@ -77,4 +78,23 @@ export function useConversation(id: ConversationId, botId: BotId): UseConversati
     send,
     stop,
   };
+}
+
+/**
+Marks the conversation read each time a turn ends while it is on screen, so the person is not shown as
+unread what they watched arrive. Only the page that shows it calls this.
+*/
+export function useReadWhenTurnEnds(id: ConversationId, isRunning: boolean): void {
+  const read = useAtomSet(conversation.read(id));
+  const wasRunning = useRef(isRunning);
+
+  useEffect(() => {
+    if (wasRunning.current && !isRunning) read();
+    wasRunning.current = isRunning;
+  }, [isRunning, read]);
+}
+
+/** The person's conversations that have a message, the one written to last first, once the server said. */
+export function useConversationList(): Option.Option<ReadonlyArray<ConversationSummary>> {
+  return AsyncResult.value(useAtomValue(conversation.list));
 }
