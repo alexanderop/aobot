@@ -226,6 +226,56 @@ describe("Turns", () => {
     }).pipe(Effect.provide(server())),
   );
 
+  it.effect("keeps a turn that started after a resume while a check still read the pause", () => {
+    const hold = Ref.makeUnsafe(false);
+    const reading = Deferred.makeUnsafe<void>();
+    const answer = Deferred.makeUnsafe<void>();
+
+    // Holds the answer of the next read once the database gave it, as a check whose query was slow.
+    const heldRead = Layer.effect(
+      PauseStore,
+      Effect.gen(function* () {
+        const store = yield* PauseStore;
+
+        const paused = store.paused.pipe(
+          Effect.tap(() =>
+            Effect.flatMap(Ref.getAndSet(hold, false), (held) =>
+              held
+                ? Deferred.succeed(reading, undefined).pipe(Effect.andThen(Deferred.await(answer)))
+                : Effect.void,
+            ),
+          ),
+        );
+
+        return PauseStore.of({ ...store, paused });
+      }),
+    ).pipe(Layer.provide(pauseStoreLayer));
+
+    const held = turnsLayer.pipe(
+      Layer.provide([heldRead, auditLogLayer]),
+      Layer.provide(Layer.effectDiscard(Effect.all([migrateLifecycle, migrateAudit]))),
+      Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })),
+    );
+
+    return Effect.gen(function* () {
+      const turns = yield* Turns;
+      yield* firstCheck(turns);
+      yield* turns.start(second, run, assistant.id);
+      yield* turns.pause(assistant.id);
+
+      yield* Ref.set(hold, true);
+      yield* TestClock.adjust("5 seconds");
+      yield* Deferred.await(reading);
+
+      yield* turns.resume(assistant.id);
+      const claim = yield* turns.start(first, run, assistant.id);
+      yield* Deferred.succeed(answer, undefined);
+      yield* TestClock.adjust("5 seconds");
+
+      expect(yield* stopOf(claim.stopped)).toEqual(Option.none());
+    }).pipe(Effect.provide(held));
+  });
+
   describe("when the pause state cannot be read", () => {
     it.effect("keeps a turn whose check failed twice and then read again", () => {
       const failures = Ref.makeUnsafe(0);

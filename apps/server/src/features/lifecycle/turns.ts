@@ -347,14 +347,18 @@ export const turnsLayer = Layer.effectContext(
 
     // Pauses made on another server reach the turns running here through this check.
     const check = Effect.gen(function* () {
+      // Taken before the read, since a turn that starts while the read is out did a read of its own,
+      // which this older one must not overrule.
+      const judged = Array.fromIterable(MutableHashMap.values(running));
+
       const result = yield* Effect.result(read);
 
-      const bots = Array.dedupe(
-        Array.map(Array.fromIterable(MutableHashMap.values(running)), (turn) => turn.bot),
-      );
-
       const stops = yield* Ref.modify(strikes, (before) => {
-        const [after, decided] = judge(before, bots, result);
+        const [after, decided] = judge(
+          before,
+          Array.dedupe(Array.map(judged, (turn) => turn.bot)),
+          result,
+        );
 
         return [decided, after];
       });
@@ -364,9 +368,11 @@ export const turnsLayer = Layer.effectContext(
         ([bot, code]) =>
           Effect.logWarning("A Bot's turns were stopped by the pause check").pipe(
             Effect.annotateLogs({ bot, reason: stopWords[code] }),
-            Effect.andThen(turnsOf(bot)),
-            Effect.flatMap((turns) =>
-              stopTurns(turns, new TurnStopped({ code, by: "deployment" })),
+            Effect.andThen(
+              stopTurns(
+                Array.filter(judged, (turn) => turn.bot === bot),
+                new TurnStopped({ code, by: "deployment" }),
+              ),
             ),
           ),
         { discard: true },

@@ -421,11 +421,12 @@ until they resume it; in single-user mode the person is the admin. Both go throu
    row naming `bot paused` by the `person`. `Pause.resume` deletes the row with its `bot.resumed` rows.
    Pausing a paused Bot or resuming a running one writes nothing.
 5. Every five seconds, on a fixed cadence, each server reads `bot_pauses` and stops its turns of every
-   Bot paused on another server; their `turn.stopped` rows are by the `deployment`. When three reads in
-   a row fail while a Bot has a turn running here, its turns stop too, with `pause_unknown`: one slow
-   query does not stop every running turn, fifteen seconds of a database that stays unreadable does. A read that
-   answers, a turn's start among them, clears the count. The same read keeps `Pause.watch` current, which
-   the page follows for its Paused badge and its Pause and Resume button.
+   Bot paused on another server, among the turns that ran when it read: a turn that started meanwhile
+   did a read of its own. Their `turn.stopped` rows are by the `deployment`. When three reads in a row
+   fail while a Bot has a turn running here, its turns stop too, with `pause_unknown`: one slow query
+   does not stop every running turn, fifteen seconds of a database that stays unreadable does. A read
+   that answers, a turn's start among them, clears the count. The same read keeps `Pause.watch` current,
+   which the page follows for its Paused badge and its Pause and Resume button.
 6. The gateway reads `LiveTurns` on every call that names its turn, which the `acp` runtime does in its
    headers and the `api` runtime around each turn. A call in a turn that was stopped, or ended, or never
    ran on this server is refused before the grant, as `deny` with `reason: "turn ended"`, and the model
