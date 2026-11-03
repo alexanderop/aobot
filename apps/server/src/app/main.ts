@@ -30,11 +30,11 @@ import {
 } from "../features/agent/public.ts";
 import { auditLogLayer, auditTrailLayer, migrateAudit } from "../features/audit/public.ts";
 import {
+  AuthSettings,
+  authLayers,
   checkSingleUserAddress,
-  identitySingleUser,
   lookupLayer,
-  sessionRoute,
-  signedInGate,
+  migrateAuth,
   signedInRpc,
 } from "../features/auth/public.ts";
 import { botHandlers, botsFileLayer, botToolkit } from "../features/bots/public.ts";
@@ -63,7 +63,7 @@ const server = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* serverConfig;
 
-    if (config.singleUser) {
+    if (AuthSettings.$is("SingleUser")(config.auth)) {
       yield* checkSingleUserAddress(config.publicUrl).pipe(Effect.provide(lookupLayer));
     }
 
@@ -79,7 +79,7 @@ const server = Layer.unwrap(
     ).pipe(Layer.provide([NodeFileSystem.layer, NodePath.layer]));
 
     const database = Layer.effectDiscard(
-      Effect.all([migrateChat, migrateAudit, migrateGateway, migrateLifecycle]),
+      Effect.all([migrateChat, migrateAudit, migrateGateway, migrateLifecycle, migrateAuth]),
     ).pipe(
       Layer.provideMerge(SqliteClient.layer({ filename: config.databasePath })),
       Layer.provide(databaseFolder),
@@ -175,10 +175,11 @@ const server = Layer.unwrap(
 
     const healthCheck = HttpRouter.add("GET", "/healthz", HttpServerResponse.text("ok"));
 
-    const signedIn = Layer.mergeAll(
-      signedInGate(join(config.webDistDir, "index.html")),
-      sessionRoute,
-    );
+    const auth = authLayers(config.auth, join(config.webDistDir, "index.html"));
+
+    const identity = auth.identity.pipe(Layer.provide(database));
+
+    const signedIn = auth.http.pipe(Layer.provide(auditLogLayer), Layer.provide(database));
 
     const listener = NodeHttpServer.layer(createServer, { port: config.port, host: config.host });
 
@@ -198,7 +199,7 @@ const server = Layer.unwrap(
     return HttpRouter.serve(
       Layer.mergeAll(rpc, files, audit, webApp, healthCheck, signedIn, runtime.routes),
     ).pipe(
-      Layer.provide(identitySingleUser),
+      Layer.provide(identity),
       Layer.merge(runtime.beside),
       Layer.provide(listener),
       Layer.provide([spanAttributesRedacted.pipe(Layer.provide(telemetry)), untracedHttp]),

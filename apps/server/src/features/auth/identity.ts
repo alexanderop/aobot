@@ -1,7 +1,19 @@
-import { SessionState } from "@aobot/domain";
-import { Context, Effect, Layer, Option, Schema } from "effect";
-import type { Headers } from "effect/http";
+import { Email, SessionState } from "@aobot/domain";
+import { Clock, Context, Effect, Layer, Option, Schema } from "effect";
+import { Cookies, type Headers } from "effect/http";
+import { SqlClient } from "effect/sql";
 import { Actor, singleUser } from "../../shared/actor.ts";
+import { admission } from "./admission.ts";
+import { tokenHash } from "./people.ts";
+import type { SignInSettings } from "./settings.ts";
+
+/** The cookie a person's session token is in. */
+export const sessionCookie = "aobot_session";
+
+/** The session token `headers` carry, if any. */
+function sessionToken(headers: Headers.Headers): Option.Option<string> {
+  return Option.fromUndefinedOr(Cookies.parseHeader(headers["cookie"] ?? "")[sessionCookie]);
+}
 
 /**
 The database did not answer who a session belongs to. Whoever asked refuses the request for now, and never
@@ -31,6 +43,51 @@ export const identitySingleUser = Layer.succeed(
   Identity,
   Identity.of({ resolve: () => Effect.succeed(Option.some(singleUser)) }),
 );
+
+const decodeSession = Schema.decodeUnknownEffect(
+  Schema.Array(Schema.Struct({ email: Email, name: Schema.String })),
+);
+
+/**
+Sign-in mode: the person of a live session, read from the database on every call, so a sign-out, a
+removal or a domain no longer allowed counts at once, also when another process made it.
+*/
+export const identitySignIn = (settings: Pick<SignInSettings, "allowedDomains">) =>
+  Layer.effect(
+    Identity,
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+
+      const lookUp = Effect.fnUntraced(function* (headers: Headers.Headers) {
+        const token = sessionToken(headers);
+
+        if (Option.isNone(token)) return Option.none<Actor>();
+
+        const now = new Date(yield* Clock.currentTimeMillis).toISOString();
+
+        const [session] = yield* sql`
+          SELECT people.email, people.name FROM sessions JOIN people USING (email)
+          WHERE sessions.token_hash = ${tokenHash(token.value)} AND sessions.expires_at > ${now}
+            AND people.removed_at IS NULL
+        `.pipe(
+          Effect.flatMap(decodeSession),
+          Effect.mapError((error) => new IdentityUnreadable({ message: error.message })),
+        );
+
+        return Option.flatMap(Option.fromUndefinedOr(session), ({ email, name }) =>
+          Option.isSome(admission(email, settings.allowedDomains, false))
+            ? Option.none()
+            : Option.some(Actor.cases.Person.make({ email, name })),
+        );
+      });
+
+      return Identity.of({
+        // Untraced, its query included: every request and every RPC call reads it, and a root trace
+        // each would bury the turns.
+        resolve: (headers) => lookUp(headers).pipe(Effect.withTracerEnabled(false)),
+      });
+    }),
+  );
 
 const signedOut = SessionState.cases.SignedOut.make({});
 

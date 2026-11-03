@@ -1,6 +1,7 @@
 import { isIPv4 } from "node:net";
 import { Option } from "effect";
 import { AgentRuntimeSettings } from "../features/agent/public.ts";
+import { AuthSettings } from "../features/auth/public.ts";
 
 /** Whether `host` is this machine only: `localhost`, `::1` or anything in 127.0.0.0/8. */
 export function isLoopback(host: string): boolean {
@@ -15,12 +16,12 @@ runs in single-user mode and only where nobody else can reach it.
 */
 export function sharedSubscriptionProblem(
   runtime: AgentRuntimeSettings,
-  singleUser: boolean,
+  auth: AuthSettings,
   host: string,
 ): Option.Option<string> {
   if (!AgentRuntimeSettings.$is("Acp")(runtime)) return Option.none();
 
-  if (!singleUser) {
+  if (!AuthSettings.$is("SingleUser")(auth)) {
     return Option.some(
       "AGENT_RUNTIME=acp runs Bots on one person's own subscription, so it needs SINGLE_USER=true.",
     );

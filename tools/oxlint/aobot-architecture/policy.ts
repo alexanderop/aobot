@@ -32,7 +32,7 @@ export const featureDependencies: ReadonlyMap<
       ["agent", ["bots", "gateway"]],
       ["lifecycle", ["bots", "audit"]],
       ["chat", ["bots", "agent", "lifecycle"]],
-      ["auth", []],
+      ["auth", ["audit"]],
       ["approvals", ["gateway"]],
     ]),
   ],

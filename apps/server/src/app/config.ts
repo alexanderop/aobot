@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { Config, ConfigProvider, Duration, Option } from "effect";
 import { agentRuntimeConfig } from "../features/agent/public.ts";
+import { authConfig } from "../features/auth/public.ts";
 import { computerConfig } from "../features/computers/public.ts";
 import { privateHostsProblem, sharedSubscriptionProblem } from "./local-only.ts";
 
@@ -20,7 +21,7 @@ const settings = Config.all({
   // Where people open the web app, such as `https://aobot.example.com`: its pages may use the RPC socket
   // beside this machine's own, and sign-in comes back to it. Unset, `http://localhost:<PORT>`.
   publicUrl: Config.option(Config.URL("PUBLIC_URL")),
-  singleUser: Config.Boolean("SINGLE_USER").pipe(Config.withDefault(false)),
+  auth: authConfig,
   webDistDir: Config.String("WEB_DIST_DIR").pipe(Config.withDefault(builtWebApp)),
   databasePath: Config.String("DATABASE_PATH").pipe(Config.withDefault("data/aobot.db")),
   // The Bots this server knows. Read once at start-up: an edit takes effect on the next start.
@@ -51,7 +52,7 @@ export const serverConfig = settings.pipe(
   })),
   Config.flatMap((config) =>
     Option.match(
-      Option.orElse(sharedSubscriptionProblem(config.runtime, config.singleUser, config.host), () =>
+      Option.orElse(sharedSubscriptionProblem(config.runtime, config.auth, config.host), () =>
         privateHostsProblem(config.deployment, config.computers.allowPrivateHosts),
       ),
       {
