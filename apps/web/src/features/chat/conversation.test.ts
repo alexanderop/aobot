@@ -24,6 +24,7 @@ import {
   isRunning,
 } from "./conversation-state.ts";
 import type { ConversationState } from "./conversation-state.ts";
+import { signedIn } from "../../shared/testing/signed-in.ts";
 
 const conversationId = ConversationId.make("c1");
 
@@ -61,6 +62,7 @@ const fakeServer = (script: {
   return Atom.runtime(
     Layer.effect(ChatClient, RpcTest.makeClient(ChatRpcs, { flatten: true })).pipe(
       Layer.provide(handlers),
+      Layer.provide(signedIn),
     ),
   );
 };

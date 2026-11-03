@@ -1,0 +1,87 @@
+import { Context, Schema } from "effect";
+import { RpcMiddleware } from "effect/rpc";
+
+/**
+An email address as sign-in compares it: in printable ASCII and lower-cased, so no two spellings of one
+address, and no lookalike of another, are two people. It is a person's id on every audit row they cause.
+*/
+export const Email = Schema.String.pipe(
+  Schema.check(Schema.isPattern(/^[!-?[-~]+@[!-?[-~]+$/u)),
+  Schema.brand("Email"),
+);
+
+/** A decoded {@link Email}. */
+export type Email = typeof Email.Type;
+
+/** A signed-in person, as the page shows them. */
+export const Person = Schema.Struct({ email: Email, name: Schema.String });
+
+/** A decoded {@link Person}. */
+export type Person = typeof Person.Type;
+
+/**
+Who the page is open for, as `GET /auth/session` answers: a signed-in person, the one person of a server in
+single-user mode, or nobody yet. The page opens no RPC socket before it reads `SignedIn` or `SingleUser`.
+*/
+export const SessionState = Schema.TaggedUnion({
+  SignedIn: { person: Person },
+  SingleUser: {},
+  SignedOut: {},
+});
+
+/** A decoded {@link SessionState}. */
+export type SessionState = typeof SessionState.Type;
+
+/** Why a sign-in was refused, as the server names it to the page in `/?signin=<code>`. */
+export const SignInRefusalCode = Schema.Literals([
+  "domain",
+  "removed",
+  "no_verified_email",
+  "unsupported_email",
+  "provider",
+  "expired",
+  "unavailable",
+]);
+
+/** A decoded {@link SignInRefusalCode}. */
+export type SignInRefusalCode = typeof SignInRefusalCode.Type;
+
+/** What the sign-in screen says for each refusal. */
+export const signInRefusalWords: Readonly<Record<SignInRefusalCode, string>> = {
+  domain: "Addresses at that domain cannot sign in here.",
+  removed: "This address was removed from aobot. Ask an admin to let you back in.",
+  no_verified_email: "Your company account has no verified email address.",
+  unsupported_email:
+    "Your company account's address has characters other than plain ASCII, which aobot does not sign in.",
+  provider: "Sign-in was cancelled or refused by your company account.",
+  expired: "That sign-in took too long or was already used. Try again.",
+  unavailable: "Sign-in is unavailable right now. Try again in a moment.",
+};
+
+/**
+The call came without a live session: none, one that expired or was signed out, one of a person who was
+removed, or one of an address that may no longer sign in.
+*/
+export class SignedOut extends Schema.TaggedError<SignedOut>()("SignedOut", {}) {
+  override get message() {
+    return "You are signed out. Sign in again to go on.";
+  }
+}
+
+/**
+Who an RPC call can be for: a person signed in with their company account, or the one person of
+single-user mode. The server's actors of these two kinds have this shape.
+*/
+export const CallerActor = Schema.TaggedUnion({ Person: Person.fields, SingleUser: {} });
+
+/** Who an RPC call is for once {@link SignedIn} let it through. A handler reads it to act for them. */
+export class Caller extends Context.Service<Caller, typeof CallerActor.Type>()("aobot/Caller") {}
+
+/**
+On every RPC group: the server learns who each call is for and provides them as {@link Caller}, or
+refuses the call with {@link SignedOut}.
+*/
+export class SignedIn extends RpcMiddleware.Service<SignedIn, { provides: Caller }>()(
+  "aobot/SignedIn",
+  { error: SignedOut },
+) {}

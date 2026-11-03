@@ -1,16 +1,16 @@
 import type { AuditAction, InitiatorKind } from "@aobot/domain";
 import { Effect, Option, type Schema } from "effect";
-import { AuditLog, type AuditRowId, type Decision, type Outcome, singleUser } from "./audit-log.ts";
+import { actorId, CurrentActor } from "../../shared/actor.ts";
+import { AuditLog, type AuditRowId, type Decision, type Outcome } from "./audit-log.ts";
 
 /** The decision of a row that refuses an action: `deny`, or `hand_off` for one that is always the person's. */
 export type RefusalDecision = Extract<Decision, "deny" | "hand_off">;
 
 /**
-The rows written for `initiatorKind`, each in the trace that wrote it, with the one person using this
-server as their actor: no sign-in exists yet, so it is `single-user` until E3 brings people. A `person`
-row is on that person's authority, and an `acp` turn only runs in single-user mode, so even what a Bot
-asked for was theirs. A `deployment` row is the server acting on its own, such as the pause check
-stopping a turn.
+The rows written for `initiatorKind`, each in the trace that wrote it, naming as its actor the
+{@link CurrentActor} of the fiber that writes it. A `person` row is done for a person; a `deployment` row
+is the server acting on its own, such as the pause check stopping a turn, whose actor is still the person
+the turn was for.
 */
 export const auditRows = (initiatorKind: InitiatorKind) =>
   Effect.gen(function* () {
@@ -18,16 +18,18 @@ export const auditRows = (initiatorKind: InitiatorKind) =>
 
     /** A decision about `action`, in the trace that asked for it. */
     const decide = (decision: Decision, action: AuditAction, detail: Schema.JsonObject) =>
-      Effect.flatMap(Effect.option(Effect.currentSpan), (span) =>
-        audit.record({
+      Effect.gen(function* () {
+        const span = yield* Effect.option(Effect.currentSpan);
+
+        return yield* audit.record({
           traceId: Option.map(span, (current) => current.traceId),
           initiatorKind,
-          actorId: singleUser,
+          actorId: actorId(yield* CurrentActor),
           decision,
           action,
           detail,
-        }),
-      );
+        });
+      });
 
     /**
     A `deny` or `hand_off` row for `action`, only logged when it cannot be written: what was refused did

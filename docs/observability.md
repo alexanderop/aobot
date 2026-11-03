@@ -12,8 +12,10 @@ OpenTelemetry for traces, logs and metrics, from the first ticket.
   ```
 
   The `Chat.send` handler opens a root span, `Chat.turn`, around the whole answer stream, so one chat
-  turn is one trace. It records the turn's Bot as `chat.bot`, and each `Gateway.act` span inside it the
-  Bot the call was made for as `gateway.bot`, so a trace and its audit rows name the same Bot. Every service method written with `Effect.fn("Domain.operation")` is a span inside
+  turn is one trace. It records the turn's Bot as `chat.bot`, the person it runs for as `actor.id` (their
+  email address, or `single-user`), and each `Gateway.act` span inside it the Bot the call was made for
+  as `gateway.bot`, so a trace and its audit rows name the same Bot and the same person. Tempo finds one
+  person's turns with `{ span.actor.id = "alice@example.com" }`. Every service method written with `Effect.fn("Domain.operation")` is a span inside
   it, without extra code:
 
   ```text
@@ -34,7 +36,10 @@ OpenTelemetry for traces, logs and metrics, from the first ticket.
   written by the turn as it ends, so it carries the trace of that turn's `Chat.turn`.
 
   RPC and HTTP request spans are off. RPC spans would add a second trace per call, and HTTP carries only
-  the web app's files, the health check, the RPC socket and a person's files. Logs written inside a span carry its
+  the web app's files, the health check, signing in, the RPC socket and a person's files. Reading who a
+  request or an RPC call is for is untraced too, its query included, since every one of them does it. A
+  sign-in is in the audit trail as `auth.signed_in` or `auth.refused`, and its provider's errors in the
+  log. Logs written inside a span carry its
   `trace_id`.
 
   Taking control and handing it back are traces of their own, `ComputerControl.take` and

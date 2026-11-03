@@ -104,7 +104,7 @@ const StoredMemory = Schema.fromJsonString(Schema.Record(Schema.String, Schema.S
 const decodeStored = Schema.decodeUnknownOption(StoredMemory);
 
 /** Where the page mirrors its {@link Memory}: the browser's storage, which may be missing or refuse. */
-export type MemoryStorage = () => Pick<Storage, "getItem" | "setItem">;
+export type MemoryStorage = () => Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 /** The memory a page stored before, or none where storage is missing, refuses or holds something else. */
 export function readMemory(storage: MemoryStorage): Memory {
@@ -139,4 +139,13 @@ export function remember(storage: MemoryStorage, memory: Memory, selection: Sele
   }
 
   return next;
+}
+
+/** Forgets every Bot's last conversation in storage, where storage lets it. */
+export function forgetMemory(storage: MemoryStorage): void {
+  try {
+    storage().removeItem(storageKey);
+  } catch {
+    // Nothing was stored where storage refuses.
+  }
 }

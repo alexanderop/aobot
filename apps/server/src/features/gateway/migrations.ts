@@ -131,6 +131,32 @@ const keepSnapshotPath = Effect.gen(function* () {
   yield* sql`ALTER TABLE computer_snapshot ADD COLUMN path text NOT NULL DEFAULT ''`;
 });
 
+const nameTheAsker = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+
+  // Whose authority each question was asked on, so the rows that close one a stopped server left open
+  // name that person. A question asked before this names no one, so it is the deployment's.
+  yield* sql`ALTER TABLE approvals ADD COLUMN actor_id text NOT NULL DEFAULT 'deployment'`;
+  yield* sql`DROP TRIGGER approvals_only_forward`;
+
+  yield* sql`
+    CREATE TRIGGER approvals_only_forward BEFORE UPDATE ON approvals
+    WHEN NEW.id IS NOT OLD.id
+      OR NEW.conversation_id IS NOT OLD.conversation_id
+      OR NEW.run_id IS NOT OLD.run_id
+      OR NEW.bot_id IS NOT OLD.bot_id
+      OR NEW.tool IS NOT OLD.tool
+      OR NEW.rule IS NOT OLD.rule
+      OR NEW.actor_id IS NOT OLD.actor_id
+      OR NOT (
+        (OLD.state = 'asked' AND NEW.state IN ('yes', 'no', 'lapsed'))
+        OR (OLD.state = 'yes' AND NEW.state IN ('spent', 'lapsed'))
+        OR (OLD.state = 'spent' AND NEW.state IN ('finished', 'told'))
+      )
+    BEGIN SELECT RAISE(ABORT, 'an approval only moves forward'); END
+  `;
+});
+
 /** Brings the gateway's tables up to date. Safe to run at every boot. */
 export const migrateGateway = SqliteMigrator.run({
   table: "gateway_migrations",
@@ -142,5 +168,6 @@ export const migrateGateway = SqliteMigrator.run({
     "0005_keep_snapshot_url": keepSnapshotUrl,
     "0006_create_approvals": createApprovals,
     "0007_keep_snapshot_path": keepSnapshotPath,
+    "0008_name_the_asker": nameTheAsker,
   }),
 });

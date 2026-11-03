@@ -14,6 +14,7 @@
     "@effect/sql-sqlite-node": "4.1.0",
     "@marcbachmann/cel-js": "8.0.0",
     "effect": "4.1.0",
+    "openid-client": "6.8.8",
     "yaml": "2.9.1"
   },
   "devDependencies": {

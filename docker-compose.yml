@@ -18,6 +18,15 @@ services:
       # Per project, so the dev stack and `vp run verify` start their own computer side by side.
       COMPUTER_NAME: ${COMPOSE_PROJECT_NAME}-computer
       COMPUTER_NETWORK: ${COMPOSE_PROJECT_NAME}_computers
+      # People sign in at the local Dex below. The browser reaches it on localhost, the server inside
+      # Compose as dex; tokens are checked against the address the browser uses.
+      PUBLIC_URL: http://localhost:3000
+      OIDC_ISSUER: http://localhost:5556/dex
+      OIDC_ISSUER_INTERNAL_URL: http://dex:5556/dex
+      OIDC_CLIENT_ID: aobot
+      OIDC_CLIENT_SECRET: aobot-dev-secret
+      SIGNIN_ALLOWED_EMAIL_DOMAINS: example.com
+      ADMIN_EMAILS: alice@example.com
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
@@ -37,7 +46,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "fetch('http://localhost:3000/').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+          "fetch('http://localhost:3000/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
         ]
       interval: 2s
       timeout: 3s
@@ -53,6 +62,22 @@ services:
     network_mode: none
     healthcheck:
       disable: true
+
+  # The local OIDC provider people sign in at: alice@example.com, bob@example.com and mallory@other.com,
+  # each with the password "password". Only on the default network, so a Bot's computer cannot reach it.
+  dex:
+    image: ghcr.io/dexidp/dex:v2.46.0
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    environment:
+      DEX_ISSUER: http://localhost:5556/dex
+      AOBOT_CALLBACK: http://localhost:3000/auth/callback
+      DEX_EXPAND_ENV: "false"
+    volumes:
+      - ./dex/config.yaml:/etc/dex/config.yaml:ro
+    ports:
+      - "127.0.0.1:5556:5556"
+    networks:
+      - default
 
   otel-lgtm:
     image: grafana/otel-lgtm

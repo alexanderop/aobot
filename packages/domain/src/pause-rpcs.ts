@@ -2,6 +2,7 @@ import { Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/rpc";
 import { UnknownBot } from "./bot.ts";
 import { BotId } from "./ids.ts";
+import { SignedIn } from "./people.ts";
 
 /** Names one Bot. */
 const BotRef = Schema.Struct({ botId: BotId });
@@ -42,4 +43,4 @@ export class PauseRpcs extends RpcGroup.make(
     payload: BotRef,
     error: Schema.Union([UnknownBot, PauseNotChanged]),
   }),
-) {}
+).middleware(SignedIn) {}

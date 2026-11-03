@@ -1,5 +1,6 @@
 import type { ToolName } from "@aobot/domain";
 import { Environment } from "@marcbachmann/cel-js";
+import { actorId, singleUser } from "../../shared/actor.ts";
 
 /**
 What a rule sees of one action. Every field is bound on every action, `""` where the action has none, so a
@@ -11,7 +12,10 @@ export interface Facts {
   readonly tool: { readonly name: ToolName };
   /** The Bot the call is for, by its id. */
   readonly bot: { readonly id: string };
-  /** The person on whose authority the action runs: `single-user` until E3 brings sign-in. */
+  /**
+  The person on whose authority the action runs: their email address, or `single-user` in single-user
+  mode.
+  */
   readonly actor: { readonly id: string };
   /** The computer it acts on: `cloud` until the Mac arrives. */
   readonly computer: { readonly kind: string };
@@ -43,7 +47,7 @@ rule is tried on it once when the rules file is read.
 export const blankFacts: Facts = {
   tool: { name: "snapshot" },
   bot: { id: "bot" },
-  actor: { id: "single-user" },
+  actor: { id: actorId(singleUser) },
   computer: { kind: "cloud" },
   page: { host: "" },
   element: { role: "", name: "" },

@@ -1,8 +1,6 @@
 import { Effect, Option } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
-
-/** The names this machine answers to on itself. */
-const loopbackNames: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "[::1]"]);
+import { bareHost, onThisMachine } from "../shared/reach.ts";
 
 /**
 What a browser says of where a request came from in `Sec-Fetch-Site`, when it is no other site: the
@@ -10,24 +8,20 @@ page itself, or a person who typed the address or opened a bookmark.
 */
 const ownSites: ReadonlySet<string> = new Set(["same-origin", "none"]);
 
-/** The name in a `Host` header, lower-cased and without its port, or none when it is not one. */
+/** The bare host in a `Host` header, without its port, or none when it is not one. */
 function hostname(host: string): Option.Option<string> {
-  return URL.canParse(`http://${host}`)
-    ? Option.some(new URL(`http://${host}`).hostname)
-    : Option.none();
+  return Option.map(Option.fromNullishOr(URL.parse(`http://${host}`)), bareHost);
 }
 
 /**
 Whether `request` came from a page this server served, or from no page at all. The host it was sent to
-must be this machine or `publicHost`, whatever else it says: a browser sends no `Origin` with a same-origin
-`GET`, so a site that points its own name at this machine reads a file with nothing but `Host` naming it.
-A page's `Origin` must then name that same host. A browser sends no `Origin` with a link or an `<img>`
-another site points here, but it does send `Sec-Fetch-Site`, which must then not name another site.
+must be this machine or `publicHost`, a bare host as `bareHost` writes it, whatever else it says: a
+browser sends no `Origin` with a same-origin `GET`, so a site that points its own name at this machine
+reads a file with nothing but `Host` naming it. A page's `Origin` must then name that same host. A
+browser sends no `Origin` with a link or an `<img>` another site points here, but it does send
+`Sec-Fetch-Site`, which must then not name another site.
 */
-function fromOwnPage(
-  request: HttpServerRequest.HttpServerRequest,
-  publicHost: Option.Option<string>,
-): boolean {
+function fromOwnPage(request: HttpServerRequest.HttpServerRequest, publicHost: string): boolean {
   const site = Option.fromNullishOr(request.headers["sec-fetch-site"]);
 
   if (Option.exists(site, (value) => !ownSites.has(value))) return false;
@@ -38,9 +32,7 @@ function fromOwnPage(
 
   const reachable = Option.exists(
     Option.flatMap(host, hostname),
-    (name) =>
-      loopbackNames.has(name) ||
-      Option.exists(publicHost, (expected) => expected.toLowerCase() === name),
+    (name) => onThisMachine(name) || name === publicHost,
   );
 
   if (!reachable) return false;
@@ -58,7 +50,7 @@ their Bot's computer, click on it, or put files in its workspace. `Origin` and `
 that points its own name at this machine (DNS rebinding), so the host must always be one this server is
 meant to be reached at, with an `Origin` or without.
 */
-export const ownPagesOnly = (publicHost: Option.Option<string>) =>
+export const ownPagesOnly = (publicHost: string) =>
   HttpRouter.middleware((handle) =>
     Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
       fromOwnPage(request, publicHost)

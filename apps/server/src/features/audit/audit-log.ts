@@ -14,9 +14,6 @@ so the action may or may not have happened. It is never run again.
 */
 export type Outcome = Exclude<AuditDecision, Decision>;
 
-/** The one person every action is on the authority of, until E3 brings sign-in. */
-export const singleUser = "single-user";
-
 /** One audit row. */
 export const AuditRowId = Schema.String.pipe(Schema.brand("AuditRowId"));
 

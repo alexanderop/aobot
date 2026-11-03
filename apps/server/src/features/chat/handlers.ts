@@ -1,5 +1,6 @@
 import {
   type BotId,
+  Caller,
   type ChatEvent,
   ChatRpcs,
   type ConversationId,
@@ -14,6 +15,7 @@ import {
   UnknownBot,
 } from "@aobot/domain";
 import { Deferred, Effect, Option, Ref, Stream } from "effect";
+import { actorId } from "../../shared/actor.ts";
 import { AgentRuntime } from "../agent/public.ts";
 import { Bots, botSummary, turnInstructions } from "../bots/public.ts";
 import { Turns } from "../lifecycle/public.ts";
@@ -79,12 +81,15 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
         messageId: MessageId.make(crypto.randomUUID()),
       };
 
+      const actor = yield* Caller;
+
       const bot = yield* botOf(conversationId, message.botId);
 
       const { stopped, recordStop, release } = yield* turns.start(
         conversationId,
         ids.runId,
         bot.id,
+        actor,
       );
 
       yield* store.ensure(conversationId, bot.id);
@@ -147,7 +152,9 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
         Stream.tapErrorTag("TurnStopped", recordStop),
       );
 
+      // The stream runs in the turn's span, where Chat.send's own span has ended.
       return turnEvents(ids, answer).pipe(
+        Stream.onStart(Effect.annotateCurrentSpan("actor.id", actorId(actor))),
         Stream.tap((event) => Ref.update(written, (messages) => recordText(messages, event))),
         Stream.mapEffect((event) =>
           isTerminal(event)

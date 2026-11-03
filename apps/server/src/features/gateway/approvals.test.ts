@@ -17,6 +17,8 @@ import {
   type ResolvedAction,
 } from "./approvals.ts";
 import { database } from "./testing/test-gateway.ts";
+import { CurrentActor } from "../../shared/actor.ts";
+import { alice, bob } from "../../shared/testing/people.ts";
 
 const bot = BotId.make("assistant");
 
@@ -422,38 +424,45 @@ describe("approvalRequests", () => {
     }).pipe(Effect.provide(database)),
   );
 
-  it.effect("closes every question an earlier run left open, once, and keeps the rest", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const store = yield* approvalRequests;
-        yield* askAndAnswer(store, firstRun, "no");
+  it.effect(
+    "closes every question an earlier run left open, once, naming whom it asked, and keeps the rest",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const store = yield* approvalRequests;
+          yield* askAndAnswer(store, firstRun, "no");
 
-        const { approval: approved } = yield* answered(store, secondRun, "yes");
+          const { approval: approved } = yield* answered(store, secondRun, "yes").pipe(
+            Effect.provideService(CurrentActor, alice),
+          );
 
-        const elsewhere = {
-          conversation: ConversationId.make("conversation-2"),
-          run: firstRun.run,
-        };
+          const elsewhere = {
+            conversation: ConversationId.make("conversation-2"),
+            run: firstRun.run,
+          };
 
-        const waiting = yield* opened(store, elsewhere);
-        yield* asking(waiting);
-        yield* untilShown(store.requests, elsewhere.conversation);
+          const waiting = yield* opened(store, elsewhere).pipe(
+            Effect.provideService(CurrentActor, bob),
+          );
 
-        const restarted = yield* approvalRequests;
-        const closed = { bot, tool: "run", rule };
+          yield* asking(waiting);
+          yield* untilShown(store.requests, elsewhere.conversation);
 
-        expect(yield* restarted.closeLeftOpen(written)).toEqual([
-          { approval: approved.id, ...closed, answered: true },
-          { approval: waiting.id, ...closed, answered: false },
-        ]);
-        expect(yield* restarted.closeLeftOpen(written)).toEqual([]);
-        expect(yield* ledger).toEqual([
-          ["run-1", "no"],
-          ["run-2", "lapsed"],
-          ["run-1", "no"],
-        ]);
-      }),
-    ).pipe(Effect.provide(database)),
+          const restarted = yield* approvalRequests;
+          const closed = { bot, tool: "run", rule };
+
+          expect(yield* restarted.closeLeftOpen(written)).toEqual([
+            { approval: approved.id, actorId: "alice@example.com", ...closed, answered: true },
+            { approval: waiting.id, actorId: "bob@example.com", ...closed, answered: false },
+          ]);
+          expect(yield* restarted.closeLeftOpen(written)).toEqual([]);
+          expect(yield* ledger).toEqual([
+            ["run-1", "no"],
+            ["run-2", "lapsed"],
+            ["run-1", "no"],
+          ]);
+        }),
+      ).pipe(Effect.provide(database)),
   );
 
   it.effect("keeps a question left open whose rows cannot be written for the next start-up", () =>
@@ -467,7 +476,7 @@ describe("approvalRequests", () => {
       expect(yield* ledger).toEqual([["run-1", "asked"]]);
 
       expect(yield* restarted.closeLeftOpen(written)).toEqual([
-        { approval, bot, tool: "run", rule, answered: false },
+        { approval, bot, actorId: "deployment", tool: "run", rule, answered: false },
       ]);
       expect(yield* ledger).toEqual([["run-1", "no"]]);
     }).pipe(Effect.provide(database)),
@@ -492,6 +501,20 @@ describe("approvalRequests", () => {
       expect(String(remove.reason.cause)).toContain("approvals cannot be deleted");
 
       expect(yield* ledger).toEqual([["run-1", "no"]]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("keeps whose question it was as the question moves forward", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* askAndAnswer(yield* approvalRequests, firstRun, "yes");
+
+      const reassign = yield* Effect.flip(
+        sql`UPDATE approvals SET state = 'spent', actor_id = 'mallory@example.com'`,
+      );
+
+      expect(String(reassign.reason.cause)).toContain("an approval only moves forward");
+      expect(yield* ledger).toEqual([["run-1", "yes"]]);
     }).pipe(Effect.provide(database)),
   );
 

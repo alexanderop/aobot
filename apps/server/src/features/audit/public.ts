@@ -5,7 +5,6 @@ export {
   type AuditWriteFailed,
   type Decision,
   type Outcome,
-  singleUser,
 } from "./audit-log.ts";
 
 export { auditRows, type RefusalDecision } from "./audit-rows.ts";

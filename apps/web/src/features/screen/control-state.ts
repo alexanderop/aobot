@@ -5,6 +5,7 @@ import {
   type InputFailed,
   type NotInControl,
   type ScreenPoint,
+  type SignedOut,
 } from "@aobot/domain";
 import { Data, Option, Predicate } from "effect";
 import { AsyncResult } from "effect/reactivity";
@@ -26,6 +27,7 @@ type CommandFailure = Pick<
   | ComputerNotStarted
   | NotInControl
   | InputFailed
+  | SignedOut
   | RpcClientError.RpcClientError,
   "_tag" | "message"
 >;

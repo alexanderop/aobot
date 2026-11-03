@@ -30,7 +30,7 @@ import { policyFrom } from "../policy/testing/test-policy.ts";
 import { ApprovalRequests } from "./approvals.ts";
 import { ComputerControl } from "./control.ts";
 import { Claim, Gateway } from "./gateway.ts";
-import { botHeader, gatewayMcpLayer } from "./mcp.ts";
+import { gatewayMcpLayer, turnHeaders } from "./mcp.ts";
 import { secretRequests, SecretRequests } from "./secrets.ts";
 import {
   database,
@@ -62,8 +62,6 @@ function signInComputer(url = "https://shop.example/login") {
       }),
   });
 }
-
-const bot = Claim.cases.Named.make({ bot: assistant.id });
 
 const askForPassword = {
   action: "request_secret",
@@ -112,6 +110,8 @@ const inRun = (run: string) =>
   Claim.cases.Named.make({ bot: assistant.id, turn: { conversation, run: RunId.make(run) } });
 
 const inTurn = inRun("run-1");
+
+const bot = inTurn;
 
 const askBeforeTyping = policyFrom(`deny: []
 allow:
@@ -643,7 +643,11 @@ async function mcpSession(url: string): Promise<Post> {
   const headers = {
     "content-type": "application/json",
     accept: "application/json, text/event-stream",
-    [botHeader]: assistant.id,
+    ...Object.fromEntries(
+      turnHeaders({ bot: assistant.id, conversation, run: RunId.make("run-1") }).map(
+        ({ name, value }) => [name, value],
+      ),
+    ),
   };
 
   const post =

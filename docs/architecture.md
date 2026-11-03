@@ -149,7 +149,7 @@ CEL environment is built from the same declaration so the two cannot drift:
 | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
 | `tool.name`                                | The tool: `navigate`, `snapshot`, `click`, `type`, `press`, `run`, `read_file`, `write_file`, `list_files`, `request_secret` |
 | `bot.id`                                   | The Bot the call is for                                                                                                      |
-| `actor.id`                                 | The person it acts for: `single-user` until E3 brings sign-in                                                                |
+| `actor.id`                                 | The person whose turn it is, by their email address; `single-user` in single-user mode                                       |
 | `computer.kind`                            | `cloud`; `mac` arrives with the Mac                                                                                          |
 | `page.host`                                | For `navigate`, the host it opens; for the other browser tools, the host of the page the latest snapshot read                |
 | `element.role`, `element.name`             | The element a ref names in the server's own snapshot, never what the Bot says it is                                          |
@@ -279,13 +279,13 @@ the person was asked under. The audit page still shows the list there, as `safet
 
 ## Life of one request
 
-1. A person sends a message with the Bot they picked.
-2. The server starts an agent turn on behalf of that Bot, once `Turns.start` read that the Bot is not
-   paused, with its instructions, which name the tools it was granted.
+1. A person signed in sends a message with the Bot they picked.
+2. The server starts an agent turn on behalf of that Bot and that person, once `Turns.start` read that
+   the Bot is not paused, with its instructions, which name the tools it was granted.
 3. The agent asks for a tool, for example `navigate`.
-4. The gateway checks that the turn still runs, then the grant, then the safety list, then the rules,
-   and writes one audit row either way. When an ask rule holds, it asks the person in the chat first and
-   waits for their answer.
+4. The gateway checks that the turn still runs, then the grant, then that the turn is a person's, then
+   the safety list, then the rules, and writes one audit row either way, naming that person. When an ask
+   rule holds, it asks the person in the chat first and waits for their answer.
 5. Only on "yes", the gateway asks the person's computer to act, and never when its row could not be
    written. Every `allow` row then gets exactly one outcome row, `succeeded`, `failed` or `unknown`, so
    "allowed" never reads as "done". `unknown` means the server lost track, by a timeout or a restart; such a
@@ -295,14 +295,100 @@ the person was asked under. The audit page still shows the list there, as `safet
 8. The agent reads it and decides the next step. Every step goes through the same door.
 9. The answer streams back to the page, with each tool call shown between the text.
 
+## Signing in
+
+People sign in with their company account over OIDC; aobot keeps no passwords. The `auth` feature owns
+who a request is for, and the rest of the server learns it from one place.
+
+**Who acts.** `Actor` in `shared/actor.ts` is a `Person` (signed in, by email address), the `SingleUser`
+of a server in single-user mode, a `Visitor` refused at sign-in, or the `Deployment`, the server acting
+on its own. `CurrentActor` is a `Context.Reference` that defaults to the deployment, and carries who a
+request is for to every row it writes: audit rows read it when they are written, spelt by `actorId`, so a
+row written outside any request is the server's own. A turn carries its person by hand, once: `Chat.send`
+reads the `Caller` that `SignedIn` provides and hands that `PersonActor` to `Turns.start`, and the gateway
+reads it back from `LiveTurns` for each of the Bot's calls, sets `CurrentActor` to it and passes it to
+`actionFacts`, which the rules read as `actor.id`. `Chat.turn` records it too.
+
+**Every request.** A global HTTP middleware in front of every route resolves the session cookie and runs
+the route with `CurrentActor` set, so a route added later is covered without a line of its own. Signed
+out, only `/auth/*`, the web app's `/assets/*` and `/healthz` answer; opening any other page gets the web
+app, which shows the sign-in screen, and anything else gets 401, the RPC socket's upgrade included. Every
+RPC group carries the `SignedIn` middleware, which resolves the session again for each call from the
+headers the socket was opened with and fails with `SignedOut`; `app/rpcs.test.ts` fails when a group
+lacks it. A message can name a cookie of its own, but a token only counts once its session is found, so
+it can only be one the client already holds. Nothing caches a session: every request and every call reads
+the database, so a sign-out, a removal by another process, or a domain no longer allowed counts at the next
+one. When the database does not answer, the request is refused with 503, never treated as signed out.
+
+**A Bot acts for its turn's person.** `Turns.start` keeps the actor of the call that started the turn,
+and the gateway reads it with the turn's liveness, so a call from the `api` runtime and one an `acp` CLI
+makes over `/mcp`, which carries no cookie, act for the same person. `Turns.start` takes a `PersonActor`,
+a person or the single user, so every turn is someone's by type, and a call that names no turn is refused
+as `no person to act for`, right after its grant. A Stop or a pause names whoever pressed it, the pause
+check's stop the person whose turn it was, and an approval's answer row whoever answered it.
+
+**Signing in.** `GET /auth/sign-in?return=<path>` sends the browser to the provider with PKCE, state and
+nonce, kept until it comes back in a ten-minute `aobot_signin` cookie on `/auth`. `GET /auth/callback` is
+read as an address at `PUBLIC_URL`, never from `Host`, checks the state, trades the code for an ID token
+through `openid-client` (only `provider.ts` imports it), and needs a verified email address in printable
+ASCII, refusing any other as `unsupported_email`: only `A` to `Z` are lower-cased, so the Kelvin sign's
+`Kate@` is never read as `kate@`. Then, in one
+transaction, the address must be admitted, the person is recorded, made an admin when `ADMIN_EMAILS`
+names them for the first time, and given a seven-day session: a random token in an HttpOnly, SameSite=Lax
+`aobot_session` cookie, `Secure` when `PUBLIC_URL` is `https`, and only its SHA-256 in `sessions`. The
+browser returns to the page it came from, never another site. `POST /auth/sign-out` ends the session.
+`GET /auth/session` tells the page who it is open for, and the page mounts nothing that opens a socket
+until it has read that. Every RPC client's socket hangs off that answer (`shared/rpc-protocol.ts`): it
+opens only while someone is signed in and is built again when that changes, so a sign-out, a removal or
+an expiry closes every socket and every atom on one waits instead of asking again. The page reads the
+session every half minute, on focus, and whenever the server refuses a socket or answers a call
+`SignedOut`; a browser cannot tell a 401 upgrade from a server it cannot reach, so only the session's
+answer decides whether to keep knocking.
+
+**Who may sign in.** An address whose domain is one of `SIGNIN_ALLOWED_EMAIL_DOMAINS` exactly
+(`isAllowedDomain`), and which was not removed. `People.enter` decides both inside the transaction that
+makes the session, the domain before any row is read, so `mallory@other.com` leaves no row in `people`,
+and a removal committed since the provider answered still counts. Every request reads both again:
+`Identity` resolves a session only for a person not removed whose domain is still allowed, so removing a
+domain also ends its open sessions. Each sign-in writes `auth.signed_in` and each refusal `auth.refused`
+with its reason, under the address that tried when the provider vouched for one; the page shows the
+reason from one table of words in `@aobot/domain`. An `ADMIN_EMAILS` entry whose domain may not sign in
+stops the server at start-up, naming it. A grant by configuration writes `auth.admin_granted` once;
+dropping someone from `ADMIN_EMAILS` writes nothing, and naming them again writes it again. Being an
+admin grants nothing yet: roles come later, and anyone signed in may pause a Bot and read the trail.
+
+**Removing a person.** `vp run people:remove <email>` marks the address removed and deletes its sessions
+in one transaction with `person.removed`, by the deployment. A running server refuses the person at their
+next request or call; a stream they already have open, such as a running turn, runs until it ends. Their
+next sign-in is refused as `removed`, and an address removed before it ever signed in is blocked too.
+Stopping their computer waits for E3-3, since the computer is shared until then, and nothing they gave
+the deployment is stored to retire: a secret goes straight to the computer.
+
+**Single-user mode.** `SINGLE_USER=true` resolves every request to the one person and mounts no sign-in
+routes. It is off unless set. At start-up the server looks up every address `PUBLIC_URL`'s host and the
+`HOST` it listens on resolve to: a public one, or a name that does not resolve, stops it, and each
+private one, such as `192.168.1.5`, is logged as a warning. Listening on every address, as the default
+`HOST=0.0.0.0` does, warns too and names `HOST=127.0.0.1` as the way to keep it on this machine, so a
+container still starts. It looks at the addresses, never at `NODE_ENV`. `acp` still needs it and a
+loopback `HOST`.
+
+**The local provider.** Compose runs Dex with `alice@example.com`, `bob@example.com` and
+`mallory@other.com`, password `password`, and only `example.com` allowed, on the default network only, so a
+Bot's computer cannot reach it. The browser reaches Dex at `localhost:5556` and the server at `dex:5556`:
+`OIDC_ISSUER_INTERNAL_URL` sends the server's requests to the issuer there, while tokens are still checked
+against `OIDC_ISSUER`. Both must use https unless they are on this machine, one rule in `settings.ts`
+read on `shared/reach.ts`'s `onThisMachine`; the internal address may be plain HTTP also when the issuer
+is, which the issuer may only be on this machine, as Dex is here.
+
 ## Reading the audit trail
 
 Security reads the trail on the audit page at `/audit`, through `GET /audit/rows`. It takes `bot`,
 `person`, `decision`, `from` and `to` (ISO instants in the years 0000 to 9999; `from` inclusive, `to`
 exclusive), `limit` (1 to 200, 50 when unsaid) and `cursor`, each optional, and answers the rows newest
 first with `next`, the cursor of the page after, when there is one. A row's Bot is its detail's `bot`, or,
-for an outcome row, that of the `allow` row it follows. Like `/files`, it answers only this server's own
-pages.
+for an outcome row, that of the `allow` row it follows. A row's person is its `actor_id`: an email
+address, `single-user`, `deployment`, or `anonymous` for a sign-in refused before anyone was named. Like
+`/files`, it answers only this server's own pages, and only someone signed in.
 
 Rows are ordered by `created_at`, then `seq`, the order they were written in. Not by `id`: ids are random,
 and an `allow` row and its outcome often share a millisecond, so the outcome could read as the earlier of
@@ -380,7 +466,7 @@ so there is one door for all of them, and a person who holds the computer holds 
    the page again before it acts on an element.
 
 `/rpc` refuses a request with 403, before any RPC, unless the host it was sent to, its `Host`, is
-`localhost`, `127.0.0.1`, `[::1]` or the server's `PUBLIC_HOST`, and a page's `Origin`, when it sends one,
+`localhost`, `127.0.0.1`, `[::1]` or the host of the server's `PUBLIC_URL`, and a page's `Origin`, when it sends one,
 names that same host. A browser lets any page open a socket to any address, so without the `Origin` check
 any site the person visits could take control. Without the `Host` check, a site that points its own name
 at this machine (DNS rebinding) could, and it needs no `Origin` for it: a browser sends none with a
@@ -396,7 +482,8 @@ either is swept to `unknown` at start-up like any other call. Their spans, `Comp
 ## Stopping and pausing a Bot
 
 A person stops their Bot's turn with Stop. An admin pauses a Bot, and none of its turns runs anywhere
-until they resume it; in single-user mode the person is the admin. Both go through `Turns`, in the
+until they resume it; until roles arrive, anyone signed in may pause, and in single-user mode the person
+is the admin. Both go through `Turns`, in the
 `lifecycle` feature, which owns the turns this server runs.
 
 1. Every turn starts through `Turns.start`, whoever asks for it: today `Chat.send`, later a routine or a
@@ -410,7 +497,8 @@ until they resume it; in single-user mode the person is the admin. Both go throu
    No turn slips between the two.
 3. Stop signals the turn running in its conversation, and the turn ends its model stream and its running
    tool call. It ends with `RUN_ERROR` `stopped`, keeps what the Bot said, and writes
-   `turn.stopped · allow` with `reason: "stopped by the person"`, then its `succeeded`. The turn writes
+   `turn.stopped · allow` with `reason: "stopped by the person"`, then its `succeeded`, naming whoever
+   pressed Stop. The turn writes
    these rows itself, inside its `Chat.turn` trace, where the stop becomes its end: a Stop that lands
    after the Bot finished, while its reply is stored, writes nothing, and the turn ends with
    `RUN_FINISHED`. A turn refused at its start never ran, so a pause that lands between its claim and its
@@ -427,7 +515,7 @@ until they resume it; in single-user mode the person is the admin. Both go throu
    does not stop every running turn, fifteen seconds of a database that stays unreadable does. A read
    that answers, a turn's start among them, clears the count. The same read keeps `Pause.watch` current,
    which the page follows for its Paused badge and its Pause and Resume button.
-6. The gateway reads `LiveTurns` on every call that names its turn, which the `acp` runtime does in its
+6. The gateway reads `LiveTurns`, which says who the turn runs for, on every call that names its turn, which the `acp` runtime does in its
    headers and the `api` runtime around each turn. A call in a turn that was stopped, or ended, or never
    ran on this server is refused before the grant, as `deny` with `reason: "turn ended"`, and the model
    reads that nothing more runs in it. A call still running when its turn is stopped is cut off, and its
@@ -609,8 +697,8 @@ not spent. A row that cannot be written once the person was asked, its answer or
 refused as `not recorded` the same way. A server that stopped while a question was open closes it at
 the next start-up, beside the sweep of `allow` rows without an outcome: an `asked` question gets
 `approval.answered` with `by: "the server stopped"`, and the question, or a yes never spent, a `deny` row
-with the same reason, both written by the deployment in one transaction with the ledger's move. A
-second start finds nothing left to close.
+with the same reason, both written by the deployment on the authority of the person it asked, in one
+transaction with the ledger's move. A second start finds nothing left to close.
 
 **The ledger never runs ahead of the trail.** The ledger and the audit trail share one SQLite client, so
 every move of a ledger row commits in one `sql.withTransaction` with the audit rows that record it, or
@@ -620,8 +708,9 @@ without them. A failed write leaves the row where it was. A question whose closi
 too stays for the start after.
 
 The ledger is the `approvals` table, one row per question:
-`(id, conversation_id, run_id, bot_id, tool, rule, state)`, no action, digest or typed text; the Bot and
-the tool are kept only so a question a stopped server left open can be closed in the trail. A row only
+`(id, conversation_id, run_id, bot_id, tool, rule, state, actor_id)`, no action, digest or typed text;
+the Bot, the tool and whose authority it was asked on are kept only so a question a stopped server left
+open can be closed in the trail, a question asked before `actor_id` existed naming the deployment. A row only
 moves forward, each move one compare-and-set `UPDATE`: `asked → yes | no | lapsed`, `yes → spent |
 lapsed`, `spent → finished | told`. A trigger refuses any other change, and any delete. A yes is spent by
 moving it to `spent`, so a second spend finds nothing to move and is refused with `already spent`. A
@@ -821,6 +910,7 @@ const conversation = Atom.family((id: ConversationId) => /* fold ChatEvents into
 | `useApproval(id, turn)`       | `useHumanInTheLoop`, `useInterrupt`  | The approval card of the conversation: the question `Approval.pending` streams, the answer for the rest of its turn, and `choose`, which sends yes or no over `Approval.answer`              | E2-5 |
 | `usePause(bot)`               | (none)                               | Whether the Bot is paused, once the server said, whether a pause or a resume is on its way, why the last one failed, `pause` and `resume`                                                    | E2-7 |
 | `usePausedBots()`             | (none)                               | The Bots paused now, none until the server has said, for the sidebar's Paused labels                                                                                                         | E2-7 |
+| `useSession()`                | (none)                               | Who the page is open for, none until the server has said, read again every half minute and on focus                                                                                          | E3-1 |
 | `useAuditTrail()`             | (none)                               | The audit rows the URL's filters let through, newest first, whether older ones are left, why the last page failed, `filter`, `loadMore` and `reload`, which reads the trail again            | E2-4 |
 
 The page opens the Bot and the conversation the URL names as `?bot=<id>&c=<id>`, or the first Bot in
@@ -830,8 +920,9 @@ Bot list, a memory of each Bot's last conversation and what `Chat.open` answered
 corrects the URL to show it without a history entry; its write side takes a picked Bot and pushes a
 history entry, so Back returns to the Bot before. The memory lives in an atom and is mirrored to
 `localStorage` at best, so a private window still returns to the conversation a person left. Each write
-takes in what other tabs stored first, so two tabs never overwrite each other's Bots. Each sidebar entry
-is a link to `?bot=<id>`, so it opens in a new tab or copies like any link.
+takes in what other tabs stored first, so two tabs never overwrite each other's Bots. The sign-in screen
+forgets it, so whoever signs in next on the same browser does not open the last person's conversations.
+Each sidebar entry is a link to `?bot=<id>`, so it opens in a new tab or copies like any link.
 
 A conversation belongs to the Bot of its first message. `Chat.open` and `Chat.send` name the Bot the page
 picked; the server refuses another Bot with `ConversationOfAnotherBot`, naming the conversation's own,
@@ -919,7 +1010,13 @@ reaches when it does not, until network limits (E5-3). These hold locally as muc
   private ranges are refused, so a Bot cannot browse to internal services. `COMPUTER_ALLOW_PRIVATE_HOSTS`
   exists for local fixtures and stops the server from starting in production.
 - **Single-user mode never faces the internet.** With it on, every request is one administrator. The
-  server refuses to start if its public URL resolves to a public address, and warns on a private one.
+  server refuses to start if its public URL or the `HOST` it listens on resolves to a public address, and
+  warns on a private one or on listening on every address.
+- **Every request needs a session.** The gate covers every route, and every RPC group carries `SignedIn`,
+  checked by a test. Sessions are random tokens kept only as SHA-256 hashes, in HttpOnly SameSite=Lax
+  cookies, read again on every request, so a removal or sign-out holds at once. The callback redirects
+  only to an absolute address on `PUBLIC_URL`'s origin, and reads its own address from `PUBLIC_URL`, never
+  `Host`.
 - **A command does not inherit the computer's environment.** It gets PATH, the locale, `HOME=/workspace`
   and proxy variables naming the computer's egress filter, from an allow-list, so `env` never prints
   `COMPUTER_TOKEN` or a secret added later. A command that honours those variables is held to the

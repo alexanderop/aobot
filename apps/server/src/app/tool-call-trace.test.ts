@@ -21,6 +21,8 @@ import {
   migrateGateway,
 } from "../features/gateway/public.ts";
 import { spanAttributesRedacted } from "../shared/span-redaction.ts";
+import { alice } from "../shared/testing/people.ts";
+import { signedInAs } from "../shared/testing/signed-in.ts";
 
 /**
 The `api` runtime wired as `main.ts` wires it, with only the model and the computer faked: a tool call
@@ -120,9 +122,11 @@ const database = Layer.effectDiscard(
 
 const lifecycle = lifecycleLayer.pipe(Layer.provide(auditLogLayer));
 
+const signedIn = signedInAs(alice);
+
 describe("a tool call in an api turn", () => {
   it.effect(
-    "runs Gateway.act inside Chat.turn and hands the model the result marked untrusted",
+    "runs Gateway.act inside Chat.turn for the person who wrote, and hands the model the result marked untrusted",
     () => {
       const recorder = recordingTracer();
       const model = navigatingModel();
@@ -154,10 +158,16 @@ describe("a tool call in an api turn", () => {
           expect.arrayContaining(["Chat.turn", "AgentRuntime.run", "Gateway.act"]),
         ]);
 
-        const rows = yield* sql`SELECT decision, action, trace_id FROM audit_rows ORDER BY seq`;
+        expect(turn?.attributes.get("actor.id")).toBe("alice@example.com");
+
+        const rows = yield* sql`
+          SELECT decision, action, trace_id, actor_id FROM audit_rows ORDER BY seq
+        `;
+
+        const alices = { trace_id: turn?.traceId, actor_id: "alice@example.com" };
         expect(rows).toEqual([
-          { decision: "allow", action: "navigate", trace_id: turn?.traceId },
-          { decision: "succeeded", action: "navigate", trace_id: turn?.traceId },
+          { decision: "allow", action: "navigate", ...alices },
+          { decision: "succeeded", action: "navigate", ...alices },
         ]);
 
         const toolResults = JSON.stringify(
@@ -168,7 +178,7 @@ describe("a tool call in an api turn", () => {
         expect(toolResults).toContain("Example Domain");
       }).pipe(
         Effect.provide(chatLayer.pipe(Layer.provide([agent, testBots, lifecycle]))),
-        Effect.provide(database),
+        Effect.provide([database, signedIn]),
         Effect.provide(recorder.layer),
       );
     },
@@ -217,7 +227,7 @@ describe("a tool call in an api turn", () => {
             controlHandlers.pipe(Layer.provide(gateway)),
           ),
         ),
-        Effect.provide(database),
+        Effect.provide([database, signedIn]),
       );
     },
   );
@@ -283,7 +293,7 @@ describe("a tool call in an api turn", () => {
       expect(JSON.stringify(rows)).not.toContain(typed);
     }).pipe(
       Effect.provide(chatLayer.pipe(Layer.provide([agent, testBots, lifecycle]))),
-      Effect.provide(database),
+      Effect.provide([database, signedIn]),
       Effect.provide(spanAttributesRedacted.pipe(Layer.provide(recorder.layer))),
     );
   });
@@ -347,7 +357,7 @@ describe("a tool call in an api turn", () => {
         );
       }).pipe(
         Effect.provide(chatLayer.pipe(Layer.provide([agent, testBots, lifecycle]))),
-        Effect.provide(database),
+        Effect.provide([database, signedIn]),
       );
     },
   );

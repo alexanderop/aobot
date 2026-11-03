@@ -1,50 +1,61 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Option } from "effect";
+import { ConfigProvider, Effect, Option, Redacted } from "effect";
 import { AgentRuntimeSettings } from "../features/agent/public.ts";
+import { AuthSettings } from "../features/auth/public.ts";
 import { ComputerProvider } from "../features/computers/public.ts";
 import { serverConfig } from "./config.ts";
-import { isLoopback, privateHostsProblem, sharedSubscriptionProblem } from "./local-only.ts";
+import { privateHostsProblem, sharedSubscriptionProblem } from "./local-only.ts";
 
 const acp = AgentRuntimeSettings.Acp({ agent: "claude-code", home: "/Users/someone" });
 
-const apiKey = { MODEL_PROVIDER: "anthropic", MODEL_NAME: "claude", MODEL_API_KEY: "key" };
+const signIn = {
+  OIDC_ISSUER: "https://login.example.com",
+  OIDC_CLIENT_ID: "aobot",
+  OIDC_CLIENT_SECRET: "secret",
+  SIGNIN_ALLOWED_EMAIL_DOMAINS: "example.com",
+};
+
+const apiKey = {
+  MODEL_PROVIDER: "anthropic",
+  MODEL_NAME: "claude",
+  MODEL_API_KEY: "key",
+  ...signIn,
+};
+
+const signingIn = AuthSettings.SignIn({
+  signIn: {
+    provider: {
+      issuer: new URL(signIn.OIDC_ISSUER),
+      internalIssuer: Option.none(),
+      clientId: "aobot",
+      clientSecret: Redacted.make("secret"),
+    },
+    allowedDomains: ["example.com"],
+    admins: new Set(),
+  },
+});
 
 function configFrom(env: Record<string, string>) {
   return serverConfig.parse(ConfigProvider.fromEnv({ env }));
 }
 
-describe("isLoopback", () => {
-  it.each(["127.0.0.1", "127.8.9.10", "::1", "localhost", "::ffff:127.0.0.1"])(
-    "counts %s as this machine only",
-    (host) => expect(isLoopback(host)).toBe(true),
-  );
-
-  it.each([
-    "0.0.0.0",
-    "::",
-    "192.168.1.20",
-    "10.0.0.1",
-    "128.0.0.1",
-    "example.com",
-    "127.example.com",
-  ])("counts %s as reachable from elsewhere", (host) => expect(isLoopback(host)).toBe(false));
-});
-
 describe("sharedSubscriptionProblem", () => {
   it("lets acp start on loopback in single-user mode", () => {
-    expect(sharedSubscriptionProblem(acp, true, "127.0.0.1")).toEqual(Option.none());
+    expect(sharedSubscriptionProblem(acp, AuthSettings.SingleUser(), "127.0.0.1")).toEqual(
+      Option.none(),
+    );
   });
 
   it("refuses acp outside single-user mode", () => {
-    expect(Option.getOrThrow(sharedSubscriptionProblem(acp, false, "127.0.0.1"))).toContain(
+    expect(Option.getOrThrow(sharedSubscriptionProblem(acp, signingIn, "127.0.0.1"))).toContain(
       "SINGLE_USER=true",
     );
   });
 
   it("refuses acp on an address others can reach", () => {
-    expect(Option.getOrThrow(sharedSubscriptionProblem(acp, true, "0.0.0.0"))).toContain(
-      "HOST is 0.0.0.0",
-    );
+    expect(
+      Option.getOrThrow(sharedSubscriptionProblem(acp, AuthSettings.SingleUser(), "0.0.0.0")),
+    ).toContain("HOST is 0.0.0.0");
   });
 });
 
@@ -65,17 +76,25 @@ describe("privateHostsProblem", () => {
 });
 
 describe("serverConfig", () => {
-  it.effect("runs api by default, on every address, without asking for ACP settings", () =>
-    Effect.gen(function* () {
-      const config = yield* configFrom({
-        MODEL_PROVIDER: "anthropic",
-        MODEL_NAME: "claude",
-        MODEL_API_KEY: "key",
-      });
+  it.effect(
+    "runs api with sign-in by default, on every address, without asking for ACP settings",
+    () =>
+      Effect.gen(function* () {
+        const config = yield* configFrom(apiKey);
 
-      expect(AgentRuntimeSettings.$is("Api")(config.runtime)).toBe(true);
-      expect(config.host).toBe("0.0.0.0");
-      expect(config.singleUser).toBe(false);
+        expect(AgentRuntimeSettings.$is("Api")(config.runtime)).toBe(true);
+        expect(config.host).toBe("0.0.0.0");
+        expect(config.auth).toEqual(signingIn);
+      }),
+  );
+
+  it.effect("is opened at localhost on its own port unless PUBLIC_URL says where", () =>
+    Effect.gen(function* () {
+      const local = yield* configFrom({ ...apiKey, PORT: "3100" });
+      const hosted = yield* configFrom({ ...apiKey, PUBLIC_URL: "https://aobot.example.com" });
+
+      expect(local.publicUrl.href).toBe("http://localhost:3100/");
+      expect(hosted.publicUrl.href).toBe("https://aobot.example.com/");
     }),
   );
 

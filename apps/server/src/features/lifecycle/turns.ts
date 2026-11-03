@@ -27,6 +27,7 @@ import {
   SubscriptionRef,
 } from "effect";
 import { SqlClient, type SqlError } from "effect/sql";
+import { Actor, CurrentActor, type PersonActor } from "../../shared/actor.ts";
 import { auditRows } from "../audit/public.ts";
 import { PauseStore, type PauseUnreadable } from "./pause-store.ts";
 
@@ -38,11 +39,13 @@ type StopCode = typeof StopCode.Type;
 /**
 The turn was stopped before its Bot finished, for `code`, by `by`: the person, with Stop or a pause on this
 server, or the deployment, whose check stops the turns of a Bot paused on another server, or of one whose
-pause it can no longer read.
+pause it can no longer read. `actor` is who its row names: the person who pressed Stop or paused, or for
+the deployment's check, the person whose turn it was.
 */
 export class TurnStopped extends Schema.TaggedError<TurnStopped>()("TurnStopped", {
   code: StopCode,
   by: InitiatorKind,
+  actor: Actor,
 }) {}
 
 /** How an audit row says why a turn was stopped, or refused before it started. */
@@ -66,10 +69,11 @@ interface StartedTurn {
   readonly release: Effect.Effect<void>;
 }
 
-/** One turn this server runs: its Bot, its run, and the signal that stops it. */
+/** One turn this server runs: its Bot, its run, who it runs for, and the signal that stops it. */
 interface Running {
   readonly bot: BotId;
   readonly run: RunId;
+  readonly actor: PersonActor;
   readonly stopped: Deferred.Deferred<never, TurnStopped>;
 }
 
@@ -81,15 +85,17 @@ export class Turns extends Context.Service<
   Turns,
   {
     /**
-    Claims `conversation` for run `run` of `bot` until the scope closes, then reads whether `bot` is
-    paused. A paused Bot is refused with `BotPaused`, and one whose pause cannot be read in three tries
-    with `PauseUnknown`: a Bot that may be paused never starts on a guess. Each refusal writes a
-    `turn · deny` row and leaves the conversation free.
+    Claims `conversation` for run `run` of `bot`, on the authority of `actor`, until the scope closes,
+    then reads whether `bot` is paused. A turn runs only for someone a Bot may act for, so `actor` is a
+    person or the single user, never the deployment. A paused Bot is refused with `BotPaused`, and one
+    whose pause cannot be read in three tries with `PauseUnknown`: a Bot that may be paused never starts
+    on a guess. Each refusal writes a `turn · deny` row and leaves the conversation free.
     */
     readonly start: (
       conversation: ConversationId,
       run: RunId,
       bot: BotId,
+      actor: PersonActor,
     ) => Effect.Effect<StartedTurn, ConversationBusy | BotPaused | PauseUnknown, Scope.Scope>;
     readonly isRunning: (conversation: ConversationId) => Effect.Effect<boolean>;
     /** The person's Stop: stops the turn running in `conversation`, if one is. */
@@ -104,14 +110,18 @@ export class Turns extends Context.Service<
 >()("aobot/lifecycle/Turns") {}
 
 /**
-Whether a turn still runs on this server. The gateway reads it on every tool call made in a turn, so a
-CLI that keeps calling tools after its turn was stopped acts no more.
+Whether a turn still runs on this server, and who for. The gateway reads it on every tool call made in a
+turn, so a CLI that keeps calling tools after its turn was stopped acts no more, and every call acts on
+the authority of the person the turn runs for, whichever runtime made it.
 */
 export class LiveTurns extends Context.Service<
   LiveTurns,
   {
-    /** Whether run `run` in `conversation` runs here and was not stopped. */
-    readonly live: (conversation: ConversationId, run: RunId) => Effect.Effect<boolean>;
+    /** Who run `run` in `conversation` runs for, while it runs here and was not stopped. */
+    readonly actorOf: (
+      conversation: ConversationId,
+      run: RunId,
+    ) => Effect.Effect<Option.Option<PersonActor>>;
     /** Completes once run `run` in `conversation` is stopped, and at once when it no longer runs here. */
     readonly stopped: (conversation: ConversationId, run: RunId) => Effect.Effect<void>;
   }
@@ -217,11 +227,11 @@ export const turnsLayer = Layer.effectContext(
       );
 
     /**
-    Signals each of `turns` to stop with `stop`. Each turn records the stop where it ends, so a turn that
-    finished meanwhile records nothing.
+    Signals each of `turns` to stop with what `stop` makes of it. Each turn records the stop where it ends,
+    so a turn that finished meanwhile records nothing.
     */
-    const stopTurns = (turns: ReadonlyArray<Running>, stop: TurnStopped) =>
-      Effect.forEach(turns, (turn) => Deferred.fail(turn.stopped, stop), { discard: true });
+    const stopTurns = (turns: ReadonlyArray<Running>, stop: (turn: Running) => TurnStopped) =>
+      Effect.forEach(turns, (turn) => Deferred.fail(turn.stopped, stop(turn)), { discard: true });
 
     /** The `allow` row of something `by` did at once, and its `succeeded` outcome. */
     const done = (by: InitiatorKind, action: AuditAction, detail: Schema.JsonObject) =>
@@ -234,6 +244,7 @@ export const turnsLayer = Layer.effectContext(
       (stop: TurnStopped): Effect.Effect<void> =>
         done(stop.by, "turn.stopped", { bot, conversation, reason: stopWords[stop.code] }).pipe(
           sql.withTransaction,
+          Effect.provideService(CurrentActor, stop.actor),
           Effect.catch((error) =>
             Effect.logError("A stopped turn could not be recorded").pipe(
               Effect.annotateLogs({ bot, reason: error.message }),
@@ -252,6 +263,7 @@ export const turnsLayer = Layer.effectContext(
       conversation: ConversationId,
       run: RunId,
       bot: BotId,
+      actor: PersonActor,
     ) {
       const stopped = yield* Deferred.make<never, TurnStopped>();
 
@@ -273,7 +285,9 @@ export const turnsLayer = Layer.effectContext(
         Effect.suspend(() =>
           MutableHashMap.has(running, conversation)
             ? Effect.fail(new ConversationBusy({ conversationId: conversation }))
-            : Effect.sync(() => MutableHashMap.set(running, conversation, { bot, run, stopped })),
+            : Effect.sync(() =>
+                MutableHashMap.set(running, conversation, { bot, run, actor, stopped }),
+              ),
         ),
         () => release,
       );
@@ -291,6 +305,7 @@ export const turnsLayer = Layer.effectContext(
               : Effect.void,
         }),
         Effect.onError(() => release),
+        Effect.provideService(CurrentActor, actor),
       );
 
       return { stopped, recordStop: recordStop(conversation, bot), release };
@@ -300,9 +315,11 @@ export const turnsLayer = Layer.effectContext(
       Effect.sync(() => MutableHashMap.has(running, conversation));
 
     const stop = Effect.fn("Turns.stop")(function* (conversation: ConversationId) {
+      const actor = yield* CurrentActor;
+
       yield* stopTurns(
         Option.toArray(MutableHashMap.get(running, conversation)),
-        new TurnStopped({ code: "stopped", by: "person" }),
+        () => new TurnStopped({ code: "stopped", by: "person", actor }),
       );
     });
 
@@ -329,11 +346,13 @@ export const turnsLayer = Layer.effectContext(
       );
 
     const pause = Effect.fn("Turns.pause")(function* (bot: BotId) {
+      const actor = yield* CurrentActor;
+
       // One step, so a pause that was stored has always stopped the turns running here.
       yield* commit("pause", bot, store.pause(bot)).pipe(
         Effect.andThen(turnsOf(bot)),
         Effect.flatMap((turns) =>
-          stopTurns(turns, new TurnStopped({ code: "paused", by: "person" })),
+          stopTurns(turns, () => new TurnStopped({ code: "paused", by: "person", actor })),
         ),
         Effect.uninterruptible,
       );
@@ -371,7 +390,7 @@ export const turnsLayer = Layer.effectContext(
             Effect.andThen(
               stopTurns(
                 Array.filter(judged, (turn) => turn.bot === bot),
-                new TurnStopped({ code, by: "deployment" }),
+                (turn) => new TurnStopped({ code, by: "deployment", actor: turn.actor }),
               ),
             ),
           ),
@@ -392,9 +411,12 @@ export const turnsLayer = Layer.effectContext(
       Stream.changes,
     );
 
-    const live = (conversation: ConversationId, run: RunId) =>
+    const actorOf = (conversation: ConversationId, run: RunId) =>
       Effect.sync(() =>
-        Option.exists(runOf(conversation, run), (turn) => !Deferred.isDoneUnsafe(turn.stopped)),
+        Option.map(
+          Option.filter(runOf(conversation, run), (turn) => !Deferred.isDoneUnsafe(turn.stopped)),
+          (turn) => turn.actor,
+        ),
       );
 
     const stoppedRun = (conversation: ConversationId, run: RunId) =>
@@ -406,7 +428,7 @@ export const turnsLayer = Layer.effectContext(
       );
 
     return Context.make(Turns, Turns.of({ start, isRunning, stop, pause, resume, paused })).pipe(
-      Context.add(LiveTurns, LiveTurns.of({ live, stopped: stoppedRun })),
+      Context.add(LiveTurns, LiveTurns.of({ actorOf, stopped: stoppedRun })),
     );
   }),
 );

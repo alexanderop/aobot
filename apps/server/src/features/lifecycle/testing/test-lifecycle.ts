@@ -1,4 +1,5 @@
 import { Effect, Layer, Ref } from "effect";
+import type { PersonActor } from "../../../shared/actor.ts";
 import { auditLogLayer, migrateAudit } from "../../audit/public.ts";
 import { migrateLifecycle } from "../migrations.ts";
 import { PauseStore, pauseStoreLayer, PauseUnreadable } from "../pause-store.ts";
@@ -38,8 +39,12 @@ export function testLifecycle(failures: Ref.Ref<number> = Ref.makeUnsafe(0)) {
   );
 }
 
-/** Every turn a call names still runs, for a gateway tested without the chat that starts turns. */
-export const everyTurnLive = Layer.succeed(
-  LiveTurns,
-  LiveTurns.of({ live: () => Effect.succeed(true), stopped: () => Effect.never }),
-);
+/**
+Every turn a call names still runs, for `actor`, for a gateway tested without the chat that starts
+turns.
+*/
+export const everyTurnRunsFor = (actor: PersonActor) =>
+  Layer.succeed(
+    LiveTurns,
+    LiveTurns.of({ actorOf: () => Effect.succeedSome(actor), stopped: () => Effect.never }),
+  );

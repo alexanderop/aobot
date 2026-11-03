@@ -52,7 +52,7 @@ import { policyFrom } from "../policy/testing/test-policy.ts";
 import { ComputerControl } from "./control.ts";
 import { Claim, Gateway } from "./gateway.ts";
 import { FileTransfers } from "./transfers.ts";
-import { botHeader, gatewayMcpLayer } from "./mcp.ts";
+import { botHeader, gatewayMcpLayer, turnHeaders } from "./mcp.ts";
 import { migrateGateway } from "./migrations.ts";
 import {
   auditRows,
@@ -62,6 +62,8 @@ import {
   startGateway,
 } from "./testing/test-gateway.ts";
 import { ActingBot, botToolHandlers } from "./tools.ts";
+import { CurrentActor } from "../../shared/actor.ts";
+import { alice, bob } from "../../shared/testing/people.ts";
 
 const exampleDomain = (action: PageAction): Effect.Effect<PageRead> =>
   Effect.succeed({
@@ -80,7 +82,16 @@ const trailWithReasons = Effect.map(auditRows, (rows) =>
   ]),
 );
 
-const named = (id: BotId) => Claim.cases.Named.make({ bot: id });
+/** The turn every test's gateway says still runs, for alice. */
+const turn = { conversation: ConversationId.make("conversation-1"), run: RunId.make("run-1") };
+
+/** A call for Bot `id` in {@link turn}. */
+const named = (id: BotId) => Claim.cases.Named.make({ bot: id, turn });
+
+/** The headers an `acp` CLI sends with each call in {@link turn} for the assistant. */
+const assistantsTurn = Object.fromEntries(
+  turnHeaders({ bot: assistant.id, ...turn }).map(({ name, value }) => [name, value]),
+);
 
 const bot = named(assistant.id);
 
@@ -91,38 +102,42 @@ const { Exited, Signalled, TimedOut } = CommandEnd.cases;
 const navigate = { action: "navigate", url: "https://example.com" } as const;
 
 describe("Gateway", () => {
-  it.effect("writes a refusal as a deny row naming the Bot and agent, in the asking trace", () =>
-    Effect.gen(function* () {
-      const traceId = yield* Gateway.use((gateway) =>
-        gateway.refuse({
-          bot: assistant.id,
-          agent: "codex",
-          action: "terminal/create",
-          detail: { command: "[3 chars]" },
-        }),
-      ).pipe(
-        Effect.andThen(Effect.currentSpan),
-        Effect.map((span) => span.traceId),
-        Effect.withSpan("Chat.turn"),
-        Effect.provide(startGateway(fakeComputers({ browse: exampleDomain }).layer)),
-      );
-
-      expect(yield* auditRows).toEqual([
-        {
-          id: expect.any(String),
-          trace_id: traceId,
-          initiator_kind: "person",
-          decision: "deny",
-          action: "terminal/create",
-          detail: JSON.stringify({
+  it.effect(
+    "writes a refusal as a deny row naming the Bot, agent and person, in the asking trace",
+    () =>
+      Effect.gen(function* () {
+        const traceId = yield* Gateway.use((gateway) =>
+          gateway.refuse({
             bot: assistant.id,
             agent: "codex",
-            request: { command: "[3 chars]" },
+            action: "terminal/create",
+            detail: { command: "[3 chars]" },
           }),
-          outcome_of: null,
-        },
-      ]);
-    }).pipe(Effect.provide(database)),
+        ).pipe(
+          Effect.andThen(Effect.currentSpan),
+          Effect.map((span) => span.traceId),
+          Effect.withSpan("Chat.turn"),
+          Effect.provideService(CurrentActor, alice),
+          Effect.provide(startGateway(fakeComputers({ browse: exampleDomain }).layer)),
+        );
+
+        expect(yield* auditRows).toEqual([
+          {
+            id: expect.any(String),
+            trace_id: traceId,
+            initiator_kind: "person",
+            actor_id: "alice@example.com",
+            decision: "deny",
+            action: "terminal/create",
+            detail: JSON.stringify({
+              bot: assistant.id,
+              agent: "codex",
+              request: { command: "[3 chars]" },
+            }),
+            outcome_of: null,
+          },
+        ]);
+      }).pipe(Effect.provide(database)),
   );
 
   it.effect(
@@ -316,6 +331,72 @@ const form = `- generic [ref=e1]:
 
 const sent = `- generic [ref=e1]:
   - heading "Thank you" [level=1] [ref=e4]`;
+
+describe("Gateway people", () => {
+  const onlyAlice = policyFrom(`deny: []
+allow:
+  - name: only-alice
+    when: actor.id == "alice@example.com"
+`);
+
+  /** Each audit row as `action · decision` and the actor it names, oldest first. */
+  const actors = Effect.map(auditRows, (rows) =>
+    rows.map((row) => [`${String(row["action"])} · ${String(row["decision"])}`, row["actor_id"]]),
+  );
+
+  it.effect("acts on the authority of the person whose turn it is, as the rules see it too", () =>
+    Effect.gen(function* () {
+      const forAlice = shell({});
+      const forBob = shell({});
+
+      yield* Gateway.use((gateway) => gateway.act(bot, makeNotes)).pipe(
+        Effect.provide(startGateway(forAlice.layer, onlyAlice, alice)),
+      );
+
+      const refused = yield* Gateway.use((gateway) =>
+        Effect.flip(gateway.act(bot, makeNotes)),
+      ).pipe(Effect.provide(startGateway(forBob.layer, onlyAlice, bob)));
+
+      expect(refused.message).toContain("run did not run: no rule allows it");
+      expect(forAlice.actions).toEqual([makeNotes]);
+      expect(forBob.actions).toEqual([]);
+      expect(yield* actors).toEqual([
+        ["run · allow", "alice@example.com"],
+        ["run · succeeded", "alice@example.com"],
+        ["run · deny", "bob@example.com"],
+      ]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("refuses a granted call in no turn, as the deployment, forwarding nothing", () =>
+    Effect.gen(function* () {
+      const computer = shell({});
+      const noTurn = Claim.cases.Named.make({ bot: assistant.id });
+
+      const refused = yield* Gateway.use((gateway) =>
+        Effect.flip(gateway.act(noTurn, makeNotes)),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(refused.message).toBe(
+        "run did not run: it came from no conversation a person started, and a Bot acts only for its person.",
+      );
+      expect(computer.actions).toEqual([]);
+      expect(yield* trailWithReasons).toEqual([["run · deny", "no person to act for"]]);
+      expect((yield* actors).map(([, actor]) => actor)).toEqual(["deployment"]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("refuses an ungranted call for that first, whoever's it is", () =>
+    Effect.gen(function* () {
+      const refused = yield* Gateway.use((gateway) =>
+        Effect.flip(gateway.act(Claim.cases.Named.make({ bot: researcher.id }), makeNotes)),
+      ).pipe(Effect.provide(startGateway(shell({}).layer)));
+
+      expect(refused.message).toContain("it is not granted to researcher");
+      expect(yield* trailWithReasons).toEqual([["run · deny", "not granted to researcher"]]);
+    }).pipe(Effect.provide(database)),
+  );
+});
 
 describe("Gateway grants", () => {
   it.effect("refuses a tool the Bot was not granted before resolving or forwarding anything", () =>
@@ -658,7 +739,12 @@ describe("Gateway refs", () => {
         yield* sql`DROP TABLE approvals`;
         yield* sql`
           DELETE FROM gateway_migrations
-          WHERE name IN ('keep_snapshot_url', 'create_approvals', 'keep_snapshot_path')
+          WHERE name IN (
+            'keep_snapshot_url',
+            'create_approvals',
+            'keep_snapshot_path',
+            'name_the_asker'
+          )
         `;
 
         yield* migrateGateway;
@@ -686,7 +772,11 @@ describe("Gateway refs", () => {
           INSERT INTO computer_snapshot (id, snapshot, url, read_by)
           VALUES (1, ${form}, 'https://example.com', 'assistant')
         `;
-        yield* sql`DELETE FROM gateway_migrations WHERE name = 'keep_snapshot_path'`;
+        yield* sql`DROP TABLE approvals`;
+        yield* sql`
+          DELETE FROM gateway_migrations
+          WHERE name IN ('create_approvals', 'keep_snapshot_path', 'name_the_asker')
+        `;
 
         yield* migrateGateway;
 
@@ -1155,13 +1245,16 @@ describe("the gateway's MCP server", () => {
       const traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
 
       const result = yield* callOverMcp(
-        { traceparent: `00-${traceId}-00f067aa0ba902b7-01`, [botHeader]: assistant.id },
+        { traceparent: `00-${traceId}-00f067aa0ba902b7-01`, ...assistantsTurn },
         "navigate",
         { url: "https://example.com" },
       );
 
       expect(JSON.stringify(result.content)).toContain("Example Domain");
-      expect((yield* auditRows).map((row) => row["trace_id"])).toEqual([traceId, traceId]);
+      expect((yield* auditRows).map((row) => [row["trace_id"], row["actor_id"]])).toEqual([
+        [traceId, "alice@example.com"],
+        [traceId, "alice@example.com"],
+      ]);
     }).pipe(Effect.provide(database), Effect.scoped),
   );
 
@@ -1458,7 +1551,8 @@ describe("Gateway control", () => {
           'share_computer_snapshot',
           'keep_snapshot_url',
           'create_approvals',
-          'keep_snapshot_path'
+          'keep_snapshot_path',
+          'name_the_asker'
         )
       `;
 

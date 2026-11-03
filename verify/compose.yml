@@ -1,5 +1,5 @@
 # Added on top of docker-compose.yml by `vp run verify`: the server talks to the scripted mock model.
-# Its own host ports, so a verify run works while the dev stack holds 3000 and 3300.
+# Its own host ports, so a verify run works while the dev stack holds 3000, 3300 and 5556.
 services:
   server:
     environment:
@@ -10,8 +10,17 @@ services:
       # Only here, for the fixture page. The server refuses it in production.
       COMPUTER_ALLOW_PRIVATE_HOSTS: "true"
       GRAFANA_URL: http://localhost:3400
+      PUBLIC_URL: http://localhost:3100
+      OIDC_ISSUER: http://localhost:5656/dex
     ports: !override
       - "127.0.0.1:3100:3000"
+
+  dex:
+    environment:
+      DEX_ISSUER: http://localhost:5656/dex
+      AOBOT_CALLBACK: http://localhost:3100/auth/callback
+    ports: !override
+      - "127.0.0.1:5656:5556"
 
   otel-lgtm:
     ports: !override

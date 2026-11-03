@@ -33,9 +33,12 @@ export function makeControl(runtime: Atom.AtomRuntime<ControlClient>) {
         return yield* call.pipe(
           Effect.match({
             onSuccess: (): Answered => ({ sentWhile: sent.sentWhile, failure: Option.none() }),
-            onFailure: ({ _tag, message }): Answered => ({
+            onFailure: (error): Answered => ({
               sentWhile: sent.sentWhile,
-              failure: Option.some({ _tag, message }),
+              failure: Option.some({
+                _tag: error._tag,
+                message: error.message,
+              }),
             }),
           }),
         );

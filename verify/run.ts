@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { browser } from "./browser.ts";
+import { signInAs } from "./sign-in.ts";
 import { compose, computerContainer } from "./stack.ts";
 
 const ticket = process.argv[2];
@@ -27,7 +28,9 @@ function down(): void {
   compose("down", "--volumes");
 }
 
-const { default: scenario, stack } = await import(`./scenarios/${ticket}.ts`);
+// A scenario on the stack starts signed in as alice, an admin there, unless it exports
+// `signedIn = false` to sign in itself.
+const { default: scenario, stack, signedIn } = await import(`./scenarios/${ticket}.ts`);
 
 // A failed cleanup step must not hide why the scenario failed, and must not skip the teardown.
 function bestEffort(step: string, run: () => void): void {
@@ -45,6 +48,8 @@ if (stack === false) {
   try {
     down();
     compose("up", "--build", "--detach", "--wait");
+
+    if (signedIn !== false) await signInAs(baseUrl, "alice@example.com");
     await scenario(baseUrl, grafanaUrl);
     console.log(`verify ${ticket}: passed`);
   } finally {

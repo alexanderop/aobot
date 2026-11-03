@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import { ControlClient } from "./control-client.ts";
 import { makeControl } from "./control.ts";
 import { type Answered, ControlCommand } from "./control-state.ts";
+import { signedIn } from "../../shared/testing/signed-in.ts";
 
 /** A control client whose server does `click` with each click it receives, and nothing else. */
 function serverClicking(click: (at: ScreenPoint) => Effect.Effect<void, InputFailed>) {
@@ -19,6 +20,7 @@ function serverClicking(click: (at: ScreenPoint) => Effect.Effect<void, InputFai
   return Atom.runtime(
     Layer.effect(ControlClient, RpcTest.makeClient(ControlRpcs, { flatten: true })).pipe(
       Layer.provide(handlers),
+      Layer.provide(signedIn),
     ),
   );
 }

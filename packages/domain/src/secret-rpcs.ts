@@ -2,6 +2,7 @@ import { Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/rpc";
 import { SecretValue } from "./computer.ts";
 import { BotId } from "./ids.ts";
+import { SignedIn } from "./people.ts";
 
 /**
 How a person answers a Bot's `request_secret`: the secret, which goes from the server straight to the
@@ -55,4 +56,4 @@ export class SecretRpcs extends RpcGroup.make(
     payload: { bot: BotId, request: SecretRequestId, answer: SecretAnswer },
     error: NoSecretRequested,
   }),
-) {}
+).middleware(SignedIn) {}

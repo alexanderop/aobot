@@ -6,6 +6,7 @@ import { OpenOutcome } from "../features/chat/public.ts";
 import {
   botLink,
   follow,
+  forgetMemory,
   type Memory,
   type MemoryStorage,
   readMemory,
@@ -96,6 +97,7 @@ function sharedStorage(): MemoryStorage {
   return () => ({
     getItem: (key) => stored.get(key) ?? null,
     setItem: (key, value) => void stored.set(key, value),
+    removeItem: (key) => void stored.delete(key),
   });
 }
 
@@ -141,12 +143,30 @@ describe("readMemory and remember", () => {
       fresh,
     );
     expect(readMemory(refusing).size).toBe(0);
-    expect(readMemory(() => ({ getItem: () => "{not json", setItem: () => undefined })).size).toBe(
-      0,
-    );
     expect(
-      readMemory(() => ({ getItem: () => '{"Not A Bot":"c1"}', setItem: () => undefined })).size,
+      readMemory(() => ({
+        getItem: () => "{not json",
+        setItem: () => undefined,
+        removeItem: () => undefined,
+      })).size,
     ).toBe(0);
+    expect(
+      readMemory(() => ({
+        getItem: () => '{"Not A Bot":"c1"}',
+        setItem: () => undefined,
+        removeItem: () => undefined,
+      })).size,
+    ).toBe(0);
+  });
+
+  it("leave nothing for the next person once the page forgot them, as it does on sign-out", () => {
+    const storage = sharedStorage();
+    remember(storage, new Map(), { bot: assistant, conversation: ConversationId.make("a1") });
+
+    forgetMemory(storage);
+
+    expect(readMemory(storage)).toEqual(new Map());
+    expect(() => forgetMemory(refusing)).not.toThrow();
   });
 });
 

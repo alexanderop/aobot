@@ -1,5 +1,6 @@
 import { Rpc, RpcGroup } from "effect/rpc";
 import { Screen } from "./computer.ts";
+import { SignedIn } from "./people.ts";
 
 /**
 The screen API. `Screen.watch` streams the computer's screen for as long as the caller stays subscribed.
@@ -9,4 +10,4 @@ once and not on its next repaint.
 */
 export class ScreenRpcs extends RpcGroup.make(
   Rpc.make("Screen.watch", { success: Screen, stream: true }),
-) {}
+).middleware(SignedIn) {}
