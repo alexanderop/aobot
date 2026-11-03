@@ -10,10 +10,16 @@
 }
 
 .conversation__header {
-  position: relative;
-  display: flex;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
   padding: 16px 0 12px;
+}
+
+.conversation__header > .pill {
+  grid-column: 2;
+  min-width: 0;
 }
 
 .pill {
@@ -44,9 +50,8 @@
 }
 
 .pause-button {
-  position: absolute;
-  top: 16px;
-  right: 0;
+  grid-column: 3;
+  justify-self: end;
   padding: 6px 14px;
   border: 0;
   border-radius: 999px;
@@ -62,7 +67,7 @@
   color: var(--bg);
 }
 
-.pause-button:disabled {
+.pause-button[aria-disabled="true"] {
   opacity: 0.5;
   cursor: default;
 }

@@ -21,8 +21,12 @@ function PauseButton(props: { readonly pause: UsePause }) {
       <button
         type="button"
         className={isPaused ? "pause-button pause-button--resume" : "pause-button"}
-        disabled={sending}
-        onClick={isPaused ? resume : pause}
+        aria-disabled={sending}
+        onClick={() => {
+          if (sending) return;
+
+          (isPaused ? resume : pause)();
+        }}
       >
         {isPaused ? "Resume" : "Pause"}
       </button>
