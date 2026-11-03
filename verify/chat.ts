@@ -111,6 +111,25 @@ export function cardResult(tool: string): string {
   );
 }
 
+/** Whether no turn runs in the open conversation, so its composer takes a message: it shows no Stop. */
+export function idle(): boolean {
+  return browser("get", "count", '[aria-label="Stop"]') === "0";
+}
+
+/**
+Waits until the open conversation's turn has ended, so its composer takes a message again. The last word
+of an answer can show a moment before its turn ends, and until then the composer holds Stop and Enter
+sends nothing.
+*/
+export async function turnEnded(): Promise<void> {
+  await waitFor("the turn to end", 30_000, idle);
+}
+
+/** The conversation the page has open, as its URL names it. */
+export function openConversation(): string {
+  return new URL(browser("get", "url")).searchParams.get("c") ?? "";
+}
+
 /** Send `text` from the composer of the conversation with `bot`, without waiting for the answer. */
 export function send(text: string, bot = "Assistant"): void {
   browser("find", "placeholder", `Message ${bot}`, "fill", text);
@@ -118,9 +137,8 @@ export function send(text: string, bot = "Assistant"): void {
 }
 
 /**
-Send `text` from the composer once it takes a message, and wait until answer number `index + 1` reads
-`answer`. The last word of an answer can show a moment before its turn ends, and until then the composer
-holds Stop and Enter sends nothing.
+Send `text` from the composer once the last turn ended, and wait until answer number `index + 1` reads
+`answer`.
 */
 export async function ask(
   text: string,
@@ -128,11 +146,7 @@ export async function ask(
   answer: string,
   bot = "Assistant",
 ): Promise<void> {
-  await waitFor(
-    "the composer to take a message",
-    30_000,
-    () => browser("get", "count", '[aria-label="Stop"]') === "0",
-  );
+  await turnEnded();
 
   send(text, bot);
 

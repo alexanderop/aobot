@@ -54,6 +54,18 @@ export async function signInAs(baseUrl: string, email: string): Promise<void> {
   );
 }
 
+/** Signs out from the person bar and waits for the sign-in screen. */
+export async function signOut(): Promise<void> {
+  browser("find", "role", "button", "click", "--name", "Sign out");
+  await waitFor("the sign-in screen after signing out", 15_000, onSignInScreen);
+}
+
+/** Signs out, then in again at `baseUrl` as `email`, on the same browser. */
+export async function signOutAndInAs(baseUrl: string, email: string): Promise<void> {
+  await signOut();
+  await signInAs(baseUrl, email);
+}
+
 /** The `Cookie` header of the browser's session, for a request a scenario sends without the browser. */
 export function sessionCookieHeader(): string {
   const session = browser("cookies", "get")

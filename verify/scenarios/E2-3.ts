@@ -13,6 +13,7 @@ import {
   script,
   send,
   serverLog,
+  turnEnded,
 } from "../chat.ts";
 import { loginPassword } from "../login.ts";
 import { computerContainer } from "../stack.ts";
@@ -114,11 +115,7 @@ export default async function scenario(baseUrl: string, grafanaUrl: string): Pro
     ModelStep.Say({ words: signedInAnswer.split(/(?= )/u) }),
   ]);
 
-  await waitFor(
-    "the composer to take a message",
-    30_000,
-    () => browser("get", "count", '[aria-label="Stop"]') === "0",
-  );
+  await turnEnded();
   send("Sign in to the login page as ada.");
 
   await waitFor(

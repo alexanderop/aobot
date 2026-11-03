@@ -1,8 +1,8 @@
 import { Schema } from "effect";
 import { ModelStep } from "../../apps/server/src/features/agent/testing/model-script.ts";
 import { assert, browser, evaluate, waitFor } from "../browser.ts";
-import { answers, ask, modelRequests, script, send } from "../chat.ts";
-import { onSignInScreen, signInAs } from "../sign-in.ts";
+import { answers, ask, modelRequests, openConversation, script, send, turnEnded } from "../chat.ts";
+import { signOutAndInAs } from "../sign-in.ts";
 
 const Rows = Schema.Array(
   Schema.Struct({ conversation: Schema.String, preview: Schema.String, unread: Schema.Boolean }),
@@ -25,11 +25,6 @@ function noConversations(): boolean {
   return browser("get", "count", ".conversation-list__empty") !== "0";
 }
 
-/** The conversation the page has open, as its URL names it. */
-function openConversation(): string {
-  return new URL(browser("get", "url")).searchParams.get("c") ?? "";
-}
-
 /** Clicks the sidebar's row of `conversation` and waits until the page has it open. */
 async function openFromSidebar(conversation: string): Promise<void> {
   browser("click", `.conversation-list a[href*="c=${conversation}"]`);
@@ -40,23 +35,8 @@ async function openFromSidebar(conversation: string): Promise<void> {
   );
 }
 
-/** Waits until the open conversation's turn has ended, so its composer takes a message again. */
-async function turnEnded(): Promise<void> {
-  await waitFor(
-    "the turn to end",
-    30_000,
-    () => browser("get", "count", '[aria-label="Stop"]') === "0",
-  );
-}
-
 /** Says `words` a word at a time as the Bot's next answer. */
 const saying = (words: string) => script([ModelStep.Say({ words: words.split(/(?= )/u) })]);
-
-async function signOutAndInAs(baseUrl: string, email: string): Promise<void> {
-  browser("find", "role", "button", "click", "--name", "Sign out");
-  await waitFor("the sign-in screen", 15_000, onSignInScreen);
-  await signInAs(baseUrl, email);
-}
 
 /**
 E3-2: alice starts two conversations with Assistant from the sidebar's New, and each is listed with
@@ -68,7 +48,7 @@ conversation leaves a dot on the first until she opens it.
 */
 export default async function scenario(baseUrl: string): Promise<void> {
   browser("open", baseUrl);
-  await waitFor("the conversation list", 15_000, () => noConversations());
+  await waitFor("the conversation list", 15_000, noConversations);
 
   await saying("Noted: the code word is falcon.");
   await ask("Remember the code word falcon.", 0, "Noted: the code word is falcon.");
@@ -89,18 +69,20 @@ export default async function scenario(baseUrl: string): Promise<void> {
   ]);
 
   await waitFor(
-    `both conversations in the sidebar (${both})`,
+    "two read conversations in the sidebar",
     10_000,
-    () => JSON.stringify(listed()) === both,
+    () => listed().length === 2 && listed().every((row) => !row.unread),
   );
+  const alicesRows = JSON.stringify(listed());
   assert(
-    JSON.stringify(listed()) === both,
-    "alice's two conversations are listed newest first with their last message, read",
+    alicesRows === both,
+    `alice's two conversations are listed newest first with their last message, read (${alicesRows})`,
   );
 
   await signOutAndInAs(baseUrl, "bob@example.com");
-  await waitFor("bob's conversation list", 15_000, () => noConversations());
-  assert(listed().length === 0, "bob sees none of alice's conversations");
+  await waitFor("bob's conversation list", 15_000, () => noConversations() || listed().length > 0);
+  const bobsRows = JSON.stringify(listed());
+  assert(bobsRows === "[]", `bob sees none of alice's conversations (${bobsRows})`);
 
   browser("open", `${baseUrl}/?bot=assistant&c=${first}`);
   await waitFor("bob's page to leave alice's conversation", 15_000, () => {
@@ -113,10 +95,10 @@ export default async function scenario(baseUrl: string): Promise<void> {
     10_000,
     () => browser("get", "count", '[placeholder="Message Assistant"]') !== "0",
   );
+  const bubbles = browser("get", "count", ".bubble");
   assert(
-    !browser("get", "text", "body").includes("falcon") &&
-      browser("get", "count", ".bubble") === "0",
-    "alice's address shows bob a new conversation with none of her messages",
+    !browser("get", "text", "body").includes("falcon") && bubbles === "0",
+    `alice's address shows bob a new conversation with none of her messages (${bubbles} bubbles)`,
   );
 
   await signOutAndInAs(baseUrl, "alice@example.com");
@@ -147,18 +129,19 @@ export default async function scenario(baseUrl: string): Promise<void> {
   await waitFor("a dot on the first conversation once its answer arrived", 30_000, () =>
     listed().some((row) => row.conversation === first && row.unread),
   );
+  const firstPreview = listed().find((row) => row.conversation === first)?.preview;
   assert(
-    listed().find((row) => row.conversation === first)?.preview ===
-      "Here is a long answer that takes a while to arrive in full.",
-    "the first conversation's preview is the answer that arrived while alice was away",
+    firstPreview === "Here is a long answer that takes a while to arrive in full.",
+    `the first conversation's preview is the answer that arrived while alice was away (${firstPreview})`,
   );
 
   await openFromSidebar(first);
   await waitFor("the dot to clear once alice opened it", 10_000, () =>
     listed().every((row) => !row.unread),
   );
+  const lastAnswer = answers().at(-1);
   assert(
-    answers().at(-1) === "Here is a long answer that takes a while to arrive in full.",
-    "opening the first conversation shows the answer that arrived, and clears its dot",
+    lastAnswer === "Here is a long answer that takes a while to arrive in full.",
+    `opening the first conversation shows the answer that arrived, and clears its dot (${lastAnswer})`,
   );
 }

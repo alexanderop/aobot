@@ -8,6 +8,7 @@ import {
   cardResult,
   failedCards,
   modelRequests,
+  openConversation,
   script,
 } from "../chat.ts";
 
@@ -113,7 +114,7 @@ export default async function scenario(baseUrl: string): Promise<void> {
     browser("get", "url").includes("bot=researcher"),
   );
   assert(
-    new URL(browser("get", "url")).searchParams.get("c") === researchers.searchParams.get("c"),
+    openConversation() === researchers.searchParams.get("c"),
     "the page follows Researcher's conversation to Researcher, not opening it as Assistant",
   );
   await waitFor(
