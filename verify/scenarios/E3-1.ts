@@ -32,6 +32,11 @@ function statusFromPage(path: string): number {
   return evaluate(Schema.Number, `fetch(${JSON.stringify(path)}).then((r) => r.status)`);
 }
 
+/** The page's memory of each Bot's last conversation on this browser, as stored. */
+function rememberedConversations(): string | null {
+  return evaluate(Schema.NullOr(Schema.String), `localStorage.getItem("aobot.conversations")`);
+}
+
 const ShownRows = Schema.Array(Schema.Struct({ person: Schema.String, shown: Schema.String }));
 
 /** Every row the audit page shows: its person, and its action and decision in words. */
@@ -49,8 +54,8 @@ function shownRows() {
 E3-1: the page opens signed out and asks to sign in, opening no RPC socket, and the server refuses
 whatever is asked of it without a session. mallory@other.com signs in at Dex and is refused before she is
 recorded. alice@example.com signs in, the Bot opens a page for her, and its rows, the audit page filtered
-to her and the turn's Chat.turn span all name her. Signing out shows the sign-in screen again and the
-server refuses the page.
+to her and the turn's Chat.turn span all name her. Signing out shows the sign-in screen again, forgets
+which conversations she had open on this browser, and the server refuses the page.
 */
 export default async function scenario(baseUrl: string, grafanaUrl: string): Promise<void> {
   browser("open", baseUrl);
@@ -135,7 +140,13 @@ export default async function scenario(baseUrl: string, grafanaUrl: string): Pro
 
   browser("open", baseUrl);
   await waitFor("the person bar", 15_000, () => browser("get", "count", ".person-bar") !== "0");
+  assert(rememberedConversations() !== null, "the page remembers alice's conversation");
   browser("find", "role", "button", "click", "--name", "Sign out");
   await waitFor("the sign-in screen after signing out", 15_000, onSignInScreen);
+  await waitFor(
+    "the page to forget alice's conversations",
+    5_000,
+    () => rememberedConversations() === null,
+  );
   assert(statusFromPage("/audit/rows") === 401, "after signing out the server refuses the page");
 }

@@ -6,6 +6,7 @@ import { conversation, OpenOutcome } from "../features/chat/public.ts";
 import { type History, pageHistory } from "../shared/page-history.ts";
 import {
   follow,
+  forgetMemory,
   type Memory,
   type MemoryStorage,
   pickBot,
@@ -133,3 +134,9 @@ export const selection = makeSelection(
   Atom.map(botList, AsyncResult.value),
   conversation.open,
 );
+
+/**
+Forgets each Bot's last conversation on this browser, so whoever signs in next on it does not open the
+last person's.
+*/
+export const forgetPageMemory = () => forgetMemory(pageBrowser.storage);

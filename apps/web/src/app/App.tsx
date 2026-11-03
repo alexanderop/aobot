@@ -1,11 +1,13 @@
 import { type BotId, type BotSummary, SessionState } from "@aobot/domain";
 import { type Array, Option } from "effect";
+import { useEffect } from "react";
 import { AuditPage } from "../features/audit/public.ts";
 import { Sidebar, useBots } from "../features/bots/public.ts";
 import { ConversationView, useConversation } from "../features/chat/public.ts";
 import { LiveScreen } from "../features/screen/public.ts";
 import { PersonBar, SignInScreen, useSession } from "../features/session/public.ts";
 import "./app.css";
+import { forgetPageMemory } from "./selection-atoms.ts";
 import { botLink, type Selection } from "./selection.ts";
 import { useSelection } from "./use-selection.ts";
 
@@ -88,6 +90,16 @@ function Audit() {
 }
 
 /**
+The sign-in screen, which forgets the conversations open on this browser: after a sign-out, an expired
+session or a removal, the next person to sign in here may be someone else.
+*/
+function SignedOut() {
+  useEffect(forgetPageMemory, []);
+
+  return <SignInScreen />;
+}
+
+/**
 The page: the audit trail at `/audit`, the messenger everywhere else, once someone is signed in. Nothing
 that opens an RPC socket mounts before the server said who the page is open for, so a signed-out page
 never knocks on a socket it would be refused.
@@ -97,7 +109,7 @@ export function App() {
     onNone: Connecting,
     onSome: (session) =>
       SessionState.guards.SignedOut(session) ? (
-        <SignInScreen />
+        <SignedOut />
       ) : window.location.pathname === auditPath ? (
         <Audit />
       ) : (
