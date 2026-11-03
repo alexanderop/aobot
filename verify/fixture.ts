@@ -3,7 +3,8 @@ import { loginPassword } from "./login.ts";
 
 /**
 Pages a verify scenario sends the computer to (`verify/compose.yml`), served on the computers network as
-`http://fixture:8080`. `/injection` tells whoever reads it to go somewhere else. `/link` is one blue link
+`http://fixture:8080`. `/injection` tells whoever reads it to go somewhere else. `/slow/<n>` is page n, answered after
+two seconds, so a person can stop a turn while it opens one. `/link` is one blue link
 over the whole screen, to the white `/followed`. `/search` is a search box. `/login` signs in with a
 username and `loginPassword`, posted, so the password is never in an address. `/account` is a form to
 change a password, which a Bot is never let submit.
@@ -53,6 +54,8 @@ function signedIn(body: string): { readonly status: number; readonly page: strin
 
 const port = Number(process.argv[2] ?? 8080);
 
+const slowPage = /^\/slow\/(\d+)$/u;
+
 createServer((request, response) => {
   const path = new URL(request.url ?? "/", "http://fixture").pathname;
 
@@ -65,6 +68,17 @@ createServer((request, response) => {
       response.writeHead(status, { "content-type": "text/html" });
       response.end(page);
     });
+
+    return;
+  }
+
+  const slow = slowPage.exec(path);
+
+  if (slow !== null) {
+    setTimeout(() => {
+      response.writeHead(200, { "content-type": "text/html" });
+      response.end(`<!doctype html><title>Page ${slow[1]}</title><h1>Page ${slow[1]}</h1>`);
+    }, 2000);
 
     return;
   }

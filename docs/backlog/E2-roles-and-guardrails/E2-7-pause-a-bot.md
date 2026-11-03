@@ -2,7 +2,7 @@
 id: E2-7
 title: Pause a Bot
 epic: E2
-status: todo
+status: done
 depends_on: [E2-1]
 estimate: 2d
 ---
