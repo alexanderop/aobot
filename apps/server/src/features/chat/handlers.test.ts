@@ -17,8 +17,8 @@ import { AgentEvent, type AgentError, AgentRuntime, Stalled, type Turn } from ".
 import { ConversationStore, conversationStoreLayer } from "./conversation-store.ts";
 import { chatHandlersLayer } from "./handlers.ts";
 import { chatLayer } from "./public.ts";
-import { assistant, researcher, testBots } from "../bots/testing/test-bots.ts";
-import { testDatabase } from "./testing/test-database.ts";
+import { assistant, researcher } from "../bots/testing/test-bots.ts";
+import { testServer } from "./testing/test-server.ts";
 
 const conversationId = ConversationId.make("conversation-1");
 
@@ -27,7 +27,7 @@ const opening = { conversationId, botId: assistant.id };
 function chatWith(answer: Stream.Stream<AgentEvent, AgentError>) {
   const agent = Layer.succeed(AgentRuntime, AgentRuntime.of({ run: () => answer }));
 
-  return chatLayer.pipe(Layer.provide([agent, testDatabase, testBots]));
+  return chatLayer.pipe(Layer.provide(agent), Layer.provide(testServer()));
 }
 
 /** A chat whose store holds `ensure` open until `release` is completed, so a turn can be caught mid-startup. */
@@ -58,7 +58,8 @@ function chatWithSlowStartup(answer: Stream.Stream<AgentEvent, AgentError>) {
     release,
     layer: chatHandlersLayer.pipe(
       Layer.provide(slowStore),
-      Layer.provide([agent, testDatabase, testBots]),
+      Layer.provide(agent),
+      Layer.provide(testServer()),
     ),
   };
 }
@@ -402,7 +403,7 @@ describe("Chat RPCs", () => {
 
       const next = yield* client["Chat.send"](send("Again", "user-2")).pipe(Stream.runCollect);
       expect(next.at(-1)?.type).toBe("RUN_FINISHED");
-    }).pipe(Effect.provide(chatLayer.pipe(Layer.provide([agent, testDatabase, testBots]))));
+    }).pipe(Effect.provide(chatLayer.pipe(Layer.provide(agent), Layer.provide(testServer()))));
   });
 
   it.effect(
@@ -446,7 +447,7 @@ describe("Chat RPCs", () => {
         ).toEqual(["Look this up", "Ok"]);
         expect(turns.map((turn) => turn.bot)).toEqual([researcher.id]);
         expect(turns[0]?.instructions).toContain("You are Researcher.");
-      }).pipe(Effect.provide(chatLayer.pipe(Layer.provide([agent, testDatabase, testBots]))));
+      }).pipe(Effect.provide(chatLayer.pipe(Layer.provide(agent), Layer.provide(testServer()))));
     },
   );
 
@@ -477,7 +478,7 @@ describe("Chat RPCs", () => {
       expect(turns.map((turn) => turn.conversation)).toEqual([conversationId, conversationId]);
       expect(new Set(turns.map((turn) => turn.run)).size).toBe(2);
       expect(started.map((event) => event?.runId)).toEqual(turns.map((turn) => turn.run));
-    }).pipe(Effect.provide(chatLayer.pipe(Layer.provide([agent, testDatabase, testBots]))));
+    }).pipe(Effect.provide(chatLayer.pipe(Layer.provide(agent), Layer.provide(testServer()))));
   });
 
   it.effect("refuses a Bot the server does not know, storing nothing and running no turn", () =>

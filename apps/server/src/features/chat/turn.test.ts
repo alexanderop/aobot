@@ -2,7 +2,8 @@ import { ConversationId, MessageId, RunId, ToolCallId } from "@aobot/domain";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Stream } from "effect";
 import { AgentEvent, StepLimit } from "../agent/public.ts";
-import { turnEvents } from "./turn.ts";
+import { StopReason } from "../lifecycle/public.ts";
+import { TurnStopped, turnEvents, turnStatus } from "./turn.ts";
 
 const ids = {
   conversationId: ConversationId.make("conversation-1"),
@@ -133,6 +134,32 @@ describe("turnEvents", () => {
         "TOOL_CALL_END",
         "RUN_ERROR",
       ]);
+    }),
+  );
+
+  it.effect.each([
+    [StopReason.Person(), { code: "stopped", message: "Stopped." }],
+    [StopReason.Paused(), { code: "paused", message: "This Bot is paused." }],
+    [
+      StopReason.PauseUnknown(),
+      {
+        code: "pause_unknown",
+        message: "The server could not tell whether this Bot is paused, so it stopped this turn.",
+      },
+    ],
+  ] as const)("ends a turn stopped as %o with why, as a cancelled turn", ([reason, ending]) =>
+    Effect.gen(function* () {
+      const events = yield* turnEvents(
+        ids,
+        Stream.concat(
+          Stream.make(AgentEvent.TextDelta({ text: "One" })),
+          Stream.fail(new TurnStopped({ reason })),
+        ),
+      ).pipe(Stream.runCollect);
+
+      const last = events.at(-1);
+      expect(last).toEqual({ type: "RUN_ERROR", ...ending });
+      expect(last === undefined ? "none" : turnStatus(last)).toBe("cancelled");
     }),
   );
 });
