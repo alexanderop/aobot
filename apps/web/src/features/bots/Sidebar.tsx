@@ -1,6 +1,7 @@
 import type { BotId, BotSummary } from "@aobot/domain";
-import { type ReactNode, useId } from "react";
+import { useId } from "react";
 import { isPlainClick } from "../../shared/plain-click.ts";
+import "../../shared/side-list.css";
 import { BotAvatar } from "./BotAvatar.tsx";
 import { sidebarSections } from "./sidebar-sections.ts";
 import "./sidebar.css";
@@ -29,7 +30,7 @@ function BotLink(
     <li>
       <a
         href={props.linkTo(bot.id)}
-        className={`sidebar__${props.layout}`}
+        className={props.layout === "tile" ? "side-row sidebar__tile" : "side-row"}
         aria-current={bot.id === props.selected ? "page" : undefined}
         data-paused={paused}
         onClick={(event) => {
@@ -40,8 +41,8 @@ function BotLink(
         }}
       >
         <BotAvatar bot={bot.id} size={avatarSize[props.layout]} />
-        <span className="sidebar__label">
-          <span className="sidebar__name" title={bot.name}>
+        <span className="side-row__label">
+          <span className="side-row__text" title={bot.name}>
             {bot.name}
           </span>
           {paused ? <span className="sidebar__paused">Paused</span> : null}
@@ -62,10 +63,10 @@ function Group(props: {
 
   return (
     <div className="sidebar__group" role="group" aria-labelledby={heading}>
-      <h2 id={heading} className="sidebar__heading">
+      <h2 id={heading} className="side-heading">
         {props.name}
       </h2>
-      <ul className="sidebar__rows">
+      <ul className="side-list">
         {props.bots.map((bot) => (
           <BotLink
             key={bot.id}
@@ -82,12 +83,9 @@ function Group(props: {
 
 /**
 The Bots to talk to, as a messenger lists contacts: the pinned ones as a grid of large avatars, then a row
-per Bot under each group's heading, then `children`, such as the person's conversations. The selected
-Bot's conversation is the one open beside it.
+per Bot under each group's heading. The selected Bot's conversation is the one open beside it.
 */
-export function Sidebar(
-  props: Picking & { readonly bots: ReadonlyArray<BotSummary>; readonly children?: ReactNode },
-) {
+export function Sidebar(props: Picking & { readonly bots: ReadonlyArray<BotSummary> }) {
   const { pinned, ungrouped, groups } = sidebarSections(props.bots);
   const picking: Picking = { selected: props.selected, linkTo: props.linkTo, onPick: props.onPick };
   const paused = usePausedBots();
@@ -95,7 +93,7 @@ export function Sidebar(
   return (
     <nav className="sidebar" aria-label="Bots">
       {pinned.length === 0 ? null : (
-        <ul className="sidebar__pinned" aria-label="Pinned">
+        <ul className="side-list sidebar__pinned" aria-label="Pinned">
           {pinned.map((bot) => (
             <BotLink
               key={bot.id}
@@ -108,7 +106,7 @@ export function Sidebar(
         </ul>
       )}
       {ungrouped.length === 0 ? null : (
-        <ul className="sidebar__rows">
+        <ul className="side-list">
           {ungrouped.map((bot) => (
             <BotLink
               key={bot.id}
@@ -129,7 +127,6 @@ export function Sidebar(
           picking={picking}
         />
       ))}
-      {props.children}
     </nav>
   );
 }

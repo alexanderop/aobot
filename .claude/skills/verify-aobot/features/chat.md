@@ -43,6 +43,7 @@ Preconditions: baseline. No script set (the default answer is fine), or set one 
 - `chat-stop` is not covered by any `vp run verify` scenario yet. What Stop leaves in the transcript and the
   audit is not pinned; report what you saw rather than assume.
 - Opening http://localhost:3100 without `?c=` starts a new, empty conversation.
-- Conversation rows are `.conversation-list__row` (their `href` carries `c=`), the preview
+- The Conversations are their own `nav`, `.conversation-list`, below the Bots' `nav[aria-label="Bots"]`.
+  Its rows are `.conversation-list a` (their `href` carries `c=`), the preview
   `.conversation-list__preview`, the dot `.conversation-list__unread`, none yet `.conversation-list__empty`.
   New is the button named `New conversation with <Bot name>`. `vp run verify E3-2` drives all of it.

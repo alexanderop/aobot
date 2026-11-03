@@ -12,7 +12,7 @@ const Rows = Schema.Array(
 function listed() {
   return evaluate(
     Rows,
-    `[...document.querySelectorAll(".conversation-list__row")].map((row) => ({
+    `[...document.querySelectorAll(".conversation-list a")].map((row) => ({
       conversation: new URL(row.href).searchParams.get("c"),
       preview: row.querySelector(".conversation-list__preview").textContent,
       unread: row.querySelector(".conversation-list__unread") !== null,
@@ -32,7 +32,7 @@ function openConversation(): string {
 
 /** Clicks the sidebar's row of `conversation` and waits until the page has it open. */
 async function openFromSidebar(conversation: string): Promise<void> {
-  browser("click", `.conversation-list__row[href*="c=${conversation}"]`);
+  browser("click", `.conversation-list a[href*="c=${conversation}"]`);
   await waitFor(
     `conversation ${conversation} to open`,
     10_000,

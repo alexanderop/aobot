@@ -62,7 +62,6 @@ function Messenger(props: {
   readonly choose: (choice: Choice) => void;
 }) {
   const { bots, selection, choose } = props;
-  const selectedBot = bots.find((bot) => bot.id === selection.bot) ?? bots[0];
 
   return (
     <div className="app">
@@ -72,18 +71,17 @@ function Messenger(props: {
           selected={selection.bot}
           linkTo={linkTo}
           onPick={(bot) => choose(Choice.Bot({ bot }))}
-        >
-          <ConversationList
-            bots={bots}
-            selected={selection.conversation}
-            selectedBot={selectedBot}
-            linkTo={conversationLink}
-            onOpen={(conversation) =>
-              choose(Choice.Conversation({ selection: selectionOf(conversation) }))
-            }
-            onNew={() => choose(Choice.New({ bot: selection.bot }))}
-          />
-        </Sidebar>
+        />
+        <ConversationList
+          bots={bots}
+          selected={selection.conversation}
+          newWith={selection.bot}
+          linkTo={conversationLink}
+          onOpen={(conversation) =>
+            choose(Choice.Conversation({ selection: selectionOf(conversation) }))
+          }
+          onNew={() => choose(Choice.New({ bot: selection.bot }))}
+        />
         <a className="app__audit-link" href={auditPath}>
           Audit trail
         </a>
