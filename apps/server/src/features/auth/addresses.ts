@@ -1,6 +1,6 @@
 import { lookup } from "node:dns/promises";
 import { Context, Effect, Layer, Schema } from "effect";
-import { bareHost, reachOf } from "../../shared/reach.ts";
+import { bareHost, isEveryAddress, reachOf } from "../../shared/reach.ts";
 
 /** A name did not resolve. */
 export class LookupFailed extends Schema.TaggedError<LookupFailed>()("LookupFailed", {
@@ -30,11 +30,6 @@ class SingleUserExposed extends Schema.TaggedError<SingleUserExposed>()("SingleU
   message: Schema.String,
 }) {}
 
-/** Whether a server listening on `address` listens on every address of this machine. */
-function isUnspecified(address: string): boolean {
-  return address === "0.0.0.0" || address === "::";
-}
-
 /**
 Refuses single-user mode where anyone could reach it: a server that acts for everyone as one person must
 only be reachable by that person. It looks at where people open it, `publicUrl`, and where it listens,
@@ -60,7 +55,7 @@ export const checkSingleUserAddress = Effect.fn("Auth.checkSingleUserAddress")(f
       Effect.mapError(() => exposed(`${name} does not resolve, so who reaches it is unknown`)),
       Effect.tap((addresses) => {
         const open = addresses.filter(
-          (address) => !isUnspecified(address) && reachOf(address) === "public",
+          (address) => !isEveryAddress(address) && reachOf(address) === "public",
         );
 
         return open.length > 0
@@ -83,7 +78,7 @@ export const checkSingleUserAddress = Effect.fn("Auth.checkSingleUserAddress")(f
         (address) =>
           `SINGLE_USER=true on ${address}: anyone on its network can act as the one person.`,
       ),
-    ...(listening.some(isUnspecified)
+    ...(listening.some(isEveryAddress)
       ? [
           `SINGLE_USER=true listens on every address of this machine (HOST=${host}), so anyone who reaches it over the network can act as the one person. ${keepHere}`,
         ]

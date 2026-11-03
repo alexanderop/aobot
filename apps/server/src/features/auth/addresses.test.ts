@@ -86,7 +86,7 @@ describe("single-user mode at start-up", () => {
     }),
   );
 
-  it.effect.each(["0.0.0.0", "::"])(
+  it.effect.each(["0.0.0.0", "::", "0:0:0:0:0:0:0:0", "::ffff:0.0.0.0"])(
     "starts listening on every address with HOST=%s and warns how to keep it on this machine",
     (host) =>
       Effect.gen(function* () {

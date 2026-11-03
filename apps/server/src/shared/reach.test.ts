@@ -2,8 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 import { bareHost, onThisMachine, reachOf } from "./reach.ts";
 
 describe("reachOf", () => {
-  it.each(["127.0.0.1", "127.8.9.10", "::1", "::ffff:127.0.0.1"])("counts %s as loopback", (ip) =>
-    expect(reachOf(ip)).toBe("loopback"),
+  it.each(["127.0.0.1", "127.8.9.10", "::1", "::ffff:127.0.0.1", "::ffff:7f00:1"])(
+    "counts %s as loopback",
+    (ip) => expect(reachOf(ip)).toBe("loopback"),
   );
 
   it.each([
@@ -16,6 +17,7 @@ describe("reachOf", () => {
     "fd12:3456::1",
     "fe80::1",
     "::ffff:192.168.1.5",
+    "::ffff:c0a8:105",
   ])("counts %s as private", (ip) => expect(reachOf(ip)).toBe("private"));
 
   it.each(["203.0.113.7", "172.32.0.1", "8.8.8.8", "0.0.0.0", "::", "2001:db8::1"])(
