@@ -11,7 +11,8 @@ import { ComputerActFailed, Computers } from "../features/computers/public.ts";
 import { fakeComputer } from "../features/computers/testing/fake-computer.ts";
 import { gatewayLayer, migrateGateway } from "../features/gateway/public.ts";
 import { testBots } from "../features/bots/testing/test-bots.ts";
-import { everyTurnLive } from "../features/lifecycle/testing/test-lifecycle.ts";
+import { everyTurnRunsFor } from "../features/lifecycle/testing/test-lifecycle.ts";
+import { alice } from "../shared/testing/people.ts";
 import { allowEverything } from "../features/policy/testing/test-policy.ts";
 import { fileRoutes } from "./file-routes.ts";
 
@@ -96,7 +97,13 @@ beforeAll(async () => {
     fileRoutes(Option.none()).pipe(
       Layer.provide(
         gatewayLayer.pipe(
-          Layer.provide([auditLogLayer, computers, testBots, allowEverything, everyTurnLive]),
+          Layer.provide([
+            auditLogLayer,
+            computers,
+            testBots,
+            allowEverything,
+            everyTurnRunsFor(alice),
+          ]),
         ),
       ),
     ),

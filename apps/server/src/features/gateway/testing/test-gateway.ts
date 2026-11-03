@@ -5,7 +5,9 @@ import { SqlClient } from "effect/sql";
 import { auditLogLayer, migrateAudit } from "../../audit/public.ts";
 import { testBots } from "../../bots/testing/test-bots.ts";
 import { type Computer, Computers } from "../../computers/public.ts";
-import { everyTurnLive } from "../../lifecycle/testing/test-lifecycle.ts";
+import { everyTurnRunsFor } from "../../lifecycle/testing/test-lifecycle.ts";
+import type { Actor } from "../../../shared/actor.ts";
+import { alice } from "../../../shared/testing/people.ts";
 import { fakeComputer } from "../../computers/testing/fake-computer.ts";
 import type { Policy } from "../../policy/public.ts";
 import { allowEverything } from "../../policy/testing/test-policy.ts";
@@ -66,18 +68,19 @@ export const database = Layer.effectDiscard(Effect.andThen(migrateAudit, migrate
 
 /**
 A gateway on the database in the context, as one server start would build it, judging by `policy`, where
-every turn a call names still runs.
+every turn a call names still runs, for `actor`.
 */
 export function startGateway(
   computers: Layer.Layer<Computers>,
   policy: Layer.Layer<Policy> = allowEverything,
+  actor: Actor = alice,
 ) {
   return gatewayLayer.pipe(
     Layer.provide(auditLogLayer),
     Layer.provide(computers),
     Layer.provide(testBots),
     Layer.provide(policy),
-    Layer.provide(everyTurnLive),
+    Layer.provide(everyTurnRunsFor(actor)),
   );
 }
 
@@ -86,7 +89,7 @@ export const auditRows = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   return yield* sql`
-    SELECT id, trace_id, initiator_kind, decision, action, detail, outcome_of
+    SELECT id, trace_id, initiator_kind, actor_id, decision, action, detail, outcome_of
     FROM audit_rows ORDER BY seq
   `;
 });

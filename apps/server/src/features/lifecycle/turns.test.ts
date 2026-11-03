@@ -12,7 +12,8 @@ import { PauseStore, pauseStoreLayer } from "./pause-store.ts";
 import { pauseHandlers } from "./rpcs.ts";
 import { testLifecycle } from "./testing/test-lifecycle.ts";
 import { LiveTurns, Turns, TurnStopped, turnsLayer } from "./turns.ts";
-import { singleUser } from "../../shared/actor.ts";
+import { CurrentActor, singleUser } from "../../shared/actor.ts";
+import { alice, bob } from "../../shared/testing/people.ts";
 import { signedInAs } from "../../shared/testing/signed-in.ts";
 
 const first = ConversationId.make("conversation-1");
@@ -105,53 +106,60 @@ describe("Turns", () => {
       const paused = yield* turns.start(first, run, assistant.id);
       const other = yield* turns.start(second, run, researcher.id);
 
-      yield* turns.pause(assistant.id);
+      yield* turns.pause(assistant.id).pipe(Effect.provideService(CurrentActor, bob));
 
       expect(yield* stopOf(paused.stopped)).toEqual(
-        Option.some(new TurnStopped({ code: "paused", by: "person" })),
+        Option.some(new TurnStopped({ code: "paused", by: "person", actor: bob })),
       );
       expect(yield* stopOf(other.stopped)).toEqual(Option.none());
     }).pipe(Effect.provide(server())),
   );
 
-  it.effect("stops the turn in the person's conversation, by the person, and no other", () =>
-    Effect.gen(function* () {
-      const turns = yield* Turns;
-      const claim = yield* turns.start(first, run, assistant.id);
-      const other = yield* turns.start(second, run, assistant.id);
+  it.effect(
+    "stops the turn in the person's conversation, by whoever pressed Stop, and no other",
+    () =>
+      Effect.gen(function* () {
+        const turns = yield* Turns;
+        const claim = yield* turns.start(first, run, assistant.id);
+        const other = yield* turns.start(second, run, assistant.id);
 
-      yield* turns.stop(first);
-      yield* turns.stop(first);
+        yield* turns.stop(first).pipe(Effect.provideService(CurrentActor, bob));
+        yield* turns.stop(first);
 
-      expect(yield* stopOf(claim.stopped)).toEqual(
-        Option.some(new TurnStopped({ code: "stopped", by: "person" })),
-      );
-      expect(yield* stopOf(other.stopped)).toEqual(Option.none());
-    }).pipe(Effect.provide(server())),
+        expect(yield* stopOf(claim.stopped)).toEqual(
+          Option.some(new TurnStopped({ code: "stopped", by: "person", actor: bob })),
+        );
+        expect(yield* stopOf(other.stopped)).toEqual(Option.none());
+      }).pipe(Effect.provide(server())),
   );
 
-  it.effect("says a turn runs until it is stopped or ends, and only for its own run", () =>
+  it.effect("says who a turn runs for until it is stopped or ends, and only for its own run", () =>
     Effect.gen(function* () {
       const turns = yield* Turns;
       const live = yield* LiveTurns;
 
       yield* Effect.scoped(
         Effect.gen(function* () {
-          yield* turns.start(first, run, assistant.id);
-          yield* turns.start(second, run, assistant.id);
+          yield* turns
+            .start(first, run, assistant.id)
+            .pipe(Effect.provideService(CurrentActor, alice));
+          yield* turns
+            .start(second, run, assistant.id)
+            .pipe(Effect.provideService(CurrentActor, bob));
 
-          expect(yield* live.live(first, run)).toBe(true);
-          expect(yield* live.live(first, RunId.make("run-2"))).toBe(false);
+          expect(yield* live.actorOf(first, run)).toEqual(Option.some(alice));
+          expect(yield* live.actorOf(second, run)).toEqual(Option.some(bob));
+          expect(yield* live.actorOf(first, RunId.make("run-2"))).toEqual(Option.none());
 
           const stopped = yield* Effect.forkChild(live.stopped(first, run));
           yield* turns.stop(first);
 
           yield* Fiber.join(stopped);
-          expect(yield* live.live(first, run)).toBe(false);
+          expect(yield* live.actorOf(first, run)).toEqual(Option.none());
         }),
       );
 
-      expect(yield* live.live(second, run)).toBe(false);
+      expect(yield* live.actorOf(second, run)).toEqual(Option.none());
       yield* live.stopped(second, run);
     }).pipe(Effect.provide(server())),
   );
@@ -324,7 +332,10 @@ describe("Turns", () => {
       return Effect.gen(function* () {
         const turns = yield* Turns;
         yield* firstCheck(turns);
-        const claim = yield* turns.start(first, run, assistant.id);
+
+        const claim = yield* turns
+          .start(first, run, assistant.id)
+          .pipe(Effect.provideService(CurrentActor, alice));
 
         yield* Ref.set(failures, 3);
         yield* TestClock.adjust("10 seconds");
@@ -332,7 +343,7 @@ describe("Turns", () => {
 
         yield* TestClock.adjust("5 seconds");
         expect(yield* stopOf(claim.stopped)).toEqual(
-          Option.some(new TurnStopped({ code: "pause_unknown", by: "deployment" })),
+          Option.some(new TurnStopped({ code: "pause_unknown", by: "deployment", actor: alice })),
         );
       }).pipe(Effect.provide(server(failures)));
     });

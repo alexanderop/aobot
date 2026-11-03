@@ -4,6 +4,7 @@ import { Effect, Stream } from "effect";
 import { AgentEvent, StepLimit } from "../agent/public.ts";
 import { TurnStopped } from "../lifecycle/public.ts";
 import { turnEvents, turnStatus } from "./turn.ts";
+import { alice } from "../../shared/testing/people.ts";
 
 const ids = {
   conversationId: ConversationId.make("conversation-1"),
@@ -138,13 +139,16 @@ describe("turnEvents", () => {
   );
 
   it.effect.each([
-    [new TurnStopped({ code: "stopped", by: "person" }), { code: "stopped", message: "Stopped." }],
     [
-      new TurnStopped({ code: "paused", by: "deployment" }),
+      new TurnStopped({ code: "stopped", by: "person", actor: alice }),
+      { code: "stopped", message: "Stopped." },
+    ],
+    [
+      new TurnStopped({ code: "paused", by: "deployment", actor: alice }),
       { code: "paused", message: "This Bot is paused." },
     ],
     [
-      new TurnStopped({ code: "pause_unknown", by: "deployment" }),
+      new TurnStopped({ code: "pause_unknown", by: "deployment", actor: alice }),
       {
         code: "pause_unknown",
         message: "The server could not tell whether this Bot is paused, so it stopped this turn.",

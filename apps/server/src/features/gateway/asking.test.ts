@@ -18,7 +18,15 @@ import { policyFrom } from "../policy/testing/test-policy.ts";
 import { ApprovalRequests } from "./approvals.ts";
 import { ComputerControl } from "./control.ts";
 import { approvalWaitLimit, Claim, Gateway } from "./gateway.ts";
-import { database, decodedTrail, fakeComputers, startGateway } from "./testing/test-gateway.ts";
+import {
+  auditRows,
+  database,
+  decodedTrail,
+  fakeComputers,
+  startGateway,
+} from "./testing/test-gateway.ts";
+import { CurrentActor } from "../../shared/actor.ts";
+import { bob } from "../../shared/testing/people.ts";
 
 const conversation = ConversationId.make("conversation-1");
 
@@ -182,6 +190,28 @@ describe("Gateway asking the person", () => {
       expect(acted?.attributes.get("gateway.decision")).toBe("allow");
       expect(acted?.attributes.get("gateway.outcome")).toBe("succeeded");
     }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("names whoever answered on the answer's row, and the turn's person on the rest", () =>
+    Effect.gen(function* () {
+      const acting = yield* actInBackground(firstRun, removeNotes);
+      const shown = yield* untilShown;
+      yield* answerTo(shown, "yes").pipe(Effect.provideService(CurrentActor, bob));
+      yield* Fiber.join(acting);
+
+      const rows = yield* auditRows;
+      expect(
+        rows.map((row) => [
+          `${String(row["action"])} · ${String(row["decision"])}`,
+          row["actor_id"],
+        ]),
+      ).toEqual([
+        ["run · ask", "alice@example.com"],
+        ["approval.answered · answered", "bob@example.com"],
+        ["run · allow", "alice@example.com"],
+        ["run · succeeded", "alice@example.com"],
+      ]);
+    }).pipe(Effect.provide(startGateway(shell().layer, askBeforeRm)), Effect.provide(database)),
   );
 
   it.effect("shows the whole command as the Bot wrote it, while its rows keep it redacted", () =>
@@ -351,32 +381,6 @@ ask:
       );
       expect(refusalOf(result)).toBe("");
       expect(computer.actions).toEqual([removeNotes]);
-    }).pipe(Effect.provide(database)),
-  );
-
-  it.effect("refuses an asked action from a call that names no conversation", () =>
-    Effect.gen(function* () {
-      const computer = shell();
-
-      const refused = yield* Gateway.use((gateway) =>
-        Effect.flip(gateway.act(Claim.cases.Named.make({ bot: assistant.id }), removeNotes)),
-      ).pipe(Effect.provide(startGateway(computer.layer, askBeforeRm)));
-
-      expect(refused.message).toBe(
-        "run did not run: a rule asks your person first, and this call came from no conversation they could answer in.",
-      );
-      expect(computer.actions).toEqual([]);
-      expect(yield* decodedTrail).toEqual([
-        [
-          "run · deny",
-          {
-            bot: "assistant",
-            command: "rm notes.txt",
-            rule: "ask-before-rm",
-            reason: "no one to ask",
-          },
-        ],
-      ]);
     }).pipe(Effect.provide(database)),
   );
 

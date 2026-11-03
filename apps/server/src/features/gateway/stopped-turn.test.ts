@@ -1,6 +1,8 @@
 import { CommandEnd, ConversationId, type PageAction, type PageRead, RunId } from "@aobot/domain";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Exit, Fiber, Layer, Scope } from "effect";
+import { CurrentActor } from "../../shared/actor.ts";
+import { alice } from "../../shared/testing/people.ts";
 import { auditLogLayer } from "../audit/public.ts";
 import { assistant, testBots } from "../bots/testing/test-bots.ts";
 import { Turns } from "../lifecycle/public.ts";
@@ -75,7 +77,11 @@ describe("given a turn the person stopped", () => {
         ["navigate · succeeded", undefined],
         ["navigate · deny", "turn ended"],
       ]);
-    }).pipe(Effect.provide(withTurns(computer)), Effect.provide(database));
+    }).pipe(
+      Effect.provide(withTurns(computer)),
+      Effect.provide(database),
+      Effect.provideService(CurrentActor, alice),
+    );
   });
 
   it.effect("cuts off a call still running in it, whose outcome is then unknown", () => {
@@ -101,7 +107,11 @@ describe("given a turn the person stopped", () => {
         ["navigate · allow", undefined],
         ["navigate · unknown", "the turn was stopped"],
       ]);
-    }).pipe(Effect.provide(withTurns(computer)), Effect.provide(database));
+    }).pipe(
+      Effect.provide(withTurns(computer)),
+      Effect.provide(database),
+      Effect.provideService(CurrentActor, alice),
+    );
   });
 });
 
@@ -134,7 +144,11 @@ describe("given a command waiting for one from another turn", () => {
         ["run · allow", undefined],
         ["run · deny", "turn ended"],
       ]);
-    }).pipe(Effect.provide(withTurns(computer)), Effect.provide(database));
+    }).pipe(
+      Effect.provide(withTurns(computer)),
+      Effect.provide(database),
+      Effect.provideService(CurrentActor, alice),
+    );
   });
 
   it.effect("refuses it, once the door lets it in, when its turn ended meanwhile", () => {
@@ -182,6 +196,10 @@ describe("given a command waiting for one from another turn", () => {
         ["run · succeeded", undefined],
         ["run · deny", "turn ended"],
       ]);
-    }).pipe(Effect.provide(withTurns(computer)), Effect.provide(database));
+    }).pipe(
+      Effect.provide(withTurns(computer)),
+      Effect.provide(database),
+      Effect.provideService(CurrentActor, alice),
+    );
   });
 });

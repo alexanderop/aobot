@@ -14,6 +14,7 @@ import {
   UnknownBot,
 } from "@aobot/domain";
 import { Deferred, Effect, Option, Ref, Stream } from "effect";
+import { actorId, CurrentActor } from "../../shared/actor.ts";
 import { AgentRuntime } from "../agent/public.ts";
 import { Bots, botSummary, turnInstructions } from "../bots/public.ts";
 import { Turns } from "../lifecycle/public.ts";
@@ -170,8 +171,15 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
       "Chat.open": open,
       // A new root, so the trace is named after the turn rather than the socket or RPC call it came in on.
       "Chat.send": (message) =>
-        Stream.unwrap(startTurn(message)).pipe(
-          Stream.withSpan("Chat.turn", { root: true, attributes: { "chat.bot": message.botId } }),
+        Stream.unwrap(
+          Effect.map(CurrentActor, (actor) =>
+            Stream.unwrap(startTurn(message)).pipe(
+              Stream.withSpan("Chat.turn", {
+                root: true,
+                attributes: { "chat.bot": message.botId, "actor.id": actorId(actor) },
+              }),
+            ),
+          ),
         ),
       "Chat.stop": stop,
     });

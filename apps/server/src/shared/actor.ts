@@ -40,3 +40,11 @@ export const actorId: (actor: Actor) => string = Actor.match({
   Visitor: ({ email }) => Option.getOrElse(email, () => "anonymous"),
   Deployment: () => "deployment",
 });
+
+/** Whether a Bot may act on `actor`'s authority: a person's or the single user's, never anyone else's. */
+export const actsThroughBots: (actor: Actor) => boolean = Actor.match({
+  Person: () => true,
+  SingleUser: () => true,
+  Visitor: () => false,
+  Deployment: () => false,
+});

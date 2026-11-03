@@ -54,7 +54,13 @@ import {
   type ToolTimedOut,
   toolResult,
 } from "../../shared/tool-result.ts";
-import { actorId, CurrentActor, deployment } from "../../shared/actor.ts";
+import {
+  type Actor,
+  actorId,
+  actsThroughBots,
+  CurrentActor,
+  deployment,
+} from "../../shared/actor.ts";
 import { redact, redactCommand, redactUrl } from "../../shared/redact.ts";
 import { actionFacts, hostOf } from "./action-facts.ts";
 import {
@@ -155,8 +161,9 @@ export class Gateway extends Context.Service<
     readonly refuse: (refusal: Refusal) => Effect.Effect<void>;
     /**
     Refuses the call when the turn it names no longer runs, then when the Bot it claims was not granted
-    its tool, or is no Bot the server knows, before anything else the gateway does. Then refuses it while
-    a person holds the computer. Otherwise resolves its ref against the latest snapshot, judges it by the
+    its tool, or is no Bot the server knows, before anything else the gateway does, then when it names no
+    turn a person started. Every row and rule after that names the person the turn runs for. Then refuses
+    it while a person holds the computer. Otherwise resolves its ref against the latest snapshot, judges it by the
     rules, records the call, forwards it to the computer, records what became of it, and answers what the
     model reads. `request_secret` waits for the person's answer outside the door, at most
     {@link secretWaitLimit}, before what they typed is forwarded. A call that could not be carried out is
@@ -255,8 +262,11 @@ class HandedOff extends Schema.TaggedError<HandedOff>()("HandedOff", {
   safety: SafetyList,
 }) {}
 
-/** An ask rule holds for an action from a call that names no turn, so there is no person to ask. */
-class NoOneToAsk extends Schema.TaggedError<NoOneToAsk>()("NoOneToAsk", {}) {}
+/**
+The call names no turn of a person, so there is nobody it could be on the authority of: a Bot acts only in
+the turn a person started.
+*/
+class NoPerson extends Schema.TaggedError<NoPerson>()("NoPerson", {}) {}
 
 /** The person, or the time limit on their answer, said no to an asked action. */
 class Declined extends Schema.TaggedError<Declined>()("Declined", {
@@ -270,6 +280,7 @@ Why the gateway did not carry out a Bot's call: each is one `deny` row, or for {
 type Denial =
   | TurnEnded
   | NotGranted
+  | NoPerson
   | AlreadyAsked
   | PersonHasControl
   | UnknownRef
@@ -279,7 +290,6 @@ type Denial =
   | OutsideWorkspace
   | NoTextField
   | NoSite
-  | NoOneToAsk
   | AlreadyWaiting
   | Declined
   | DeclinedEarlier
@@ -1032,11 +1042,11 @@ export const gatewayLayer = Layer.effectContext(
           deny({ ...auditDetail(action), reason: "not a text field" }, noTextFieldAnswer(action)),
         NoSite: ({ action }) =>
           deny({ ...auditDetail(action), reason: "no site" }, noSiteAnswer(action)),
-        NoOneToAsk: () =>
+        NoPerson: () =>
           deny(
-            { reason: "no one to ask" },
+            { reason: "no person to act for" },
             notRun(
-              "a rule asks your person first, and this call came from no conversation they could answer in",
+              "it came from no conversation a person started, and a Bot acts only for its person",
             ),
           ),
         AlreadyWaiting: () =>
@@ -1080,18 +1090,40 @@ export const gatewayLayer = Layer.effectContext(
     };
 
     /**
-    Refuses a call in a turn that no longer runs. Checked as a call starts and again once the door lets
-    it in, since a command may wait there for the one before it while its turn ends. A call that names no
-    turn has none to check.
+    Who `turn` runs for, or {@link TurnEnded} once it no longer runs. Read as a call starts and again once
+    the door lets it in, since a command may wait there for the one before it while its turn ends.
     */
-    const inLiveTurn = (turn: Option.Option<TurnRef>) =>
+    const actorOfTurn = ({ conversation, run }: TurnRef): Effect.Effect<Actor, TurnEnded> =>
+      Effect.flatMap(
+        turns.actorOf(conversation, run),
+        Option.match({
+          onNone: () => Effect.fail(new TurnEnded()),
+          onSome: Effect.succeed,
+        }),
+      );
+
+    /**
+    The actor a call acts for: the person its turn runs for, so a call from an `api` runtime and one from
+    an `acp` CLI over `/mcp` name the same person. A call that names no turn is the deployment's, which
+    {@link personsTurn} refuses.
+    */
+    const actorOfCall = (turn: Option.Option<TurnRef>) =>
       Option.match(turn, {
-        onNone: () => Effect.void,
-        onSome: ({ conversation, run }) =>
-          Effect.flatMap(turns.live(conversation, run), (live) =>
-            live ? Effect.void : Effect.fail(new TurnEnded()),
-          ),
+        onNone: () => Effect.succeed(deployment),
+        onSome: actorOfTurn,
       });
+
+    /** The turn of a call made for a person, or {@link NoPerson}. */
+    const personsTurn = (turn: Option.Option<TurnRef>) =>
+      Effect.flatMap(CurrentActor, (actor) =>
+        Option.match(
+          Option.filter(turn, () => actsThroughBots(actor)),
+          {
+            onNone: () => Effect.fail(new NoPerson()),
+            onSome: Effect.succeed,
+          },
+        ),
+      );
 
     /**
     `effect`, an action of `tool` in `turn`, through the door once its turn is checked again. Commands run
@@ -1099,11 +1131,11 @@ export const gatewayLayer = Layer.effectContext(
     */
     const enter = <A, E, R>(
       tool: ToolName,
-      turn: Option.Option<TurnRef>,
+      turn: TurnRef,
       effect: Effect.Effect<A, E, R>,
       leftQueue: Effect.Effect<void>,
     ) => {
-      const checked = Effect.andThen(inLiveTurn(turn), effect);
+      const checked = Effect.andThen(actorOfTurn(turn), effect);
 
       return tool === "run" ? doors.queue(checked, leftQueue) : doors.admit(checked);
     };
@@ -1175,7 +1207,7 @@ export const gatewayLayer = Layer.effectContext(
     */
     const askThenCarryOut = (
       bot: BotId,
-      turn: Option.Option<TurnRef>,
+      turn: TurnRef,
       request: DirectRequest,
       needs: NeedsApproval,
     ) => {
@@ -1199,9 +1231,7 @@ export const gatewayLayer = Layer.effectContext(
 
       return Effect.scoped(
         Effect.gen(function* () {
-          if (Option.isNone(turn)) return yield* new NoOneToAsk();
-
-          const approval = yield* approvals.open(turn.value, askRule, { bot, action, host }, (id) =>
+          const approval = yield* approvals.open(turn, askRule, { bot, action, host }, (id) =>
             record("ask", auditAction(tool), { ...asked, approval: id, allowedBy: allowRule }),
           );
 
@@ -1281,7 +1311,7 @@ export const gatewayLayer = Layer.effectContext(
     in the conversation of `turn`: it holds that conversation as an approval card would, and their no to
     it, or no answer, is a no to that rule for the rest of the run.
     */
-    const askForSecret = (bot: BotId, turn: Option.Option<TurnRef>, ref: string, field: string) =>
+    const askForSecret = (bot: BotId, turn: TurnRef, ref: string, field: string) =>
       Effect.scoped(
         Effect.gen(function* () {
           const open = yield* secrets.open(bot);
@@ -1303,18 +1333,17 @@ export const gatewayLayer = Layer.effectContext(
               const allowed = yield* allowedBy(bot, asked.action, asked.host);
               const askRule = Option.map(allowed.ask, ({ rule }) => rule);
 
-              const question =
-                Option.isSome(askRule) && Option.isSome(turn)
-                  ? Option.some(
-                      yield* approvals.hold(turn.value, askRule.value).pipe(
-                        recordRefusals("request_secret", {
-                          bot,
-                          ...auditDetail(asked.action),
-                          rule: askRule.value,
-                        }),
-                      ),
-                    )
-                  : Option.none<HeldQuestion>();
+              const question = Option.isSome(askRule)
+                ? Option.some(
+                    yield* approvals.hold(turn, askRule.value).pipe(
+                      recordRefusals("request_secret", {
+                        bot,
+                        ...auditDetail(asked.action),
+                        rule: askRule.value,
+                      }),
+                    ),
+                  )
+                : Option.none<HeldQuestion>();
 
               // The secret card already asks the person, so an ask rule only names itself in the row.
               const allowRow = yield* allow(
@@ -1420,6 +1449,7 @@ export const gatewayLayer = Layer.effectContext(
 
       const carried = Effect.gen(function* () {
         const granted = yield* grant(claim, request.action);
+        const ofPerson = yield* personsTurn(turn);
 
         // A command cut off while it waits has written nothing yet, so its turn's end is its deny row.
         const leftQueue = Effect.fail(new TurnEnded()).pipe(
@@ -1428,17 +1458,22 @@ export const gatewayLayer = Layer.effectContext(
         );
 
         return yield* BotRequest.guards.request_secret(request)
-          ? askForSecret(granted, turn, request.ref, request.field)
-          : enter(request.action, turn, carryOut(granted, request), leftQueue).pipe(
+          ? askForSecret(granted, ofPerson, request.ref, request.field)
+          : enter(request.action, ofPerson, carryOut(granted, request), leftQueue).pipe(
               Effect.catchTag("NeedsApproval", (needs) =>
-                askThenCarryOut(granted, turn, request, needs),
+                askThenCarryOut(granted, ofPerson, request, needs),
               ),
             );
       });
 
-      return yield* inLiveTurn(turn).pipe(
-        Effect.andThen(carried.pipe(untilStopped(request.action, turn))),
+      // Every row and rule below names the person the turn runs for. A call whose turn ended is
+      // refused before anyone is named, so its row is the deployment's.
+      const actor = yield* actorOfCall(turn).pipe(recordRefusals(request.action, { bot }));
+
+      return yield* carried.pipe(
+        untilStopped(request.action, turn),
         recordRefusals(request.action, { bot }),
+        Effect.provideService(CurrentActor, actor),
       );
     });
 
