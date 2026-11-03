@@ -40,14 +40,18 @@ function server(agent: Layer.Layer<AgentRuntime>, failures: Ref.Ref<number> = Re
   return chatLayer.pipe(Layer.provide(agent), Layer.provideMerge(testServer({ failures })));
 }
 
+/** The rows of `action`, oldest first: who wrote them, and why. */
+const rowsOf = (action: "turn" | "turn.stopped") =>
+  Effect.flatMap(
+    SqlClient.SqlClient,
+    (sql) => sql`
+      SELECT decision, initiator_kind, json_extract(detail, '$.reason') AS reason
+      FROM audit_rows WHERE action = ${action} ORDER BY seq
+    `,
+  );
+
 /** The `turn.stopped` rows, oldest first: who stopped the turn, and why. */
-const stopRows = Effect.flatMap(
-  SqlClient.SqlClient,
-  (sql) => sql`
-    SELECT decision, initiator_kind, json_extract(detail, '$.reason') AS reason
-    FROM audit_rows WHERE action = 'turn.stopped' ORDER BY seq
-  `,
-);
+const stopRows = rowsOf("turn.stopped");
 
 /** Runs a turn in the background, once the Bot has said its first word in it. */
 const afterAWord = <E>(sending: Stream.Stream<ChatEvent, E>) =>
@@ -132,8 +136,35 @@ describe("given a database that cannot say whether the Bot is paused", () => {
 
       expect(yield* Fiber.join(sending)).toEqual(new PauseUnknown({ botId: assistant.id }));
       expect(yield* client["Chat.open"](opening)).toMatchObject({ messages: [], isRunning: false });
+      expect(yield* rowsOf("turn")).toEqual([
+        { decision: "deny", initiator_kind: "person", reason: "pause state unreadable" },
+      ]);
     }).pipe(Effect.provide(server(answering, failures)));
   });
+
+  it.effect(
+    "ends a running turn once three checks in a row could not read it, by the deployment",
+    () => {
+      const failures = Ref.makeUnsafe(0);
+
+      return Effect.gen(function* () {
+        const client = yield* RpcTest.makeClient(ChatRpcs);
+        const turn = yield* afterAWord(client["Chat.send"](send("Count to a million", "user-1")));
+
+        yield* Ref.set(failures, 3);
+        yield* TestClock.adjust("15 seconds");
+
+        expect((yield* Fiber.join(turn)).at(-1)).toMatchObject({
+          type: "RUN_ERROR",
+          code: "pause_unknown",
+        });
+        expect(yield* stopRows).toEqual([
+          { decision: "allow", initiator_kind: "deployment", reason: "pause state unreadable" },
+          { decision: "succeeded", initiator_kind: "deployment", reason: null },
+        ]);
+      }).pipe(Effect.provide(server(workingAgent, failures)));
+    },
+  );
 
   it.effect("starts the turn when a read answers after two failed", () => {
     const failures = Ref.makeUnsafe(0);
