@@ -655,7 +655,8 @@ describe("Gateway refs", () => {
         yield* sql`INSERT INTO computer_snapshot (id, snapshot, read_by) VALUES (1, ${form}, 'assistant')`;
         yield* sql`DROP TABLE approvals`;
         yield* sql`
-          DELETE FROM gateway_migrations WHERE name IN ('keep_snapshot_url', 'create_approvals')
+          DELETE FROM gateway_migrations
+          WHERE name IN ('keep_snapshot_url', 'create_approvals', 'keep_snapshot_path')
         `;
 
         yield* migrateGateway;
@@ -670,6 +671,24 @@ describe("Gateway refs", () => {
 
         expect(refused.message).toContain("e3 is not a ref in the page's latest snapshot");
         expect(computer.actions).toEqual([]);
+      }).pipe(Effect.provide(database)),
+  );
+
+  it.effect(
+    "forgets a snapshot stored before it kept its path, so no ref is judged without it",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`ALTER TABLE computer_snapshot DROP COLUMN path`;
+        yield* sql`
+          INSERT INTO computer_snapshot (id, snapshot, url, read_by)
+          VALUES (1, ${form}, 'https://example.com', 'assistant')
+        `;
+        yield* sql`DELETE FROM gateway_migrations WHERE name = 'keep_snapshot_path'`;
+
+        yield* migrateGateway;
+
+        expect(yield* sql`SELECT * FROM computer_snapshot`).toEqual([]);
       }).pipe(Effect.provide(database)),
   );
 });
@@ -1432,7 +1451,8 @@ describe("Gateway control", () => {
           'share_computer_control',
           'share_computer_snapshot',
           'keep_snapshot_url',
-          'create_approvals'
+          'create_approvals',
+          'keep_snapshot_path'
         )
       `;
 

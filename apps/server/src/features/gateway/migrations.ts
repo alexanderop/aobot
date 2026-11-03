@@ -122,6 +122,15 @@ const createApprovals = Effect.gen(function* () {
   `;
 });
 
+const keepSnapshotPath = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+
+  // The safety list judges an element by the path of the page it is on too. A snapshot stored before
+  // this has none, so it is forgotten, as in 0005: no ref resolves until a Bot reads the page again.
+  yield* sql`DELETE FROM computer_snapshot`;
+  yield* sql`ALTER TABLE computer_snapshot ADD COLUMN path text NOT NULL DEFAULT ''`;
+});
+
 /** Brings the gateway's tables up to date. Safe to run at every boot. */
 export const migrateGateway = SqliteMigrator.run({
   table: "gateway_migrations",
@@ -132,5 +141,6 @@ export const migrateGateway = SqliteMigrator.run({
     "0004_share_computer_snapshot": shareComputerSnapshot,
     "0005_keep_snapshot_url": keepSnapshotUrl,
     "0006_create_approvals": createApprovals,
+    "0007_keep_snapshot_path": keepSnapshotPath,
   }),
 });
