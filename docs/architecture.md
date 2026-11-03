@@ -241,6 +241,13 @@ latest snapshot does not keep. A snapshot stored before E2-6 has no path, so the
 forgets the snapshot, as the one that added its address did. The lists are deliberately broad: a false
 hand-off costs the person one click, a missed one costs them their account or their money.
 
+**What it misses.** It reads the path and never the query or fragment, so on a page routed by them, such
+as `/#/settings/password` or `index.php?page=checkout`, it rests on the element's name alone. Enter pressed
+in a field named like a password hands off even on a sign-in page, so a Bot signs in by clicking the
+page's button; that false hand-off costs one click. The path it judges is the one the latest snapshot
+read, so a page that navigates by itself after that read is judged by its old path until the next
+snapshot.
+
 **What it does not read.** `navigate` and `snapshot` only read a page, and reading a checkout page is not
 paying. `run` and the file tools are workspace tools, left to the rules: a command's text is a filter, not a
 boundary, and the egress filter decides where it may reach.
