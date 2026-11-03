@@ -1,4 +1,4 @@
-import { SessionState, SignedIn, SignedOut } from "@aobot/domain";
+import { Caller, SessionState, SignedIn, SignedOut } from "@aobot/domain";
 import { Effect, Layer, Option, Result } from "effect";
 import { HttpPlatform, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { CurrentActor } from "../../shared/actor.ts";
@@ -75,9 +75,9 @@ export const signedInGate = (shell: string) =>
 
 /**
 The server's side of {@link SignedIn}: each RPC call is read again from the session its headers carry, and
-runs with {@link CurrentActor} set to that person, or fails with {@link SignedOut}. A message may name a
-cookie of its own, but a token counts only once its session is found, so it can only be one the client
-already holds.
+runs with that person as its `Caller` and its {@link CurrentActor}, or fails with {@link SignedOut}. A
+message may name a cookie of its own, but a token counts only once its session is found, so it can only be
+one the client already holds.
 */
 export const signedInRpc = Layer.effect(
   SignedIn,
@@ -90,7 +90,11 @@ export const signedInRpc = Layer.effect(
         Effect.flatMap(
           Option.match({
             onNone: () => Effect.fail(new SignedOut()),
-            onSome: (actor) => Effect.provideService(effect, CurrentActor, actor),
+            onSome: (actor) =>
+              effect.pipe(
+                Effect.provideService(Caller, actor),
+                Effect.provideService(CurrentActor, actor),
+              ),
           }),
         ),
       ),

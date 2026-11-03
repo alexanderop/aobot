@@ -43,8 +43,3 @@ export const actorId: (actor: Actor) => string = Actor.match({
 
 /** Someone a Bot may act for, and so every turn runs for: a person signed in, or the single user. */
 export type PersonActor = Extract<Actor, { readonly _tag: "Person" | "SingleUser" }>;
-
-/** Whether `actor` is someone a Bot may act for. */
-export function isPersonActor(actor: Actor): actor is PersonActor {
-  return Actor.guards.Person(actor) || Actor.guards.SingleUser(actor);
-}

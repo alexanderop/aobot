@@ -1,5 +1,6 @@
 import {
   type BotId,
+  Caller,
   type ChatEvent,
   ChatRpcs,
   type ConversationId,
@@ -14,7 +15,7 @@ import {
   UnknownBot,
 } from "@aobot/domain";
 import { Deferred, Effect, Option, Ref, Stream } from "effect";
-import { actorId, CurrentActor, isPersonActor } from "../../shared/actor.ts";
+import { actorId } from "../../shared/actor.ts";
 import { AgentRuntime } from "../agent/public.ts";
 import { Bots, botSummary, turnInstructions } from "../bots/public.ts";
 import { Turns } from "../lifecycle/public.ts";
@@ -80,10 +81,7 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
         messageId: MessageId.make(crypto.randomUUID()),
       };
 
-      const actor = yield* CurrentActor;
-
-      // The sign-in gate in front of every RPC call names a person or the single user, never another.
-      if (!isPersonActor(actor)) return yield* Effect.die(new Error("Chat.send for no person"));
+      const actor = yield* Caller;
 
       const bot = yield* botOf(conversationId, message.botId);
 

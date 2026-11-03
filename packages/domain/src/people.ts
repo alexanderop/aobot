@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Context, Schema } from "effect";
 import { RpcMiddleware } from "effect/rpc";
 
 /**
@@ -68,7 +68,20 @@ export class SignedOut extends Schema.TaggedError<SignedOut>()("SignedOut", {}) 
   }
 }
 
-/** On every RPC group: the server learns who each call is for, and refuses it with {@link SignedOut}. */
-export class SignedIn extends RpcMiddleware.Service<SignedIn>()("aobot/SignedIn", {
-  error: SignedOut,
-}) {}
+/**
+Who an RPC call can be for: a person signed in with their company account, or the one person of
+single-user mode. The server's actors of these two kinds have this shape.
+*/
+export const CallerActor = Schema.TaggedUnion({ Person: Person.fields, SingleUser: {} });
+
+/** Who an RPC call is for once {@link SignedIn} let it through. A handler reads it to act for them. */
+export class Caller extends Context.Service<Caller, typeof CallerActor.Type>()("aobot/Caller") {}
+
+/**
+On every RPC group: the server learns who each call is for and provides them as {@link Caller}, or
+refuses the call with {@link SignedOut}.
+*/
+export class SignedIn extends RpcMiddleware.Service<SignedIn, { provides: Caller }>()(
+  "aobot/SignedIn",
+  { error: SignedOut },
+) {}
