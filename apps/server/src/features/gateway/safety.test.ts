@@ -139,6 +139,45 @@ describe("safetyOf", () => {
       "/login/challenge",
       "credentials",
     ],
+    ["invites a member", click("button", "Invite member"), "/team", "security"],
+    ["adds a collaborator", click("button", "Add collaborator"), "/settings/access", "security"],
+    ["adds people to a document", click("button", "Add people"), "/document/d/1", "security"],
+    [
+      "changes someone's role to Owner",
+      click("menuitem", "Change role to Owner"),
+      "/team",
+      "security",
+    ],
+    ["promotes someone to owner", click("menuitem", "Promote to owner"), "/team", "security"],
+    ["transfers ownership", click("button", "Transfer ownership"), "/settings", "security"],
+    [
+      "authorizes an application",
+      click("button", "Authorize application", "https://github.com"),
+      "/login/oauth/authorize",
+      "security",
+    ],
+    ["allows access", click("button", "Allow access"), "/oauth/consent", "security"],
+    ["grants access", click("button", "Grant access"), "/share", "security"],
+    ["opens the connected apps", click("link", "Connected apps"), "/settings", "security"],
+    [
+      "deactivates the account",
+      click("button", "Deactivate account"),
+      "/settings/account",
+      "security",
+    ],
+    [
+      "turns on two-factor sign-in in German",
+      click("button", "Zwei-Faktor-Authentifizierung aktivieren"),
+      "/konto",
+      "security",
+    ],
+    ["deletes the account in German", click("button", "Konto löschen"), "/konto", "security"],
+    [
+      "changes the account's email in German",
+      click("button", "E-Mail-Adresse ändern"),
+      "/konto",
+      "security",
+    ],
   ] as const)("hands off an action that %s", (_case, action, path, list) => {
     expect(safetyOf(action, path)).toEqual(Option.some(list));
   });
@@ -158,6 +197,9 @@ describe("safetyOf", () => {
     ["pins a message", click("button", "Pin"), "/chat"],
     ["searches on a Pinterest pin", type("searchbox", "Search", "red shoes"), "/pin/42"],
     ["types a cost center code", type("textbox", "Cost center code", "4711"), "/expenses"],
+    ["opens the invitations", click("link", "Invitations"), "/"],
+    ["opens the authorized dealers", click("link", "Authorized dealers"), "/"],
+    ["clicks a button that says Allowed", click("button", "Allowed"), "/"],
   ] as const)("leaves an action that %s to the rules", (_case, action, path) => {
     expect(safetyOf(action, path)).toEqual(Option.none());
   });

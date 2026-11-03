@@ -65,7 +65,12 @@ const safetyLists = {
       /change[-_ ]?(your[-_ ]?)?e-?mail/,
       /sharing[-_ ]?settings?|share[-_ ]?with[-_ ]?(anyone|public)|make[-_ ]?public/,
       /admin[-_ ]?role|grant[-_ ]?admin|make[-_ ]?(an?[-_ ]?)?admin|permission[-_ ]?settings?/,
-      /delete[-_ ]?(my[-_ ]?)?account|close[-_ ]?account/,
+      /\binvite\b|add[-_ ]?(a[-_ ]?)?(member|collaborator|people)/,
+      /change[-_ ]?role|\bto[-_ ]?owner\b|transfer[-_ ]?ownership/,
+      // A whole word: "Authorized dealers" lists shops, it grants nothing.
+      /\bauthori[sz]e\b|(allow|grant)[-_ ]?access|connected[-_ ]?apps?/,
+      /delete[-_ ]?(my[-_ ]?)?account|close[-_ ]?account|deactivate[-_ ]?(my[-_ ]?)?account/,
+      /zwei[-_ ]?faktor|konto[-_ ]?(löschen|schließen)|e-?mail(-adresse)?[-_ ]?ändern/,
     ),
   },
   payments: {
