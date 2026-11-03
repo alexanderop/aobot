@@ -191,8 +191,8 @@ export function makeConversations(
   );
 
   /**
-  Marks everything in the conversation as read, for a page that showed its turn end. A read that fails
-  leaves the conversation unread, which the next open marks read.
+  Marks everything in the conversation as read, for a page that shows it. A read that fails leaves the
+  conversation unread until the next.
   */
   const read = Atom.family((id: ConversationId) =>
     Atom.keepAlive(

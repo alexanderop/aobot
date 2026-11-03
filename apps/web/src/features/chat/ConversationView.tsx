@@ -9,7 +9,7 @@ import { TranscriptItem } from "./conversation-state.ts";
 import { ToolCallCard } from "./ToolCallCard.tsx";
 import "./chat.css";
 import { useAttachments } from "./use-attachments.ts";
-import { useConversation, useReadWhenTurnEnds } from "./use-conversation.ts";
+import { useConversation, useReadWhileShown } from "./use-conversation.ts";
 
 /** Pause, or Resume while the Bot is paused, once the server has said which it is. */
 function PauseButton(props: { readonly pause: UsePause }) {
@@ -47,7 +47,7 @@ export function ConversationView(props: {
     props.botId,
   );
 
-  useReadWhenTurnEnds(props.conversationId, isRunning);
+  useReadWhileShown(props.conversationId, isRunning);
 
   const files = useAttachments(props.conversationId, send);
   const pause = usePause(props.botId);

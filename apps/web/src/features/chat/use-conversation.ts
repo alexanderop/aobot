@@ -3,7 +3,7 @@ import { MessageId } from "@aobot/domain";
 import type { BotId, BotSummary, ConversationId, ConversationSummary } from "@aobot/domain";
 import { Option } from "effect";
 import { AsyncResult } from "effect/reactivity";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { conversation } from "./conversation.ts";
 import { ConversationStatus, isRunning, runningTurn, usesComputer } from "./conversation-state.ts";
 import type { FailureCode, TranscriptItem, Unsent } from "./conversation-state.ts";
@@ -81,16 +81,14 @@ export function useConversation(id: ConversationId, botId: BotId): UseConversati
 }
 
 /**
-Marks the conversation read each time a turn ends while it is on screen, so the person is not shown as
-unread what they watched arrive. Only the page that shows it calls this.
+Marks the conversation read while it is on screen: when it shows, and each time a turn ends in it, so
+the person is not shown as unread what they watched arrive. Only the view that shows it calls this.
 */
-export function useReadWhenTurnEnds(id: ConversationId, isRunning: boolean): void {
+export function useReadWhileShown(id: ConversationId, isRunning: boolean): void {
   const read = useAtomSet(conversation.read(id));
-  const wasRunning = useRef(isRunning);
 
   useEffect(() => {
-    if (wasRunning.current && !isRunning) read();
-    wasRunning.current = isRunning;
+    if (!isRunning) read();
   }, [isRunning, read]);
 }
 
