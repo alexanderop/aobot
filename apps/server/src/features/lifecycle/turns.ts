@@ -52,8 +52,8 @@ const stopWords: Readonly<Record<StopCode, string>> = {
   pause_unknown: "pause state unreadable",
 };
 
-/** A conversation claimed for one turn. */
-interface Claim {
+/** A turn that started: its conversation is claimed for it until it ends. */
+interface StartedTurn {
   /** Fails with the {@link TurnStopped} that stopped the turn, once one has. */
   readonly stopped: Deferred.Deferred<never, TurnStopped>;
   /**
@@ -90,7 +90,7 @@ export class Turns extends Context.Service<
       conversation: ConversationId,
       run: RunId,
       bot: BotId,
-    ) => Effect.Effect<Claim, ConversationBusy | BotPaused | PauseUnknown, Scope.Scope>;
+    ) => Effect.Effect<StartedTurn, ConversationBusy | BotPaused | PauseUnknown, Scope.Scope>;
     readonly isRunning: (conversation: ConversationId) => Effect.Effect<boolean>;
     /** The person's Stop: stops the turn running in `conversation`, if one is. */
     readonly stop: (conversation: ConversationId) => Effect.Effect<void>;
