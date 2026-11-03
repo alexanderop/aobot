@@ -18,8 +18,8 @@ export class PauseStore extends Context.Service<
   {
     /** The Bots paused now. */
     readonly paused: Effect.Effect<ReadonlyArray<BotId>, PauseUnreadable>;
-    /** Pauses `bot` on `by`'s authority. True when it was not paused until now. */
-    readonly pause: (bot: BotId, by: string) => Effect.Effect<boolean, SqlError.SqlError>;
+    /** Pauses `bot`. True when it was not paused until now. */
+    readonly pause: (bot: BotId) => Effect.Effect<boolean, SqlError.SqlError>;
     /** Lets `bot` run again. True when it was paused until now. */
     readonly resume: (bot: BotId) => Effect.Effect<boolean, SqlError.SqlError>;
   }
@@ -38,9 +38,9 @@ export const pauseStoreLayer = Layer.effect(
       Effect.withSpan("PauseStore.paused"),
     );
 
-    const pause = Effect.fn("PauseStore.pause")(function* (bot: BotId, by: string) {
+    const pause = Effect.fn("PauseStore.pause")(function* (bot: BotId) {
       const added = yield* sql`
-        INSERT INTO bot_pauses (bot_id, paused_by) VALUES (${bot}, ${by})
+        INSERT INTO bot_pauses (bot_id) VALUES (${bot})
         ON CONFLICT (bot_id) DO NOTHING
         RETURNING bot_id
       `;

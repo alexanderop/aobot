@@ -27,7 +27,7 @@ import {
   SubscriptionRef,
 } from "effect";
 import { SqlClient, type SqlError } from "effect/sql";
-import { auditRows, singleUser } from "../audit/public.ts";
+import { auditRows } from "../audit/public.ts";
 import { PauseStore, type PauseUnreadable } from "./pause-store.ts";
 
 /** Why a turn ends before its Bot finished, as the code of the chat's `RUN_ERROR` names it. */
@@ -330,7 +330,7 @@ export const turnsLayer = Layer.effectContext(
 
     const pause = Effect.fn("Turns.pause")(function* (bot: BotId) {
       // One step, so a pause that was stored has always stopped the turns running here.
-      yield* commit("pause", bot, store.pause(bot, singleUser)).pipe(
+      yield* commit("pause", bot, store.pause(bot)).pipe(
         Effect.andThen(turnsOf(bot)),
         Effect.flatMap((turns) =>
           stopTurns(turns, new TurnStopped({ code: "paused", by: "person" })),
