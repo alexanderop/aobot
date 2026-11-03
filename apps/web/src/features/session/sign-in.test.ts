@@ -1,7 +1,7 @@
 import { signInRefusalWords } from "@aobot/domain";
 import { Option } from "effect";
 import { describe, expect, it } from "vite-plus/test";
-import { refusalOf, signInHref } from "./session.ts";
+import { refusalOf, signInHref } from "./sign-in.ts";
 
 describe("the sign-in screen", () => {
   it("says why the server refused the last sign-in, in its words", () => {

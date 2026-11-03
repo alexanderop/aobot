@@ -1,6 +1,6 @@
 import { Option } from "effect";
 import "./session.css";
-import { refusalOf, signInHref } from "./session.ts";
+import { refusalOf, signInHref } from "./sign-in.ts";
 
 /** What a signed-out page shows: one way in, and why the last sign-in was refused, if it was. */
 export function SignInScreen() {
