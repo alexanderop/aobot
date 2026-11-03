@@ -260,7 +260,7 @@ person's.
 **A match hands the action to the person.** It runs after the grant, the door and the ref, and before any
 rule, so a deny rule never refuses it and an ask rule never asks about it. The computer never hears of it.
 It is one `hand_off` row, a decision no outcome follows, with the action's audit detail, the page's
-`path` and the list as `safety`, and no rule: `click · hand_off · safety:credentials` is
+`path` and the list as `safety`: `click · hand_off · safety:credentials` is
 `{ bot, ref, role, name, host, path, safety: "credentials" }`. The audit page reads it as "Handed to the
 person" and shows `safety:credentials` where another row shows its rule. The `Gateway.act` span records
 `gateway.decision=hand_off`, `decision.source=safety` and `gateway.safety`. The model reads:
@@ -269,7 +269,8 @@ person" and shows `safety:credentials` where another row shows its rule. The `Ga
 
 The person does it on the live screen ([Taking control](#taking-control)). An action the person said yes
 to is matched again when it runs, since the page can have moved on to one where the same element is
-theirs; then the `hand_off` row closes the question, naming the approval.
+theirs; then the `hand_off` row closes the question, naming the approval and, as `rule`, the ask rule
+the person was asked under. The audit page still shows the list there, as `safety:security`.
 
 ## Life of one request
 
