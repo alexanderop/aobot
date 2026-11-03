@@ -2,6 +2,7 @@ import { Schema } from "effect";
 import { ModelStep } from "../../apps/server/src/features/agent/testing/model-script.ts";
 import { assert, browser, evaluate, waitFor } from "../browser.ts";
 import { answers, auditRows, script, send } from "../chat.ts";
+import { slowPageDelayMs } from "../slow-page.ts";
 import { attribute, type TempoSpan, traceSpans } from "../tempo.ts";
 
 const paused = "This Bot is paused.";
@@ -14,7 +15,7 @@ const Detail = Schema.fromJsonString(
 
 const ShownRows = Schema.Array(Schema.Struct({ shown: Schema.String, why: Schema.String }));
 
-/** Ten turns of the model, each opening the next slow page, then a word to close. */
+/** Ten model steps, each opening the next slow page, then a word to close. */
 function tenPages() {
   return script([
     ...Array.from({ length: 10 }, (_, index) =>
@@ -87,7 +88,8 @@ export default async function scenario(baseUrl: string, grafanaUrl: string): Pro
   await waitFor("the second page to be opening", 60_000, () => navigateCards() === 2);
   browser("find", "role", "button", "click", "--name", "Stop");
   await waitFor("the turn to stop", 30_000, idle);
-  await new Promise((resolve) => setTimeout(resolve, 5_000));
+  // Had the turn gone on, the second page would have opened by now and the third navigate been asked for.
+  await new Promise((resolve) => setTimeout(resolve, slowPageDelayMs + 5_000));
 
   const navigations = auditRows().filter(
     (row) => row.action === "navigate" && row.decision === "allow",
