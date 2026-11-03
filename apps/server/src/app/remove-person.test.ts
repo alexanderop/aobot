@@ -5,19 +5,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Email } from "@aobot/domain";
-import { SqliteClient } from "@effect/sql-sqlite-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Redacted } from "effect";
 import { Headers } from "effect/http";
-import { auditLogLayer, migrateAudit } from "../features/audit/public.ts";
-import {
-  Identity,
-  identitySignIn,
-  migrateAuth,
-  People,
-  peopleLayer,
-  sessionCookie,
-} from "../features/auth/public.ts";
+import { Identity, People, sessionCookie } from "../features/auth/public.ts";
+import { authDatabaseAt, testSignIn } from "../features/auth/testing/test-auth.ts";
 
 const command = fileURLToPath(new URL("./remove-person.ts", import.meta.url));
 
@@ -27,8 +19,6 @@ const signIn = {
   OIDC_CLIENT_SECRET: "secret",
   SIGNIN_ALLOWED_EMAIL_DOMAINS: "example.com",
 };
-
-const settings = { allowedDomains: ["example.com"] as const, admins: new Set<Email>() };
 
 /** The command run as an operator would run it, on the database at `databasePath`. */
 function removeAs(databasePath: string, address: string) {
@@ -45,14 +35,7 @@ describe("vp run people:remove", () => {
     () => {
       const databasePath = join(mkdtempSync(join(tmpdir(), "aobot-remove-")), "aobot.db");
 
-      const server = Layer.mergeAll(identitySignIn(settings), peopleLayer(settings)).pipe(
-        Layer.provide(auditLogLayer),
-        Layer.provideMerge(
-          Layer.effectDiscard(Effect.all([migrateAudit, migrateAuth])).pipe(
-            Layer.provideMerge(SqliteClient.layer({ filename: databasePath })),
-          ),
-        ),
-      );
+      const server = testSignIn().pipe(Layer.provideMerge(authDatabaseAt(databasePath)));
 
       return Effect.gen(function* () {
         const { token } = yield* People.use((people) =>

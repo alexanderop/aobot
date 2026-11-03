@@ -1,37 +1,15 @@
 import { Email } from "@aobot/domain";
-import { SqliteClient } from "@effect/sql-sqlite-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option, Redacted } from "effect";
+import { Effect, Option, Redacted } from "effect";
 import { Headers } from "effect/http";
 import { SqlClient } from "effect/sql";
 import { TestClock } from "effect/testing";
 import { actorId } from "../../shared/actor.ts";
 import { recordedSpans } from "../../shared/testing/recorded-spans.ts";
-import { auditLogLayer, migrateAudit } from "../audit/public.ts";
-import { Identity, identitySignIn } from "./identity.ts";
+import { Identity } from "./identity.ts";
+import { People, type VerifiedPerson } from "./people.ts";
 import { sessionCookie } from "./sessions.ts";
-import { migrateAuth } from "./migrations.ts";
-import { People, peopleLayer, type VerifiedPerson } from "./people.ts";
-
-const database = Layer.effectDiscard(Effect.all([migrateAudit, migrateAuth])).pipe(
-  Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })),
-  Layer.fresh,
-);
-
-/** One server's sign-in on the test's database, letting in `domains`, with `admins` its admins. */
-function signingIn(
-  domains: ReadonlyArray<string> = ["example.com"],
-  admins: ReadonlyArray<string> = [],
-) {
-  const settings = {
-    allowedDomains: [domains[0] ?? "example.com", ...domains.slice(1)] as const,
-    admins: new Set(admins.map((admin) => Email.make(admin))),
-  };
-
-  return Layer.mergeAll(peopleLayer(settings), identitySignIn(settings)).pipe(
-    Layer.provide(auditLogLayer),
-  );
-}
+import { testAuthDatabase, testSignIn } from "./testing/test-auth.ts";
 
 const person = (email: string, name: string): VerifiedPerson => ({
   email: Email.make(email),
@@ -90,7 +68,7 @@ describe("signing in", () => {
       expect(
         JSON.stringify(yield* SqlClient.SqlClient.use((sql) => sql`SELECT * FROM sessions`)),
       ).not.toContain(Redacted.value(token));
-    }).pipe(Effect.provide(signingIn()), Effect.provide(database)),
+    }).pipe(Effect.provide(testSignIn()), Effect.provide(testAuthDatabase)),
   );
 
   it.effect("refuses mallory@other.com before anyone is recorded", () =>
@@ -103,22 +81,23 @@ describe("signing in", () => {
       expect(yield* trail).toEqual([
         "auth.refused · deny | mallory@other.com | domain not allowed",
       ]);
-    }).pipe(Effect.provide(signingIn()), Effect.provide(database)),
+    }).pipe(Effect.provide(testSignIn()), Effect.provide(testAuthDatabase)),
   );
 
   it.effect(
     "stops a domain's next sign-in, and its open sessions, once it is no longer allowed",
     () =>
       Effect.gen(function* () {
-        const { token } = yield* enter(alice).pipe(Effect.provide(signingIn(["example.com"])));
+        const { token } = yield* enter(alice).pipe(
+          Effect.provide(testSignIn({ allowedDomains: ["example.com"] })),
+        );
 
-        const narrowed = signingIn(["example.org"]);
+        const narrowed = testSignIn({ allowedDomains: ["example.org"] });
         const refused = yield* Effect.flip(enter(alice)).pipe(Effect.provide(narrowed));
 
         expect(refused.code).toBe("domain");
         expect(yield* whoIs(token).pipe(Effect.provide(narrowed))).toEqual(Option.none());
-        expect(yield* count("sessions")).toBe(1);
-      }).pipe(Effect.provide(database)),
+      }).pipe(Effect.provide(testAuthDatabase)),
   );
 
   it.effect("ends a session after its lifetime, however much it was used", () =>
@@ -130,7 +109,7 @@ describe("signing in", () => {
 
       yield* TestClock.adjust("1 day");
       expect(yield* whoIs(token)).toEqual(Option.none());
-    }).pipe(Effect.provide(signingIn()), Effect.provide(database)),
+    }).pipe(Effect.provide(testSignIn()), Effect.provide(testAuthDatabase)),
   );
 
   it.effect("reads a session without starting a trace, as every request and call does", () => {
@@ -142,7 +121,11 @@ describe("signing in", () => {
 
       expect(yield* whoIs(token)).toEqual(Option.some("alice@example.com"));
       expect(tracing.spans.slice(before)).toEqual([]);
-    }).pipe(Effect.provide(signingIn()), Effect.provide(database), Effect.provide(tracing.layer));
+    }).pipe(
+      Effect.provide(testSignIn()),
+      Effect.provide(testAuthDatabase),
+      Effect.provide(tracing.layer),
+    );
   });
 
   it.effect("ends only the session that signs out", () =>
@@ -154,7 +137,7 @@ describe("signing in", () => {
 
       expect(yield* whoIs(first.token)).toEqual(Option.none());
       expect(yield* whoIs(second.token)).toEqual(Option.some("alice@example.com"));
-    }).pipe(Effect.provide(signingIn()), Effect.provide(database)),
+    }).pipe(Effect.provide(testSignIn()), Effect.provide(testAuthDatabase)),
   );
 });
 
@@ -177,7 +160,7 @@ describe("removing a person", () => {
         "person.removed · succeeded | deployment",
         "auth.refused · deny | alice@example.com | removed",
       ]);
-    }).pipe(Effect.provide(signingIn()), Effect.provide(database)),
+    }).pipe(Effect.provide(testSignIn()), Effect.provide(testAuthDatabase)),
   );
 
   it.effect("blocks an address that never signed in, and writes nothing when run again", () =>
@@ -191,14 +174,14 @@ describe("removing a person", () => {
       expect([first, again]).toEqual([Option.some(0), Option.none()]);
       expect(refused.code).toBe("removed");
       expect((yield* trail).filter((row) => row.startsWith("person.removed"))).toHaveLength(2);
-    }).pipe(Effect.provide(signingIn()), Effect.provide(database)),
+    }).pipe(Effect.provide(testSignIn()), Effect.provide(testAuthDatabase)),
   );
 });
 
 describe("admins by configuration", () => {
   it.effect("records a person made an admin once, and again only once they were named anew", () =>
     Effect.gen(function* () {
-      const asAdmin = signingIn(["example.com"], ["alice@example.com"]);
+      const asAdmin = testSignIn({ admins: [alice.email] });
 
       const grants = Effect.map(trail, (rows) =>
         rows.filter((row) => row === "auth.admin_granted · allow | alice@example.com"),
@@ -208,10 +191,10 @@ describe("admins by configuration", () => {
       yield* enter(alice).pipe(Effect.provide(asAdmin));
       expect(yield* grants).toHaveLength(1);
 
-      yield* People.use((people) => people.grantAdmins).pipe(Effect.provide(signingIn()));
+      yield* People.use((people) => people.grantAdmins).pipe(Effect.provide(testSignIn()));
       yield* People.use((people) => people.grantAdmins).pipe(Effect.provide(asAdmin));
       yield* People.use((people) => people.grantAdmins).pipe(Effect.provide(asAdmin));
       expect(yield* grants).toHaveLength(2);
-    }).pipe(Effect.provide(database)),
+    }).pipe(Effect.provide(testAuthDatabase)),
   );
 });

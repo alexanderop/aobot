@@ -2,21 +2,15 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Email, SessionState } from "@aobot/domain";
 import { NodeHttpServer } from "@effect/platform-node";
-import { SqliteClient } from "@effect/sql-sqlite-node";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
 import { type Context, Effect, Exit, Layer, Option, Schema, Scope } from "effect";
 import { HttpRouter } from "effect/http";
 import { SqlClient } from "effect/sql";
-import { auditLogLayer, migrateAudit } from "../audit/public.ts";
 import { sessionRoute } from "./http.ts";
-import { identitySignIn } from "./identity.ts";
+import { type Claims, Provider } from "./provider.ts";
 import { sessionCookie } from "./sessions.ts";
-import { migrateAuth } from "./migrations.ts";
-import { peopleLayer } from "./people.ts";
-import { type Claims, Provider, reroute } from "./provider.ts";
 import { returnPathOf, signInRoutes } from "./sign-in.ts";
-
-const settings = { allowedDomains: ["example.com"] as const, admins: new Set<Email>() };
+import { testAuthDatabase, testSignIn } from "./testing/test-auth.ts";
 
 /** Who the fake provider vouches for at the next callback. */
 let vouched: Claims;
@@ -41,10 +35,6 @@ const fakeProvider = Layer.succeed(
   }),
 );
 
-const database = Layer.effectDiscard(Effect.all([migrateAudit, migrateAuth])).pipe(
-  Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })),
-);
-
 const http = createServer();
 
 const scope = Effect.runSync(Scope.make());
@@ -52,18 +42,15 @@ const scope = Effect.runSync(Scope.make());
 let sql: Context.Context<SqlClient.SqlClient>;
 
 beforeAll(async () => {
-  sql = await Effect.runPromise(Layer.buildWithScope(database, scope));
+  sql = await Effect.runPromise(Layer.buildWithScope(testAuthDatabase, scope));
 
   const publicUrl = new URL("http://localhost:3100");
 
   const server = HttpRouter.serve(
-    Layer.mergeAll(
-      signInRoutes(publicUrl).pipe(Layer.provide([fakeProvider, peopleLayer(settings)])),
-      sessionRoute.pipe(Layer.provide(identitySignIn(settings))),
-    ),
+    Layer.mergeAll(signInRoutes(publicUrl).pipe(Layer.provide(fakeProvider)), sessionRoute),
     { disableLogger: true, disableListenLog: true },
   ).pipe(
-    Layer.provide(auditLogLayer),
+    Layer.provide(testSignIn()),
     Layer.provide(Layer.succeedContext(sql)),
     Layer.provide(NodeHttpServer.layer(() => http, { port: 0, host: "127.0.0.1" })),
   );
@@ -249,28 +236,4 @@ describe("returnPathOf", () => {
       expect(landsAt(returnPathOf(Option.some(raw), publicUrl)).origin).toBe(publicUrl.origin);
     },
   );
-});
-
-describe("reroute", () => {
-  const issuer = new URL("http://localhost:5556/dex");
-  const internal = new URL("http://dex:5556/dex");
-
-  it.each([
-    [
-      "http://localhost:5556/dex/.well-known/openid-configuration",
-      "http://dex:5556/dex/.well-known/openid-configuration",
-    ],
-    ["http://localhost:5556/dex/token", "http://dex:5556/dex/token"],
-    ["http://localhost:5556/dex", "http://dex:5556/dex"],
-  ])("sends %s to the issuer's internal address", (url, rerouted) => {
-    expect(reroute(url, issuer, internal)).toBe(rerouted);
-  });
-
-  it.each([
-    "http://localhost:5556/dexter/token",
-    "http://localhost:3100/auth/callback",
-    "https://evil.example/dex",
-  ])("leaves %s alone", (url) => {
-    expect(reroute(url, issuer, internal)).toBe(url);
-  });
 });

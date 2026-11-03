@@ -38,7 +38,7 @@ export { signedInRpc } from "./http.ts";
 
 export { normalizeEmail } from "./email.ts";
 
-export { Identity, identitySignIn } from "./identity.ts";
+export { Identity } from "./identity.ts";
 
 export { migrateAuth } from "./migrations.ts";
 

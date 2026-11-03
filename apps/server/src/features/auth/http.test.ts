@@ -6,20 +6,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Control, ControlRpcs, Email, SessionState, SignedOut } from "@aobot/domain";
 import { NodeHttpServer } from "@effect/platform-node";
-import { SqliteClient } from "@effect/sql-sqlite-node";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 import { type Context, Effect, Exit, Layer, Redacted, Schema, Scope, Stream } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/http";
 import { RpcSerialization, RpcServer, RpcTest } from "effect/rpc";
 import { actorId, CurrentActor } from "../../shared/actor.ts";
-import { auditLogLayer, migrateAudit } from "../audit/public.ts";
 import { sessionRoute, signedInGate, signedInRpc } from "./http.ts";
-import { Identity, identitySignIn } from "./identity.ts";
+import type { Identity } from "./identity.ts";
+import { People } from "./people.ts";
 import { sessionCookie } from "./sessions.ts";
-import { migrateAuth } from "./migrations.ts";
-import { People, peopleLayer } from "./people.ts";
-
-const settings = { allowedDomains: ["example.com"] as const, admins: new Set<Email>() };
+import { testAuthDatabase, testSignIn } from "./testing/test-auth.ts";
 
 const shell = join(mkdtempSync(join(tmpdir(), "aobot-shell-")), "index.html");
 
@@ -42,14 +38,7 @@ const whoAsks = (path: HttpRouter.PathInput) =>
     Effect.map(CurrentActor, (actor) => HttpServerResponse.text(actorId(actor))),
   );
 
-const signedIn = Layer.mergeAll(identitySignIn(settings), peopleLayer(settings)).pipe(
-  Layer.provide(auditLogLayer),
-  Layer.provideMerge(
-    Layer.effectDiscard(Effect.all([migrateAudit, migrateAuth])).pipe(
-      Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })),
-    ),
-  ),
-);
+const signedIn = testSignIn().pipe(Layer.provideMerge(testAuthDatabase));
 
 const http = createServer();
 
