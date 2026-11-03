@@ -42,17 +42,9 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
     const bots = yield* Bots;
     const turns = yield* Turns;
 
-    /**
-    The Bot the page picked for a conversation that stands for the caller as `standing`, refused when the
-    conversation is someone else's or another Bot's. A Bot no longer in `bots.yaml` is unknown, so its old
-    conversations open no more.
-    */
-    const botOf = Effect.fnUntraced(function* (
-      conversationId: ConversationId,
-      standing: Standing,
-      picked: BotId,
-    ) {
-      yield* Standing.$match(standing, {
+    /** Refuses a conversation that is someone else's, or another Bot's than `picked`. */
+    const refusal = (conversationId: ConversationId, standing: Standing, picked: BotId) =>
+      Standing.$match(standing, {
         Free: () => Effect.void,
         Mine: ({ bot }) =>
           bot === picked
@@ -61,34 +53,49 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
         NotYours: () => Effect.fail(new NotYourConversation({ conversationId })),
       });
 
-      return yield* known(picked);
-    });
-
+    /** A Bot no longer in `bots.yaml` is unknown, so its old conversations open no more. */
     const known = (botId: BotId) =>
       Option.match(bots.get(botId), {
         onNone: () => Effect.fail(new UnknownBot({ botId })),
         onSome: Effect.succeed,
       });
 
-    /** Refuses a conversation that is someone else's. */
-    const ownedByCaller = Effect.fnUntraced(function* (conversationId: ConversationId) {
+    /**
+    Runs `effect` only in a conversation of the caller's, and refuses someone else's. In a free one it runs
+    nothing: nothing of the caller's runs or waits unread there, and whatever someone else's first message
+    starts there meanwhile is not the caller's. An owner never changes, so one that is the caller's stays so.
+    */
+    const inOwn = Effect.fnUntraced(function* (
+      conversationId: ConversationId,
+      effect: Effect.Effect<void>,
+    ) {
       const standing = yield* store.standing(conversationId, yield* Caller);
 
-      if (Standing.$is("NotYours")(standing)) {
-        return yield* new NotYourConversation({ conversationId });
-      }
+      yield* Standing.$match(standing, {
+        Free: () => Effect.void,
+        Mine: () => effect,
+        NotYours: () => Effect.fail(new NotYourConversation({ conversationId })),
+      });
     });
 
+    /**
+    A free conversation opens empty, with nothing read, so a first message someone else sends meanwhile is
+    not shown.
+    */
     const open = Effect.fn("Chat.open")(function* ({
       conversationId,
       botId,
     }: typeof OpenConversation.Type) {
       const standing = yield* store.standing(conversationId, yield* Caller);
-      const bot = yield* botOf(conversationId, standing, botId);
+      yield* refusal(conversationId, standing, botId);
+      const bot = botSummary(yield* known(botId));
+
+      if (Standing.$is("Free")(standing)) return { bot, messages: [], isRunning: false };
+
       yield* store.markRead(conversationId);
 
       return {
-        bot: botSummary(bot),
+        bot,
         messages: yield* store.messages(conversationId),
         isRunning: yield* turns.isRunning(conversationId),
       };
@@ -106,9 +113,8 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
       const actor = yield* Caller;
 
       // Claimed before the turn starts, so a turn only ever runs in a conversation of its person's.
-      const picked = yield* known(message.botId);
-      const standing = yield* store.claim(conversationId, picked.id, actor);
-      const bot = yield* botOf(conversationId, standing, picked.id);
+      const bot = yield* known(message.botId);
+      yield* refusal(conversationId, yield* store.claim(conversationId, bot.id, actor), bot.id);
 
       const { stopped, recordStop, release } = yield* turns.start(
         conversationId,
@@ -193,15 +199,13 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
     const stop = Effect.fn("Chat.stop")(function* ({
       conversationId,
     }: typeof ConversationRef.Type) {
-      yield* ownedByCaller(conversationId);
-      yield* turns.stop(conversationId);
+      yield* inOwn(conversationId, turns.stop(conversationId));
     });
 
     const read = Effect.fn("Chat.read")(function* ({
       conversationId,
     }: typeof ConversationRef.Type) {
-      yield* ownedByCaller(conversationId);
-      yield* store.markRead(conversationId);
+      yield* inOwn(conversationId, store.markRead(conversationId));
     });
 
     /** A conversation of a Bot no longer in `bots.yaml` is left out, since it opens no more. */

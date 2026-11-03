@@ -6,15 +6,16 @@ import {
   NotYourConversation,
 } from "@aobot/domain";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Fiber, Layer, Queue, Stream } from "effect";
+import { Deferred, Effect, Fiber, Layer, Queue, Stream } from "effect";
 import { RpcTest } from "effect/rpc";
 import { SqlClient } from "effect/sql";
-import type { PersonActor } from "../../shared/actor.ts";
+import { actorId, type PersonActor } from "../../shared/actor.ts";
 import { alice, bob } from "../../shared/testing/people.ts";
 import { signedInAs } from "../../shared/testing/signed-in.ts";
 import { AgentEvent, AgentRuntime, type Turn } from "../agent/public.ts";
 import { assistant, researcher } from "../bots/testing/test-bots.ts";
 import { ConversationStore, conversationStoreLayer, Standing } from "./conversation-store.ts";
+import { chatHandlersLayer } from "./handlers.ts";
 import { chatLayer } from "./public.ts";
 import { testDatabase } from "./testing/test-database.ts";
 import { testServer } from "./testing/test-server.ts";
@@ -61,6 +62,74 @@ const silent = chatLayer.pipe(
   Layer.provideMerge(testServer()),
 );
 
+/** A Bot that answers "Ok" at once. */
+const sayingOk = Layer.succeed(
+  AgentRuntime,
+  AgentRuntime.of({
+    run: () => Stream.make(AgentEvent.TextDelta({ text: "Ok" }), AgentEvent.Done()),
+  }),
+);
+
+/** A Bot that says "One" and then works until its turn is stopped. */
+const working = Layer.succeed(
+  AgentRuntime,
+  AgentRuntime.of({
+    run: () => Stream.concat(Stream.make(AgentEvent.TextDelta({ text: "One" })), Stream.never),
+  }),
+);
+
+/**
+A chat on `agent` whose store, once it has read where a conversation stands for `person`, answers only
+when `release` is completed, so someone else can write to the conversation in between.
+*/
+function holdingStandingOf(person: PersonActor, agent: Layer.Layer<AgentRuntime>) {
+  const read = Deferred.makeUnsafe<void>();
+  const release = Deferred.makeUnsafe<void>();
+
+  const store = Layer.effect(
+    ConversationStore,
+    Effect.gen(function* () {
+      const store = yield* ConversationStore;
+
+      return ConversationStore.of({
+        ...store,
+        standing: (conversation, asking) =>
+          actorId(asking) === actorId(person)
+            ? store.standing(conversation, asking).pipe(
+                Effect.tap(() => Deferred.succeed(read, undefined)),
+                Effect.tap(() => Deferred.await(release)),
+              )
+            : store.standing(conversation, asking),
+      });
+    }),
+  ).pipe(Layer.provide(conversationStoreLayer));
+
+  return {
+    read,
+    release,
+    layer: chatHandlersLayer.pipe(
+      Layer.provide(store),
+      Layer.provide(agent),
+      Layer.provideMerge(testServer()),
+    ),
+  };
+}
+
+/** Runs `send` in the background until its Bot has said something. */
+const untilAnswering = Effect.fnUntraced(function* <E>(send: Stream.Stream<ChatEvent, E>) {
+  const seen = yield* Queue.unbounded<ChatEvent>();
+
+  const turn = yield* send.pipe(
+    Stream.tap((event) => Queue.offer(seen, event)),
+    Stream.runCollect,
+    Effect.forkChild,
+  );
+
+  while ((yield* Queue.take(seen)).type !== "TEXT_MESSAGE_CONTENT");
+
+  return turn;
+});
+
 const texts = Effect.fnUntraced(function* (
   client: Effect.Success<ReturnType<typeof clientFor>>,
   conversation: ConversationId,
@@ -100,26 +169,11 @@ describe("given Alice's conversation", () => {
     },
   );
 
-  it.effect("lets Bob stop nothing of hers while her turn runs", () => {
-    const working = Layer.succeed(
-      AgentRuntime,
-      AgentRuntime.of({
-        run: () => Stream.concat(Stream.make(AgentEvent.TextDelta({ text: "One" })), Stream.never),
-      }),
-    );
-
-    return Effect.gen(function* () {
+  it.effect("lets Bob stop nothing of hers while her turn runs", () =>
+    Effect.gen(function* () {
       const asAlice = yield* clientFor(alice);
       const asBob = yield* clientFor(bob);
-      const seen = yield* Queue.unbounded<ChatEvent>();
-
-      const turn = yield* asAlice["Chat.send"](message(first, "Count")).pipe(
-        Stream.tap((event) => Queue.offer(seen, event)),
-        Stream.runCollect,
-        Effect.forkChild,
-      );
-
-      while ((yield* Queue.take(seen)).type !== "TEXT_MESSAGE_CONTENT");
+      const turn = yield* untilAnswering(asAlice["Chat.send"](message(first, "Count")));
 
       yield* Effect.flip(asBob["Chat.stop"]({ conversationId: first }));
       expect(
@@ -133,8 +187,8 @@ describe("given Alice's conversation", () => {
       });
     }).pipe(
       Effect.provide(chatLayer.pipe(Layer.provide(working), Layer.provideMerge(testServer()))),
-    );
-  });
+    ),
+  );
 
   it.effect("lists hers to her, the one written to last first, and none to Bob", () => {
     const chat = answering();
@@ -154,6 +208,64 @@ describe("given Alice's conversation", () => {
         { conversationId: second, botId: researcher.id, preview: "Ok", unread: true },
       ]);
       expect(yield* asBob["Chat.list"]()).toEqual([]);
+    }).pipe(Effect.provide(chat.layer));
+  });
+});
+
+describe("a conversation nobody had written to when Alice asked about it", () => {
+  it.effect("stops nothing of Bob's when her stop lands after his first message", () => {
+    const chat = holdingStandingOf(alice, working);
+
+    return Effect.gen(function* () {
+      const asAlice = yield* clientFor(alice);
+      const asBob = yield* clientFor(bob);
+      const stopping = yield* Effect.forkChild(asAlice["Chat.stop"]({ conversationId: first }));
+      yield* Deferred.await(chat.read);
+
+      yield* untilAnswering(asBob["Chat.send"](message(first, "Count")));
+      yield* Deferred.succeed(chat.release, undefined);
+      yield* Fiber.join(stopping);
+
+      expect(
+        (yield* asBob["Chat.open"]({ conversationId: first, botId: assistant.id })).isRunning,
+      ).toBe(true);
+    }).pipe(Effect.provide(chat.layer));
+  });
+
+  it.effect("opens empty for her, though Bob's first message lands before it opened", () => {
+    const chat = holdingStandingOf(alice, sayingOk);
+
+    return Effect.gen(function* () {
+      const asAlice = yield* clientFor(alice);
+      const asBob = yield* clientFor(bob);
+
+      const opening = yield* Effect.forkChild(
+        asAlice["Chat.open"]({ conversationId: first, botId: assistant.id }),
+      );
+
+      yield* Deferred.await(chat.read);
+
+      yield* asBob["Chat.send"](message(first, "My plans")).pipe(Stream.runCollect);
+      yield* Deferred.succeed(chat.release, undefined);
+
+      expect((yield* Fiber.join(opening)).messages).toEqual([]);
+    }).pipe(Effect.provide(chat.layer));
+  });
+
+  it.effect("marks nothing of Bob's read when her read lands after his first answer", () => {
+    const chat = holdingStandingOf(alice, sayingOk);
+
+    return Effect.gen(function* () {
+      const asAlice = yield* clientFor(alice);
+      const asBob = yield* clientFor(bob);
+      const reading = yield* Effect.forkChild(asAlice["Chat.read"]({ conversationId: first }));
+      yield* Deferred.await(chat.read);
+
+      yield* asBob["Chat.send"](message(first, "My plans")).pipe(Stream.runCollect);
+      yield* Deferred.succeed(chat.release, undefined);
+      yield* Fiber.join(reading);
+
+      expect((yield* asBob["Chat.list"]()).map((summary) => summary.unread)).toEqual([true]);
     }).pipe(Effect.provide(chat.layer));
   });
 });
