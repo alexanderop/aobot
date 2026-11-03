@@ -1,3 +1,4 @@
+import type { RunId } from "@aobot/domain";
 import { Effect, Layer, Ref } from "effect";
 import type { PersonActor } from "../../../shared/actor.ts";
 import { auditLogLayer, migrateAudit } from "../../audit/public.ts";
@@ -40,11 +41,14 @@ export function testLifecycle(failures: Ref.Ref<number> = Ref.makeUnsafe(0)) {
 }
 
 /**
-Every turn a call names still runs, for `actor`, for a gateway tested without the chat that starts
-turns.
+Every turn a call names still runs, each for the person `personOf` names for its run, for a gateway
+tested without the chat that starts turns.
 */
-export const everyTurnRunsFor = (actor: PersonActor) =>
+export const everyTurnRunsFor = (personOf: (run: RunId) => PersonActor) =>
   Layer.succeed(
     LiveTurns,
-    LiveTurns.of({ actorOf: () => Effect.succeedSome(actor), stopped: () => Effect.never }),
+    LiveTurns.of({
+      actorOf: (_conversation, run) => Effect.succeedSome(personOf(run)),
+      stopped: () => Effect.never,
+    }),
   );

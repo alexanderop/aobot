@@ -565,17 +565,19 @@ Three things hold that up.
 
 **A person types a secret, never the chat.** A Bot that needs a password calls
 `request_secret({ ref, field })`, naming the field for its person, such as `the password for the login
-page`. The gateway checks the grant, holds a request for the Bot, then checks the door, the ref and the
-rules as for `type`, with `tool.name == "request_secret"` and the element the ref names. Each Bot has at
-most one request at a time; a second is `secret.requested · deny` with `{ reason: "already asked" }`
-before anything is judged. The ref must name a `textbox` or a `searchbox`, else the call is
+page`. The gateway checks the grant, holds a request for the Bot and its turn's person, then checks the
+door, the ref and the rules as for `type`, with `tool.name == "request_secret"` and the element the ref
+names. Each Bot has at most one request at a time per person, so one person's request never holds up
+another's turn with the same Bot; a second is `secret.requested · deny` with
+`{ reason: "already asked" }` before anything is judged. The ref must name a `textbox` or a `searchbox`, else the call is
 `secret.requested · deny` with `reason: "not a text field"`, and the computer itself refuses `type_secret`
 for any element but a text `<input>` or a `<textarea>`: what a contenteditable element holds is page text,
 which no read hides. A page on no site, such as `about:blank` or a `data:` page, has no host to show the
 person, so a request there is `secret.requested · deny` with `reason: "no site"`. Once `secret.requested · allow` is written, the request gets an id from the server and
 is shown to the person: `Secret.pending { bot }` streams it as `{ request, field, host }`, with the host of
 the field's page as the server read it, so the card says "the password on shop.example" and a Bot cannot
-pass one site's field off as another's. It then waits for the person outside the door, so a person can
+pass one site's field off as another's. A request is the person's whose turn made it: `Secret.pending`
+shows it to them only, and `Secret.answer` from anyone else finds none. It then waits for the person outside the door, so a person can
 take the computer meanwhile. The page draws the request as a secret card (see `docs/design.md`). Supply
 sends the value over `Secret.answer { bot, request, answer }` on its own socket, as a `Redacted` that a
 log, an error or a span prints as `<redacted>`, and the page wipes it once the call settles; it never goes
@@ -603,7 +605,7 @@ reports it failed, but, as its source reads, sends no `notifications/cancelled` 
 connection open, so the gateway still waits. The Bot reads that the tool failed, and its card says it did
 not get the secret, since the call no longer runs, so nothing can be supplied any more. The request waits
 on until the turn ends, or for the rest of its ten minutes, `no answer`, and until then the Bot's next
-`request_secret` is `already asked`.
+`request_secret` for that person is `already asked`.
 
 **The computer never reads a secret back.** Playwright's snapshot prints what a field holds, a password
 field's included (`textbox "Password" [ref=e3]: hunter2`). After every action the computer asks the page
@@ -673,7 +675,8 @@ as `ask` when one holds. The action leaves the door before any row is written, a
    keep their redaction.
 4. Waits outside the door, at most ten minutes, in a `Gateway.awaitApproval` span with `gateway.rule`,
    `approval.answer` and `approval.by`. `Approval.answer { conversation, approval, answer }` answers it;
-   an answer for another question, or one after the wait ended, fails with `NoApprovalWaiting`. Whoever
+   an answer for another question, one after the wait ended, or one from anyone but the person whose turn
+   asked, to whom alone `Approval.pending` shows the card, fails with `NoApprovalWaiting`. Whoever
    takes the card down first answers: the person, or the time limit, which answers no. A stopped turn
    answers no too. `approval.answered · answered` records `{ bot, approval, answer, by }`, in one
    transaction with the ledger's `yes` or `no`, with `by` one of `ApprovalAnsweredBy` in the domain
@@ -897,35 +900,60 @@ class ChatClient extends AtomRpc.Service<ChatClient>()("ChatClient", { group: Ch
 const conversation = Atom.family((id: ConversationId) => /* fold ChatEvents into one ordered transcript and a status */)
 ```
 
-| Hook                          | Shaped like CopilotKit's             | What it gives a component                                                                                                                                                                    | From |
-| ----------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
-| `useConversation(id, bot)`    | `useAgent`                           | The conversation's own `bot`, `transcript` (messages and tool calls in order), `isRunning`, `usesComputer`, `unsent`, `send`, `stop`                                                         | E0-1 |
-| `useToolCallRenderer()`       | `useRenderTool`, `useRenderToolCall` | A registry from tool name to a component that draws one tool call in each of its states                                                                                                      | E1-1 |
-| `useLiveScreen()`             | (none)                               | The latest screen frame, none while the screen is blank                                                                                                                                      | E1-4 |
-| `useControl()`                | (none)                               | Who holds the computer every Bot shares, why the last take, click or hand back failed, `takeControl`, `handBack`, `click`                                                                    | E1-5 |
-| `useAttachments(id, send)`    | (none)                               | The files picked in the conversation's composer and how each upload went, `attach`, `dismiss`, and `send`, which names the files that arrived                                                | E1-6 |
-| `useBots()`                   | (none)                               | The Bots the server knows, as `bots.yaml` lists them, for the sidebar                                                                                                                        | E2-1 |
-| `useSelection()`              | (none)                               | The Bot and conversation the page has open, as the server confirmed it, and `pick` to open another Bot                                                                                       | E2-1 |
-| `useSecretRequest(call, bot)` | `useHumanInTheLoop`                  | What a `request_secret` card shows, with the request `Secret.pending` streams for the Bot, `supply`, which sends the typed secret over `Secret.answer` with that request's id, and `decline` | E2-3 |
-| `useApproval(id, turn)`       | `useHumanInTheLoop`, `useInterrupt`  | The approval card of the conversation: the question `Approval.pending` streams, the answer for the rest of its turn, and `choose`, which sends yes or no over `Approval.answer`              | E2-5 |
-| `usePause(bot)`               | (none)                               | Whether the Bot is paused, once the server said, whether a pause or a resume is on its way, why the last one failed, `pause` and `resume`                                                    | E2-7 |
-| `usePausedBots()`             | (none)                               | The Bots paused now, none until the server has said, for the sidebar's Paused labels                                                                                                         | E2-7 |
-| `useSession()`                | (none)                               | Who the page is open for, none until the server has said, read again every half minute and on focus                                                                                          | E3-1 |
-| `useAuditTrail()`             | (none)                               | The audit rows the URL's filters let through, newest first, whether older ones are left, why the last page failed, `filter`, `loadMore` and `reload`, which reads the trail again            | E2-4 |
+| Hook                             | Shaped like CopilotKit's             | What it gives a component                                                                                                                                                                    | From |
+| -------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| `useConversation(id, bot)`       | `useAgent`                           | The conversation's own `bot`, `transcript` (messages and tool calls in order), `isRunning`, `usesComputer`, `unsent`, `send`, `stop`                                                         | E0-1 |
+| `useToolCallRenderer()`          | `useRenderTool`, `useRenderToolCall` | A registry from tool name to a component that draws one tool call in each of its states                                                                                                      | E1-1 |
+| `useLiveScreen()`                | (none)                               | The latest screen frame, none while the screen is blank                                                                                                                                      | E1-4 |
+| `useControl()`                   | (none)                               | Who holds the computer every Bot shares, why the last take, click or hand back failed, `takeControl`, `handBack`, `click`                                                                    | E1-5 |
+| `useAttachments(id, send)`       | (none)                               | The files picked in the conversation's composer and how each upload went, `attach`, `dismiss`, and `send`, which names the files that arrived                                                | E1-6 |
+| `useBots()`                      | (none)                               | The Bots the server knows, as `bots.yaml` lists them, for the sidebar                                                                                                                        | E2-1 |
+| `useSelection()`                 | (none)                               | The Bot and conversation the page has open, as the server confirmed it, and `choose` to open another Bot, a listed conversation or a new one                                                 | E2-1 |
+| `useConversationList()`          | (none)                               | The person's conversations with a message, the one written to last first, each with its Bot, a preview of its last message and whether it is unread                                          | E3-2 |
+| `useReadWhileShown(id, running)` | (none)                               | Marks the conversation read with `Chat.read` while it is on screen: when it shows and each time a turn in it ends                                                                            | E3-2 |
+| `useSecretRequest(call, bot)`    | `useHumanInTheLoop`                  | What a `request_secret` card shows, with the request `Secret.pending` streams for the Bot, `supply`, which sends the typed secret over `Secret.answer` with that request's id, and `decline` | E2-3 |
+| `useApproval(id, turn)`          | `useHumanInTheLoop`, `useInterrupt`  | The approval card of the conversation: the question `Approval.pending` streams, the answer for the rest of its turn, and `choose`, which sends yes or no over `Approval.answer`              | E2-5 |
+| `usePause(bot)`                  | (none)                               | Whether the Bot is paused, once the server said, whether a pause or a resume is on its way, why the last one failed, `pause` and `resume`                                                    | E2-7 |
+| `usePausedBots()`                | (none)                               | The Bots paused now, none until the server has said, for the sidebar's Paused labels                                                                                                         | E2-7 |
+| `useSession()`                   | (none)                               | Who the page is open for, none until the server has said, read again every half minute and on focus                                                                                          | E3-1 |
+| `useAuditTrail()`                | (none)                               | The audit rows the URL's filters let through, newest first, whether older ones are left, why the last page failed, `filter`, `loadMore` and `reload`, which reads the trail again            | E2-4 |
 
 The page opens the Bot and the conversation the URL names as `?bot=<id>&c=<id>`, or the first Bot in
 `bots.yaml`; a `bot` that is no Bot the server knows, or no Bot id at all, opens the first Bot and drops
 the URL's conversation. One writable `selection` atom holds it: its read side derives it from the URL, the
 Bot list, a memory of each Bot's last conversation and what `Chat.open` answered for that pair, and
-corrects the URL to show it without a history entry; its write side takes a picked Bot and pushes a
-history entry, so Back returns to the Bot before. The memory lives in an atom and is mirrored to
+corrects the URL to show it without a history entry; its write side takes a `Choice` (a Bot, a listed
+conversation, or a new conversation with a Bot) and pushes a history entry, so Back returns to what was
+open before. The memory lives in an atom and is mirrored to
 `localStorage` at best, so a private window still returns to the conversation a person left. Each write
 takes in what other tabs stored first, so two tabs never overwrite each other's Bots. The sign-in screen
 forgets it, so whoever signs in next on the same browser does not open the last person's conversations.
 Each sidebar entry is a link to `?bot=<id>`, so it opens in a new tab or copies like any link.
 
-A conversation belongs to the Bot of its first message. `Chat.open` and `Chat.send` name the Bot the page
-picked; the server refuses another Bot with `ConversationOfAnotherBot`, naming the conversation's own,
+A conversation belongs to the person who wrote to it first, and to the Bot of that message.
+`conversations.owner_id` holds the person's actor id, as audit rows name them, with no reference to
+`people`, since the single user has no row there. `Chat.send` claims the conversation before the turn
+starts, in one `INSERT … ON CONFLICT DO UPDATE … RETURNING` that answers the stored owner, so of two people
+racing on one new id the database lets one have it, and a turn only ever runs in its person's
+conversation. `Chat.open`, `Chat.send`, `Chat.stop` and `Chat.read` refuse anyone else's with
+`NotYourConversation`, and so does a conversation from before owners were recorded, which is nobody's,
+except on a server in single-user mode, which makes each the one person's at start-up. A conversation
+nobody has written to is free and opens empty. The page leaves a conversation that is not the
+person's for a new one with the same Bot and remembers that one instead, so an address someone else's
+browser remembered never shows their messages. A message the page sent there, as when someone else's
+first message got in before it, is taken back and offered again in the new conversation's composer.
+Continuing a conversation needs nothing more: every turn passes the stored messages to the runtime, which
+rebuilds the `effect/ai` chat from them, or, for `acp`, primes a fresh CLI session with them.
+
+`Chat.list` answers the caller's conversations that have a message, the one written to last first, each
+with its Bot, the first 120 characters of its last message and whether it is unread. A conversation of a
+Bot no longer in `bots.yaml` is left out, since it opens no more. `conversations.read_seq` is the last
+message the owner has seen: a Bot's message after it is unread. `Chat.open` only reads; `Chat.read`
+marks everything read, and the page calls it while it shows the conversation, when it shows and each time
+a turn ends in it, so an answer the person watched arrive is never shown unread. The page asks for the
+list again when a turn ends and after a read.
+
+`Chat.open` and `Chat.send` name the Bot the page picked; the server refuses another Bot with `ConversationOfAnotherBot`, naming the conversation's own,
 and a Bot the file does not name with `UnknownBot`. The page follows the first to the conversation's Bot;
 a message `Chat.send` was refused for goes back into the composer, where it stays through the follow.
 The second means the page's Bot list is out of date: the page asks for it again, once per answer, and

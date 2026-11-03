@@ -102,7 +102,7 @@ beforeAll(async () => {
             computers,
             testBots,
             allowEverything,
-            everyTurnRunsFor(alice),
+            everyTurnRunsFor(() => alice),
           ]),
         ),
       ),

@@ -3,7 +3,7 @@ import { signInRefusalWords } from "../../packages/domain/src/people.ts";
 import { ModelStep } from "../../apps/server/src/features/agent/testing/model-script.ts";
 import { assert, browser, evaluate, waitFor } from "../browser.ts";
 import { ask, everyAuditRow, script } from "../chat.ts";
-import { onSignInScreen, signIn, signInAs } from "../sign-in.ts";
+import { onSignInScreen, signIn, signInAs, signOut } from "../sign-in.ts";
 import { composeOutput } from "../stack.ts";
 import { attribute, traceSpans } from "../tempo.ts";
 
@@ -141,8 +141,7 @@ export default async function scenario(baseUrl: string, grafanaUrl: string): Pro
   browser("open", baseUrl);
   await waitFor("the person bar", 15_000, () => browser("get", "count", ".person-bar") !== "0");
   assert(rememberedConversations() !== null, "the page remembers alice's conversation");
-  browser("find", "role", "button", "click", "--name", "Sign out");
-  await waitFor("the sign-in screen after signing out", 15_000, onSignInScreen);
+  await signOut();
   await waitFor(
     "the page to forget alice's conversations",
     5_000,

@@ -1,5 +1,7 @@
 import type { BotId, BotSummary } from "@aobot/domain";
-import { type MouseEvent, useId } from "react";
+import { useId } from "react";
+import { isPlainClick } from "../../shared/plain-click.ts";
+import "../../shared/side-list.css";
 import { BotAvatar } from "./BotAvatar.tsx";
 import { sidebarSections } from "./sidebar-sections.ts";
 import "./sidebar.css";
@@ -10,11 +12,6 @@ interface Picking {
   /** Where a Bot's link leads, for a click that opens it elsewhere: a new tab, a copied link. */
   readonly linkTo: (bot: BotId) => string;
   readonly onPick: (bot: BotId) => void;
-}
-
-/** A click the page handles itself; one with a modifier or another button opens the link as usual. */
-function isPlainClick(event: MouseEvent): boolean {
-  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
 }
 
 const avatarSize = { tile: 52, row: 32 } as const;
@@ -33,7 +30,7 @@ function BotLink(
     <li>
       <a
         href={props.linkTo(bot.id)}
-        className={`sidebar__${props.layout}`}
+        className={props.layout === "tile" ? "side-row sidebar__tile" : "side-row"}
         aria-current={bot.id === props.selected ? "page" : undefined}
         data-paused={paused}
         onClick={(event) => {
@@ -44,8 +41,8 @@ function BotLink(
         }}
       >
         <BotAvatar bot={bot.id} size={avatarSize[props.layout]} />
-        <span className="sidebar__label">
-          <span className="sidebar__name" title={bot.name}>
+        <span className="side-row__label">
+          <span className="side-row__text" title={bot.name}>
             {bot.name}
           </span>
           {paused ? <span className="sidebar__paused">Paused</span> : null}
@@ -66,10 +63,10 @@ function Group(props: {
 
   return (
     <div className="sidebar__group" role="group" aria-labelledby={heading}>
-      <h2 id={heading} className="sidebar__heading">
+      <h2 id={heading} className="side-heading">
         {props.name}
       </h2>
-      <ul className="sidebar__rows">
+      <ul className="side-list">
         {props.bots.map((bot) => (
           <BotLink
             key={bot.id}
@@ -96,7 +93,7 @@ export function Sidebar(props: Picking & { readonly bots: ReadonlyArray<BotSumma
   return (
     <nav className="sidebar" aria-label="Bots">
       {pinned.length === 0 ? null : (
-        <ul className="sidebar__pinned" aria-label="Pinned">
+        <ul className="side-list sidebar__pinned" aria-label="Pinned">
           {pinned.map((bot) => (
             <BotLink
               key={bot.id}
@@ -109,7 +106,7 @@ export function Sidebar(props: Picking & { readonly bots: ReadonlyArray<BotSumma
         </ul>
       )}
       {ungrouped.length === 0 ? null : (
-        <ul className="sidebar__rows">
+        <ul className="side-list">
           {ungrouped.map((bot) => (
             <BotLink
               key={bot.id}

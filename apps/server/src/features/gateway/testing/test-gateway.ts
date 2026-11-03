@@ -1,4 +1,4 @@
-import type { ComputerAction } from "@aobot/domain";
+import type { ComputerAction, RunId } from "@aobot/domain";
 import { SqliteClient } from "@effect/sql-sqlite-node";
 import { Effect, Layer, Stream } from "effect";
 import { SqlClient } from "effect/sql";
@@ -68,19 +68,19 @@ export const database = Layer.effectDiscard(Effect.andThen(migrateAudit, migrate
 
 /**
 A gateway on the database in the context, as one server start would build it, judging by `policy`, where
-every turn a call names still runs, for `actor`.
+every turn a call names still runs, each for the person `personOf` names for its run, alice unless named.
 */
 export function startGateway(
   computers: Layer.Layer<Computers>,
   policy: Layer.Layer<Policy> = allowEverything,
-  actor: PersonActor = alice,
+  personOf: (run: RunId) => PersonActor = () => alice,
 ) {
   return gatewayLayer.pipe(
     Layer.provide(auditLogLayer),
     Layer.provide(computers),
     Layer.provide(testBots),
     Layer.provide(policy),
-    Layer.provide(everyTurnRunsFor(actor)),
+    Layer.provide(everyTurnRunsFor(personOf)),
   );
 }
 

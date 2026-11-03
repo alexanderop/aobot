@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import { OpenOutcome } from "../features/chat/public.ts";
 import {
   botLink,
+  Choice,
+  choose,
   follow,
   forgetMemory,
   type Memory,
@@ -85,8 +87,36 @@ describe("follow", () => {
       Option.some(OpenOutcome.OfAnotherBot({ botId: researcher })),
       { bot: researcher, conversation: "c1" },
     ],
+    [
+      "a conversation that is not the person's",
+      Option.some(OpenOutcome.NotYours({ conversation: ConversationId.make("own") })),
+      { bot: assistant, conversation: "own" },
+    ],
   ])("shows, on %s, the conversation with its own Bot", (_what, outcome, expected) => {
     expect(follow(requested, outcome)).toEqual(expected);
+  });
+});
+
+describe("choose", () => {
+  const current: Selection = { bot: assistant, conversation: ConversationId.make("a1") };
+  const listed: Selection = { bot: researcher, conversation: ConversationId.make("r2") };
+
+  it.each([
+    ["the Bot open already", Choice.Bot({ bot: assistant }), Option.none()],
+    [
+      "another Bot, on its last conversation",
+      Choice.Bot({ bot: researcher }),
+      Option.some({ bot: researcher, conversation: researchers }),
+    ],
+    ["the conversation open already", Choice.Conversation({ selection: current }), Option.none()],
+    ["another conversation", Choice.Conversation({ selection: listed }), Option.some(listed)],
+    [
+      "a new conversation",
+      Choice.New({ bot: assistant }),
+      Option.some({ bot: assistant, conversation: fresh }),
+    ],
+  ])("opens, for %s, what it names", (_what, choice, expected) => {
+    expect(choose(current, choice, memory, fresh)).toEqual(expected);
   });
 });
 
@@ -265,7 +295,8 @@ function page(start: string, options?: { readonly storage?: MemoryStorage }) {
   registry.mount(selection);
 
   const now = () => Option.getOrThrow(registry.get(selection));
-  const pick = (next: BotId) => registry.set(selection, next);
+  const pick = (next: BotId) => registry.set(selection, Choice.Bot({ bot: next }));
+  const chooseNext = (choice: Choice) => registry.set(selection, choice);
   const confirm = () => server.opened(registry, now());
 
   const answer = (outcome: OpenOutcome, selection = now()) =>
@@ -274,7 +305,7 @@ function page(start: string, options?: { readonly storage?: MemoryStorage }) {
   const listBots = (listed: Array.NonEmptyReadonlyArray<BotSummary>) =>
     registry.set(list, Option.some(listed));
 
-  return { ...fake, now, pick, confirm, answer, listBots, opens: server.opens };
+  return { ...fake, now, pick, chooseNext, confirm, answer, listBots, opens: server.opens };
 }
 
 describe("the selection", () => {
@@ -363,6 +394,39 @@ describe("the selection", () => {
 
     expect(tab.now()).toEqual({ bot: "assistant", conversation: "a1" });
     expect(tab.opens).toEqual([{ conversationId: "a1", botId: "assistant" }]);
+  });
+
+  it("leaves a conversation that is not the person's for a new one, and remembers that one instead", () => {
+    const storage = sharedStorage();
+    remember(storage, new Map(), { bot: assistant, conversation: ConversationId.make("theirs") });
+    const tab = page("http://localhost:3100/?bot=assistant", { storage });
+
+    expect(tab.now().conversation).toBe("theirs");
+
+    tab.answer(OpenOutcome.NotYours({ conversation: ConversationId.make("own") }));
+    const own = tab.now();
+    tab.confirm();
+
+    expect(own).toEqual({ bot: "assistant", conversation: "own" });
+    expect(tab.entries()).toEqual([`?bot=assistant&c=${own.conversation}`]);
+    expect(readMemory(storage).get(assistant)).toBe(own.conversation);
+  });
+
+  it("opens a listed conversation and a new one, each with a history entry", () => {
+    const tab = page("http://localhost:3100/?bot=assistant&c=a1");
+
+    tab.chooseNext(
+      Choice.Conversation({
+        selection: { bot: researcher, conversation: ConversationId.make("r2") },
+      }),
+    );
+    expect(tab.now()).toEqual({ bot: "researcher", conversation: "r2" });
+
+    tab.chooseNext(Choice.New({ bot: researcher }));
+    expect(tab.now()).toEqual({ bot: "researcher", conversation: expect.stringMatching(/^new-/u) });
+
+    tab.back();
+    expect(tab.now()).toEqual({ bot: "researcher", conversation: "r2" });
   });
 
   it("ignores an answer about a selection the person already left", () => {

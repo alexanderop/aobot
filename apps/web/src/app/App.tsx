@@ -1,9 +1,9 @@
-import { type BotId, type BotSummary, SessionState } from "@aobot/domain";
+import { type BotId, type BotSummary, type ConversationSummary, SessionState } from "@aobot/domain";
 import { type Array, Option } from "effect";
 import { useEffect } from "react";
 import { AuditPage } from "../features/audit/public.ts";
 import { Sidebar, useBots } from "../features/bots/public.ts";
-import { ConversationView, useConversation } from "../features/chat/public.ts";
+import { ConversationList, ConversationView, useConversation } from "../features/chat/public.ts";
 import { LiveScreen } from "../features/screen/public.ts";
 import {
   type OpenSession,
@@ -13,7 +13,7 @@ import {
 } from "../features/session/public.ts";
 import "./app.css";
 import { forgetPageMemory } from "./selection-atoms.ts";
-import { botLink, type Selection } from "./selection.ts";
+import { botLink, Choice, type Selection, withSelection } from "./selection.ts";
 import { useSelection } from "./use-selection.ts";
 
 /** Where the audit page is. Every other path is the messenger. */
@@ -41,21 +41,46 @@ function linkTo(bot: BotId): string {
   return botLink(new URL(window.location.href), bot).href;
 }
 
-/** The sidebar of Bots and the conversation with the one picked, which the URL keeps across reloads. */
+/** `conversation` as the selection that opens it. */
+function selectionOf(conversation: ConversationSummary): Selection {
+  return { bot: conversation.botId, conversation: conversation.conversationId };
+}
+
+/** A link to `conversation`, so it can be opened in another tab or copied. */
+function conversationLink(conversation: ConversationSummary): string {
+  return withSelection(new URL(window.location.href), selectionOf(conversation)).href;
+}
+
+/**
+The sidebar of Bots and the person's conversations, and the conversation open beside it, which the URL
+keeps across reloads.
+*/
 function Messenger(props: {
   readonly session: OpenSession;
   readonly bots: Array.NonEmptyReadonlyArray<BotSummary>;
   readonly selection: Selection;
-  readonly pick: (bot: BotId) => void;
+  readonly choose: (choice: Choice) => void;
 }) {
+  const { bots, selection, choose } = props;
+
   return (
     <div className="app">
       <div className="app__side">
         <Sidebar
-          bots={props.bots}
-          selected={props.selection.bot}
+          bots={bots}
+          selected={selection.bot}
           linkTo={linkTo}
-          onPick={props.pick}
+          onPick={(bot) => choose(Choice.Bot({ bot }))}
+        />
+        <ConversationList
+          bots={bots}
+          selected={selection.conversation}
+          newWith={selection.bot}
+          linkTo={conversationLink}
+          onOpen={(conversation) =>
+            choose(Choice.Conversation({ selection: selectionOf(conversation) }))
+          }
+          onNew={() => choose(Choice.New({ bot: selection.bot }))}
         />
         <a className="app__audit-link" href={auditPath}>
           Audit trail
@@ -79,11 +104,11 @@ function Connecting() {
 /** The messenger once the server has said which Bots there are. */
 function Chat(props: { readonly session: OpenSession }) {
   const bots = useBots();
-  const [selection, pick] = useSelection();
+  const [selection, choose] = useSelection();
 
   return Option.match(Option.all({ bots, selection }), {
     onNone: Connecting,
-    onSome: (ready) => <Messenger {...ready} session={props.session} pick={pick} />,
+    onSome: (ready) => <Messenger {...ready} session={props.session} choose={choose} />,
   });
 }
 

@@ -8,17 +8,19 @@ import {
   ConversationOfAnotherBot,
   MessageAlreadySent,
   MessageId,
+  NotYourConversation,
   RunId,
   UnknownBot,
 } from "@aobot/domain";
-import type { ChatEvent, ConversationSnapshot } from "@aobot/domain";
+import type { ChatEvent, ConversationSnapshot, ConversationSummary } from "@aobot/domain";
 import { Deferred, Effect, Layer, Option, Stream } from "effect";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { RpcTest } from "effect/rpc";
 import { ChatClient } from "./chat-client.ts";
 import { makeConversations } from "./conversation.ts";
 import {
   ConversationStatus,
+  initialState,
   OpenOutcome,
   TranscriptItem,
   isRunning,
@@ -45,10 +47,18 @@ const fakeServer = (script: {
     stopped: Deferred.Deferred<void>,
   ) => Stream.Stream<
     ChatEvent,
-    ConversationBusy | MessageAlreadySent | ConversationOfAnotherBot | BotPaused
+    | ConversationBusy
+    | MessageAlreadySent
+    | ConversationOfAnotherBot
+    | NotYourConversation
+    | BotPaused
   >;
-  readonly open?: Effect.Effect<ConversationSnapshot, UnknownBot | ConversationOfAnotherBot>;
+  readonly open?: Effect.Effect<
+    ConversationSnapshot,
+    UnknownBot | ConversationOfAnotherBot | NotYourConversation
+  >;
   readonly stop?: (stopped: Deferred.Deferred<void>) => Effect.Effect<void>;
+  readonly list?: () => ReadonlyArray<ConversationSummary>;
 }) => {
   const stopped = Deferred.makeUnsafe<void>();
 
@@ -57,6 +67,8 @@ const fakeServer = (script: {
     "Chat.send": () => script.send(stopped),
     "Chat.stop": () =>
       script.stop?.(stopped) ?? Deferred.succeed(stopped, undefined).pipe(Effect.asVoid),
+    "Chat.read": () => Effect.void,
+    "Chat.list": () => Effect.sync(() => script.list?.() ?? []),
   });
 
   return Atom.runtime(
@@ -89,15 +101,32 @@ function start(script: Parameters<typeof fakeServer>[0]) {
     open: conversations.open({ conversationId, botId: bot.id }),
     send: conversations.send(conversationId),
     stop: conversations.stop(conversationId),
+    list: conversations.list,
   };
 
   registries.push(registry);
   registry.mount(botList);
+  registry.mount(atoms.list);
   registry.mount(atoms.open);
   registry.mount(atoms.send);
   registry.mount(atoms.stop);
 
-  return { registry, atoms, botListAsked: () => botListAsked };
+  return { registry, atoms, conversations, botListAsked: () => botListAsked };
+}
+
+/** What the server answered once it said the conversation is not the person's. */
+function notYours(
+  registry: AtomRegistry.AtomRegistry,
+  atom: ReturnType<ReturnType<typeof makeConversations>["open"]>,
+) {
+  return Atom.toStream(atom).pipe(
+    Stream.map((result) => Option.filter(AsyncResult.value(result), OpenOutcome.$is("NotYours"))),
+    Stream.filter(Option.isSome),
+    Stream.runHead,
+    Effect.map((head) => Option.getOrThrow(Option.flatten(head))),
+    Effect.provideService(AtomRegistry.AtomRegistry, registry),
+    Effect.runPromise,
+  );
 }
 
 /** What the server answered once the open settled. */
@@ -128,6 +157,25 @@ function until(
 afterEach(() => {
   registries.splice(0).forEach((registry) => registry.dispose());
 });
+
+/** The person's conversations as the page lists them, once `predicate` holds of them. */
+function listedOnce(
+  registry: AtomRegistry.AtomRegistry,
+  atom: ReturnType<typeof makeConversations>["list"],
+  predicate: (listed: ReadonlyArray<ConversationSummary>) => boolean,
+): Promise<ReadonlyArray<ConversationSummary>> {
+  return Atom.toStream(atom).pipe(
+    Stream.map(AsyncResult.value),
+    Stream.filter((listed) => Option.exists(listed, predicate)),
+    Stream.runHead,
+    Effect.map((head) => Option.getOrThrow(Option.flatten(head))),
+    Effect.provideService(AtomRegistry.AtomRegistry, registry),
+    Effect.runPromise,
+  );
+}
+
+const previews = (listed: ReadonlyArray<ConversationSummary>) =>
+  listed.map((summary) => summary.preview);
 
 const userMessage = {
   botId: bot.id,
@@ -181,6 +229,64 @@ describe("given a conversation served by an in-memory Bot", () => {
       OpenOutcome.OfAnotherBot({ botId: BotId.make("other") }),
     );
     expect(registry.get(atoms.state).bot).toEqual(Option.none());
+  });
+
+  it("answers that the conversation is not the person's with a new one to go to, showing none of it", async () => {
+    const { registry, atoms, conversations } = start({
+      send: () => Stream.empty,
+      open: Effect.fail(new NotYourConversation({ conversationId })),
+    });
+
+    const { conversation } = await notYours(registry, atoms.open);
+
+    expect(conversation).not.toBe(conversationId);
+    expect(registry.get(atoms.state)).toEqual(initialState);
+    expect(registry.get(conversations.state(conversation))).toEqual(initialState);
+  });
+
+  it("offers a message sent to a conversation that turned out someone else's again, in the new one", async () => {
+    let asked = 0;
+
+    const { registry, atoms, conversations } = start({
+      send: () => Stream.fail(new NotYourConversation({ conversationId })),
+      open: Effect.suspend(() => {
+        asked += 1;
+
+        return asked === 1
+          ? Effect.succeed({ bot, messages: [], isRunning: false })
+          : Effect.fail(new NotYourConversation({ conversationId }));
+      }),
+    });
+
+    await opened(registry, atoms.open);
+    registry.set(atoms.send, userMessage);
+    const { conversation } = await notYours(registry, atoms.open);
+
+    expect(registry.get(conversations.state(conversation)).unsent).toEqual(
+      Option.some({ id: userMessage.messageId, text: userMessage.text }),
+    );
+    expect(texts(registry.get(atoms.state))).toEqual([]);
+  });
+
+  it("lists the Bot's answer as the conversation's last message once its turn ended", async () => {
+    let answered = false;
+
+    const { registry, atoms } = start({
+      send: () =>
+        Stream.fromIterable<ChatEvent>([
+          ...started,
+          { type: "RUN_FINISHED", threadId: conversationId, runId },
+        ]).pipe(Stream.ensuring(Effect.sync(() => (answered = true)))),
+      list: () =>
+        answered ? [{ conversationId, botId: bot.id, preview: "Hello", unread: false }] : [],
+    });
+
+    await opened(registry, atoms.open);
+    registry.set(atoms.send, userMessage);
+
+    expect(previews(await listedOnce(registry, atoms.list, (listed) => listed.length > 0))).toEqual(
+      ["Hello"],
+    );
   });
 
   it("takes a message back to offer it again and opens again when the conversation turned out another Bot's", async () => {

@@ -1,15 +1,16 @@
-import { type BotId, type BotSummary, ConversationId, type OpenConversation } from "@aobot/domain";
+import { type BotSummary, ConversationId, type OpenConversation } from "@aobot/domain";
 import { type Array, Option } from "effect";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { botList } from "../features/bots/public.ts";
 import { conversation, OpenOutcome } from "../features/chat/public.ts";
 import { type History, pageHistory } from "../shared/page-history.ts";
 import {
+  type Choice,
+  choose,
   follow,
   forgetMemory,
   type Memory,
   type MemoryStorage,
-  pickBot,
   readMemory,
   remember,
   resolveSelection,
@@ -45,14 +46,14 @@ type Open = (
 The page's selection over `browser`, once `bots` says which Bots there are. It reads the Bot and
 conversation from the URL, the Bot list and the memory of each Bot's last conversation, then follows what
 the server answered when `open` opened that conversation with that Bot. The URL is corrected to show what
-the page shows, without a history entry, and a pair the server opened is remembered. Writing a Bot picks
-it, with a history entry so Back returns to the Bot before.
+the page shows, without a history entry, and a pair the server opened is remembered. Writing a
+{@link Choice} opens what it names, with a history entry so Back returns to what was open before.
 */
 export function makeSelection(
   browser: Browser,
   bots: Atom.Atom<Option.Option<Array.NonEmptyReadonlyArray<BotSummary>>>,
   open: Open,
-): Atom.Writable<Option.Option<Selection>, BotId> {
+): Atom.Writable<Option.Option<Selection>, Choice> {
   const here = (): Location => ({ url: browser.url(), fresh: browser.newConversation() });
 
   const location = Atom.keepAlive(
@@ -79,7 +80,7 @@ export function makeSelection(
     ),
   );
 
-  const selection: Atom.Writable<Option.Option<Selection>, BotId> = Atom.keepAlive(
+  const selection: Atom.Writable<Option.Option<Selection>, Choice> = Atom.keepAlive(
     Atom.writable(
       (get) =>
         Option.map(get(bots), (list) => {
@@ -106,13 +107,17 @@ export function makeSelection(
 
           return shown;
         }),
-      (ctx, bot: BotId) => {
-        const current = ctx.get(selection);
+      (ctx, choice: Choice) => {
+        const next = Option.flatMap(ctx.get(selection), (current) =>
+          choose(current, choice, ctx.get(memory), browser.newConversation()),
+        );
 
-        if (Option.isNone(current) || current.value.bot === bot) return;
+        if (Option.isNone(next)) return;
 
-        const picked = pickBot(bot, ctx.get(memory), browser.newConversation());
-        ctx.set(location, { url: withSelection(ctx.get(location).url, picked), history: "push" });
+        ctx.set(location, {
+          url: withSelection(ctx.get(location).url, next.value),
+          history: "push",
+        });
       },
     ),
   );

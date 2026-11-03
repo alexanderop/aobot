@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 import { ModelStep } from "../../apps/server/src/features/agent/testing/model-script.ts";
 import { assert, browser, evaluate, waitFor } from "../browser.ts";
-import { answers, auditRows, script, send } from "../chat.ts";
+import { answers, auditRows, idle, script, send, turnEnded } from "../chat.ts";
 import { slowPageDelayMs } from "../slow-page.ts";
 import { attribute, type TempoSpan, traceSpans } from "../tempo.ts";
 
@@ -50,10 +50,6 @@ function showsPaused(): boolean {
   return browser("get", "count", ".pill__badge") === "1";
 }
 
-function idle(): boolean {
-  return browser("get", "count", '[aria-label="Stop"]') === "0";
-}
-
 /** The audit trail as `action · decision`, oldest first. */
 function trail(): ReadonlyArray<string> {
   return auditRows().map((row) => `${row.action} · ${row.decision}`);
@@ -82,7 +78,7 @@ export default async function scenario(baseUrl: string, grafanaUrl: string): Pro
   browser("wait", "--load", "networkidle");
   browser("set", "media", "dark", "reduced-motion");
 
-  await waitFor("the composer to take a message", 30_000, idle);
+  await turnEnded();
   send("Open the ten pages one by one.");
 
   await waitFor("the second page to be opening", 60_000, () => navigateCards() === 2);

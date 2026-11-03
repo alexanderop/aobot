@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 import { ModelStep } from "../../apps/server/src/features/agent/testing/model-script.ts";
 import { assert, browser, evaluate, waitFor } from "../browser.ts";
-import { answers, auditRows, modelRequests, script, send } from "../chat.ts";
+import { answers, auditRows, modelRequests, script, send, turnEnded } from "../chat.ts";
 import { panelState } from "../screen.ts";
 import { attribute, type TempoSpan, traceSpans } from "../tempo.ts";
 
@@ -122,11 +122,7 @@ export default async function scenario(baseUrl: string, grafanaUrl: string): Pro
     ModelStep.Say({ words: deletedAnswer.split(/(?= )/u) }),
   ]);
 
-  await waitFor(
-    "the composer to take a message",
-    30_000,
-    () => browser("get", "count", '[aria-label="Stop"]') === "0",
-  );
+  await turnEnded();
   send("Yes, delete it now.");
   await answerCard("Yes", 4);
   await waitFor(

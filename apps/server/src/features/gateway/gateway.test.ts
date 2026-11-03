@@ -350,12 +350,12 @@ allow:
       const forBob = shell({});
 
       yield* Gateway.use((gateway) => gateway.act(bot, makeNotes)).pipe(
-        Effect.provide(startGateway(forAlice.layer, onlyAlice, alice)),
+        Effect.provide(startGateway(forAlice.layer, onlyAlice, () => alice)),
       );
 
       const refused = yield* Gateway.use((gateway) =>
         Effect.flip(gateway.act(bot, makeNotes)),
-      ).pipe(Effect.provide(startGateway(forBob.layer, onlyAlice, bob)));
+      ).pipe(Effect.provide(startGateway(forBob.layer, onlyAlice, () => bob)));
 
       expect(refused.message).toContain("run did not run: no rule allows it");
       expect(forAlice.actions).toEqual([makeNotes]);
