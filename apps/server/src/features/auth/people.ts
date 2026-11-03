@@ -9,7 +9,7 @@ import { domainOf } from "./email.ts";
 import type { SignInSettings } from "./settings.ts";
 
 /** How long a session lasts from its sign-in, however much it is used. */
-const sessionLifetime = Duration.days(7);
+export const sessionLifetime = Duration.days(7);
 
 /** A verified address, and what else the provider said of the person behind it. */
 export interface VerifiedPerson {

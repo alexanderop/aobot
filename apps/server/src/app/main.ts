@@ -175,7 +175,7 @@ const server = Layer.unwrap(
 
     const healthCheck = HttpRouter.add("GET", "/healthz", HttpServerResponse.text("ok"));
 
-    const auth = authLayers(config.auth, join(config.webDistDir, "index.html"));
+    const auth = authLayers(config.auth, config.publicUrl, join(config.webDistDir, "index.html"));
 
     const identity = auth.identity.pipe(Layer.provide(database));
 

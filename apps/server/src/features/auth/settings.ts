@@ -5,7 +5,7 @@ import { reachOf } from "./addresses.ts";
 import { normalizeDomain, normalizeEmail } from "./email.ts";
 
 /** The company's OIDC provider, and this server as a client of it. */
-interface ProviderSettings {
+export interface ProviderSettings {
   /** The issuer as browsers and ID tokens spell it. */
   readonly issuer: URL;
   /**

@@ -11,7 +11,7 @@ import type { SignInSettings } from "./settings.ts";
 export const sessionCookie = "aobot_session";
 
 /** The session token `headers` carry, if any. */
-function sessionToken(headers: Headers.Headers): Option.Option<string> {
+export function sessionToken(headers: Headers.Headers): Option.Option<string> {
   return Option.fromUndefinedOr(Cookies.parseHeader(headers["cookie"] ?? "")[sessionCookie]);
 }
 
