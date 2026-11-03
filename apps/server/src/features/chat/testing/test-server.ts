@@ -8,9 +8,8 @@ import { testDatabase } from "./test-database.ts";
 
 /**
 What the chat needs beside its agent, as one server has it: the test Bots, every call signed in as the
-single user, and the lifecycle on
-`database`, a fresh one with the chat's tables unless two servers share one. The next reads of the pause
-state fail while `failures` is above zero.
+single user, and the lifecycle on `database`, a fresh one with the chat's tables unless two servers share
+one. The next reads of the pause state fail while `failures` is above zero.
 */
 export function testServer({
   database = testDatabase,

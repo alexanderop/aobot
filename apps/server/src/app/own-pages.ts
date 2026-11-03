@@ -15,10 +15,11 @@ function hostname(host: string): Option.Option<string> {
 
 /**
 Whether `request` came from a page this server served, or from no page at all. The host it was sent to
-must be this machine or `publicHost`, a bare host as `bareHost` writes it, whatever else it says: a browser sends no `Origin` with a same-origin
-`GET`, so a site that points its own name at this machine reads a file with nothing but `Host` naming it.
-A page's `Origin` must then name that same host. A browser sends no `Origin` with a link or an `<img>`
-another site points here, but it does send `Sec-Fetch-Site`, which must then not name another site.
+must be this machine or `publicHost`, a bare host as `bareHost` writes it, whatever else it says: a
+browser sends no `Origin` with a same-origin `GET`, so a site that points its own name at this machine
+reads a file with nothing but `Host` naming it. A page's `Origin` must then name that same host. A
+browser sends no `Origin` with a link or an `<img>` another site points here, but it does send
+`Sec-Fetch-Site`, which must then not name another site.
 */
 function fromOwnPage(request: HttpServerRequest.HttpServerRequest, publicHost: string): boolean {
   const site = Option.fromNullishOr(request.headers["sec-fetch-site"]);

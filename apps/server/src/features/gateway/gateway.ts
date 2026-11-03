@@ -157,12 +157,12 @@ export class Gateway extends Context.Service<
     Refuses the call when the turn it names no longer runs, then when the Bot it claims was not granted
     its tool, or is no Bot the server knows, before anything else the gateway does, then when it names no
     turn a person started. Every row and rule after that names the person the turn runs for. Then refuses
-    it while a person holds the computer. Otherwise resolves its ref against the latest snapshot, judges it by the
-    rules, records the call, forwards it to the computer, records what became of it, and answers what the
-    model reads. `request_secret` waits for the person's answer outside the door, at most
-    {@link secretWaitLimit}, before what they typed is forwarded. A call that could not be carried out is
-    a `ToolFailed` the model reads, never a dead turn. A call still running when its turn is stopped is
-    cut off there.
+    it while a person holds the computer. Otherwise resolves its ref against the latest snapshot, judges
+    it by the rules, records the call, forwards it to the computer, records what became of it, and
+    answers what the model reads. `request_secret` waits for the person's answer outside the door, at
+    most {@link secretWaitLimit}, before what they typed is forwarded. A call that could not be carried
+    out is a `ToolFailed` the model reads, never a dead turn. A call still running when its turn is
+    stopped is cut off there.
     */
     readonly act: (claim: Claim, request: BotRequest) => Effect.Effect<string, ToolFailed>;
   }
