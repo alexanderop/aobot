@@ -17,9 +17,9 @@ const settings = Config.all({
   port: Config.Port("PORT").pipe(Config.withDefault(3000)),
   // Every address by default, so the server is reachable from outside its container.
   host: Config.String("HOST").pipe(Config.withDefault("0.0.0.0")),
-  // The name people open the web app at when it is not this machine, such as `aobot.example.com`. Unset,
-  // only a page on `localhost`, `127.0.0.1` or `[::1]` may use the RPC socket.
-  publicHost: Config.option(Config.String("PUBLIC_HOST")),
+  // Where people open the web app, such as `https://aobot.example.com`: its pages may use the RPC socket
+  // beside this machine's own, and sign-in comes back to it. Unset, `http://localhost:<PORT>`.
+  publicUrl: Config.option(Config.URL("PUBLIC_URL")),
   singleUser: Config.Boolean("SINGLE_USER").pipe(Config.withDefault(false)),
   webDistDir: Config.String("WEB_DIST_DIR").pipe(Config.withDefault(builtWebApp)),
   databasePath: Config.String("DATABASE_PATH").pipe(Config.withDefault("data/aobot.db")),
@@ -45,6 +45,10 @@ const settings = Config.all({
 
 /** Every setting the server reads, from the environment through Effect `Config`. */
 export const serverConfig = settings.pipe(
+  Config.map(({ publicUrl, ...config }) => ({
+    ...config,
+    publicUrl: Option.getOrElse(publicUrl, () => new URL(`http://localhost:${config.port}`)),
+  })),
   Config.flatMap((config) =>
     Option.match(
       Option.orElse(sharedSubscriptionProblem(config.runtime, config.singleUser, config.host), () =>

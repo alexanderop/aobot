@@ -79,6 +79,16 @@ describe("serverConfig", () => {
     }),
   );
 
+  it.effect("is opened at localhost on its own port unless PUBLIC_URL says where", () =>
+    Effect.gen(function* () {
+      const local = yield* configFrom({ ...apiKey, PORT: "3100" });
+      const hosted = yield* configFrom({ ...apiKey, PUBLIC_URL: "https://aobot.example.com" });
+
+      expect(local.publicUrl.href).toBe("http://localhost:3100/");
+      expect(hosted.publicUrl.href).toBe("https://aobot.example.com/");
+    }),
+  );
+
   it.effect("runs acp without any MODEL_* setting", () =>
     Effect.gen(function* () {
       const config = yield* configFrom({

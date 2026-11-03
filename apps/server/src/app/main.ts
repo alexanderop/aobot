@@ -30,7 +30,9 @@ import {
 } from "../features/agent/public.ts";
 import { auditLogLayer, auditTrailLayer, migrateAudit } from "../features/audit/public.ts";
 import {
+  checkSingleUserAddress,
   identitySingleUser,
+  lookupLayer,
   sessionRoute,
   signedInGate,
   signedInRpc,
@@ -60,6 +62,12 @@ import { serverRpcs } from "./rpcs.ts";
 const server = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* serverConfig;
+
+    if (config.singleUser) {
+      yield* checkSingleUserAddress(config.publicUrl).pipe(Effect.provide(lookupLayer));
+    }
+
+    const publicHost = Option.some(config.publicUrl.hostname);
 
     // SQLite creates the file but not the folder around it.
     const databaseFolder = Layer.effectDiscard(
@@ -138,7 +146,7 @@ const server = Layer.unwrap(
     // Off because the handlers name their own spans and `Chat.turn` starts its own trace. The RPC span
     // around each call would only add a second trace of one span.
     const rpc = RpcServer.layer(serverRpcs, { disableTracing: true }).pipe(
-      Layer.provide(rpcSocket(config.publicHost)),
+      Layer.provide(rpcSocket(publicHost)),
       Layer.provide(RpcSerialization.layerJson),
       Layer.provide(signedInRpc),
       Layer.provide([
@@ -156,9 +164,9 @@ const server = Layer.unwrap(
       Layer.provide(database),
     );
 
-    const files = fileRoutes(config.publicHost).pipe(Layer.provide(gateway));
+    const files = fileRoutes(publicHost).pipe(Layer.provide(gateway));
 
-    const audit = auditRoutes(config.publicHost, config.grafanaUrl).pipe(
+    const audit = auditRoutes(publicHost, config.grafanaUrl).pipe(
       Layer.provide(auditTrailLayer),
       Layer.provide(database),
     );
