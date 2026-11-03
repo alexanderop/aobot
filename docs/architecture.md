@@ -900,22 +900,23 @@ class ChatClient extends AtomRpc.Service<ChatClient>()("ChatClient", { group: Ch
 const conversation = Atom.family((id: ConversationId) => /* fold ChatEvents into one ordered transcript and a status */)
 ```
 
-| Hook                          | Shaped like CopilotKit's             | What it gives a component                                                                                                                                                                    | From |
-| ----------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
-| `useConversation(id, bot)`    | `useAgent`                           | The conversation's own `bot`, `transcript` (messages and tool calls in order), `isRunning`, `usesComputer`, `unsent`, `send`, `stop`                                                         | E0-1 |
-| `useToolCallRenderer()`       | `useRenderTool`, `useRenderToolCall` | A registry from tool name to a component that draws one tool call in each of its states                                                                                                      | E1-1 |
-| `useLiveScreen()`             | (none)                               | The latest screen frame, none while the screen is blank                                                                                                                                      | E1-4 |
-| `useControl()`                | (none)                               | Who holds the computer every Bot shares, why the last take, click or hand back failed, `takeControl`, `handBack`, `click`                                                                    | E1-5 |
-| `useAttachments(id, send)`    | (none)                               | The files picked in the conversation's composer and how each upload went, `attach`, `dismiss`, and `send`, which names the files that arrived                                                | E1-6 |
-| `useBots()`                   | (none)                               | The Bots the server knows, as `bots.yaml` lists them, for the sidebar                                                                                                                        | E2-1 |
-| `useSelection()`              | (none)                               | The Bot and conversation the page has open, as the server confirmed it, and `choose` to open another Bot, a listed conversation or a new one                                                 | E2-1 |
-| `useConversationList()`       | (none)                               | The person's conversations with a message, the one written to last first, each with its Bot, a preview of its last message and whether it is unread                                          | E3-2 |
-| `useSecretRequest(call, bot)` | `useHumanInTheLoop`                  | What a `request_secret` card shows, with the request `Secret.pending` streams for the Bot, `supply`, which sends the typed secret over `Secret.answer` with that request's id, and `decline` | E2-3 |
-| `useApproval(id, turn)`       | `useHumanInTheLoop`, `useInterrupt`  | The approval card of the conversation: the question `Approval.pending` streams, the answer for the rest of its turn, and `choose`, which sends yes or no over `Approval.answer`              | E2-5 |
-| `usePause(bot)`               | (none)                               | Whether the Bot is paused, once the server said, whether a pause or a resume is on its way, why the last one failed, `pause` and `resume`                                                    | E2-7 |
-| `usePausedBots()`             | (none)                               | The Bots paused now, none until the server has said, for the sidebar's Paused labels                                                                                                         | E2-7 |
-| `useSession()`                | (none)                               | Who the page is open for, none until the server has said, read again every half minute and on focus                                                                                          | E3-1 |
-| `useAuditTrail()`             | (none)                               | The audit rows the URL's filters let through, newest first, whether older ones are left, why the last page failed, `filter`, `loadMore` and `reload`, which reads the trail again            | E2-4 |
+| Hook                             | Shaped like CopilotKit's             | What it gives a component                                                                                                                                                                    | From |
+| -------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| `useConversation(id, bot)`       | `useAgent`                           | The conversation's own `bot`, `transcript` (messages and tool calls in order), `isRunning`, `usesComputer`, `unsent`, `send`, `stop`                                                         | E0-1 |
+| `useToolCallRenderer()`          | `useRenderTool`, `useRenderToolCall` | A registry from tool name to a component that draws one tool call in each of its states                                                                                                      | E1-1 |
+| `useLiveScreen()`                | (none)                               | The latest screen frame, none while the screen is blank                                                                                                                                      | E1-4 |
+| `useControl()`                   | (none)                               | Who holds the computer every Bot shares, why the last take, click or hand back failed, `takeControl`, `handBack`, `click`                                                                    | E1-5 |
+| `useAttachments(id, send)`       | (none)                               | The files picked in the conversation's composer and how each upload went, `attach`, `dismiss`, and `send`, which names the files that arrived                                                | E1-6 |
+| `useBots()`                      | (none)                               | The Bots the server knows, as `bots.yaml` lists them, for the sidebar                                                                                                                        | E2-1 |
+| `useSelection()`                 | (none)                               | The Bot and conversation the page has open, as the server confirmed it, and `choose` to open another Bot, a listed conversation or a new one                                                 | E2-1 |
+| `useConversationList()`          | (none)                               | The person's conversations with a message, the one written to last first, each with its Bot, a preview of its last message and whether it is unread                                          | E3-2 |
+| `useReadWhileShown(id, running)` | (none)                               | Marks the conversation read with `Chat.read` while it is on screen: when it shows and each time a turn in it ends                                                                            | E3-2 |
+| `useSecretRequest(call, bot)`    | `useHumanInTheLoop`                  | What a `request_secret` card shows, with the request `Secret.pending` streams for the Bot, `supply`, which sends the typed secret over `Secret.answer` with that request's id, and `decline` | E2-3 |
+| `useApproval(id, turn)`          | `useHumanInTheLoop`, `useInterrupt`  | The approval card of the conversation: the question `Approval.pending` streams, the answer for the rest of its turn, and `choose`, which sends yes or no over `Approval.answer`              | E2-5 |
+| `usePause(bot)`                  | (none)                               | Whether the Bot is paused, once the server said, whether a pause or a resume is on its way, why the last one failed, `pause` and `resume`                                                    | E2-7 |
+| `usePausedBots()`                | (none)                               | The Bots paused now, none until the server has said, for the sidebar's Paused labels                                                                                                         | E2-7 |
+| `useSession()`                   | (none)                               | Who the page is open for, none until the server has said, read again every half minute and on focus                                                                                          | E3-1 |
+| `useAuditTrail()`                | (none)                               | The audit rows the URL's filters let through, newest first, whether older ones are left, why the last page failed, `filter`, `loadMore` and `reload`, which reads the trail again            | E2-4 |
 
 The page opens the Bot and the conversation the URL names as `?bot=<id>&c=<id>`, or the first Bot in
 `bots.yaml`; a `bot` that is no Bot the server knows, or no Bot id at all, opens the first Bot and drops
@@ -939,10 +940,10 @@ conversation. `Chat.open`, `Chat.send`, `Chat.stop` and `Chat.read` refuse anyon
 except on a server in single-user mode, which makes each the one person's at start-up. A conversation
 nobody has written to is free and opens empty. The page leaves a conversation that is not the
 person's for a new one with the same Bot and remembers that one instead, so an address someone else's
-browser remembered never shows their messages. A message the page sent there, as when someone else's first
-message got in before it, is taken back and offered again in the new conversation's composer. Continuing a conversation needs nothing more: every turn
-passes the stored messages to the runtime, which rebuilds the `effect/ai` chat from them, or, for `acp`,
-primes a fresh CLI session with them.
+browser remembered never shows their messages. A message the page sent there, as when someone else's
+first message got in before it, is taken back and offered again in the new conversation's composer.
+Continuing a conversation needs nothing more: every turn passes the stored messages to the runtime, which
+rebuilds the `effect/ai` chat from them, or, for `acp`, primes a fresh CLI session with them.
 
 `Chat.list` answers the caller's conversations that have a message, the one written to last first, each
 with its Bot, the first 120 characters of its last message and whether it is unread. A conversation of a
@@ -952,8 +953,7 @@ marks everything read, and the page calls it while it shows the conversation, wh
 a turn ends in it, so an answer the person watched arrive is never shown unread. The page asks for the
 list again when a turn ends and after a read.
 
-A conversation belongs to the Bot of its first message. `Chat.open` and `Chat.send` name the Bot the page
-picked; the server refuses another Bot with `ConversationOfAnotherBot`, naming the conversation's own,
+`Chat.open` and `Chat.send` name the Bot the page picked; the server refuses another Bot with `ConversationOfAnotherBot`, naming the conversation's own,
 and a Bot the file does not name with `UnknownBot`. The page follows the first to the conversation's Bot;
 a message `Chat.send` was refused for goes back into the composer, where it stays through the follow.
 The second means the page's Bot list is out of date: the page asks for it again, once per answer, and

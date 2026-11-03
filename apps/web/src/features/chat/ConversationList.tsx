@@ -70,7 +70,7 @@ export function ConversationList(props: {
                         {conversation.preview}
                       </span>
                     </span>
-                    {conversation.unread ? (
+                    {conversation.unread && conversation.conversationId !== props.selected ? (
                       <span className="conversation-list__unread" aria-label="Unread" />
                     ) : null}
                   </a>

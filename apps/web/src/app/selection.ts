@@ -97,8 +97,8 @@ export function botLink(url: URL, bot: BotId): URL {
 /**
 What the page shows once the server answered how `requested` opened: a conversation of another Bot with
 its own Bot, one that is not the person's as the new conversation the answer names, with the same Bot,
-anything else as it was asked for. A Bot the server does not know stays selected, with its refusal on screen, until the Bot list the
-refusal asks for again says which Bots there are.
+anything else as it was asked for. A Bot the server does not know stays selected, with its refusal on
+screen, until the Bot list the refusal asks for again says which Bots there are.
 */
 export function follow(requested: Selection, outcome: Option.Option<OpenOutcome>): Selection {
   return Option.match(outcome, {

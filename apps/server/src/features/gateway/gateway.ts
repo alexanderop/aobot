@@ -1281,10 +1281,10 @@ export const gatewayLayer = Layer.effectContext(
     is refused before anything is judged. Its ref is resolved, checked to name a text field and judged
     through the door like any action, and its `secret.requested` row written; only then is it shown to
     the person, as its field on the host of its page, and it waits for their answer outside the door, so
-    a person can take the computer meanwhile. Its row's outcome says how the person answered, and what they typed is forwarded
-    as `type_secret`, through the door again. Under an ask rule, the secret card is the person's question
-    in the conversation of `turn`: it holds that conversation as an approval card would, and their no to
-    it, or no answer, is a no to that rule for the rest of the run.
+    a person can take the computer meanwhile. Its row's outcome says how the person answered, and what
+    they typed is forwarded as `type_secret`, through the door again. Under an ask rule, the secret card
+    is the person's question in the conversation of `turn`: it holds that conversation as an approval card
+    would, and their no to it, or no answer, is a no to that rule for the rest of the run.
     */
     const askForSecret = (bot: BotId, turn: TurnRef, ref: string, field: string) =>
       Effect.scoped(
