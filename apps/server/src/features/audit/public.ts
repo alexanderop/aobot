@@ -5,6 +5,7 @@ export {
   type AuditWriteFailed,
   type Decision,
   type Outcome,
+  singleUser,
 } from "./audit-log.ts";
 
 export { AuditTrail, auditTrailLayer } from "./audit-trail.ts";

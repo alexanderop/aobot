@@ -1,14 +1,17 @@
 import type { AuditAction } from "@aobot/domain";
 import { Effect, Match, Option, type Schema } from "effect";
-import { AuditLog, type AuditRowId, type Decision, type Outcome } from "../audit/public.ts";
+import {
+  AuditLog,
+  type AuditRowId,
+  type Decision,
+  type Outcome,
+  singleUser,
+} from "../audit/public.ts";
 import type { ComputerActFailed, ComputerLost, ComputerUnavailable } from "../computers/public.ts";
 import { capText } from "../../shared/tool-result.ts";
 
 /** The decision of a row that refuses an action: `deny`, or `hand_off` for one that is always the person's. */
 export type RefusalDecision = Extract<Decision, "deny" | "hand_off">;
-
-/** The one person every action is on the authority of, until E3 brings sign-in. */
-export const singleUser = "single-user";
 
 /** The longest computer message kept in an audit row or shown to a person. */
 export const computerMessageLimit = 500;

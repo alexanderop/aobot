@@ -35,6 +35,7 @@ import {
   type AuditWriteFailed,
   type Decision,
   type Outcome,
+  singleUser,
 } from "../audit/public.ts";
 import { Bots, isGranted } from "../bots/public.ts";
 import { type Allowed, Policy, Refused, Verdict } from "../policy/public.ts";
@@ -73,7 +74,6 @@ import {
   failureOutcome,
   personAudit,
   type RefusalDecision,
-  singleUser,
 } from "./person-audit.ts";
 import { fileTarget } from "./file-target.ts";
 import {

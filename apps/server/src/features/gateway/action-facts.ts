@@ -1,7 +1,7 @@
 import { type BotId, canonicalHost, type FileAction, type RefTarget } from "@aobot/domain";
+import { singleUser } from "../audit/public.ts";
 import { blankFacts, type Facts } from "../policy/public.ts";
 import { fileTarget } from "./file-target.ts";
-import { singleUser } from "./person-audit.ts";
 import { ToolAction } from "./tool-action.ts";
 
 /**
