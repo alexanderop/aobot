@@ -72,11 +72,6 @@ const IdToken = Schema.Struct({
 
 const decodeIdToken = Schema.decodeUnknownEffect(IdToken);
 
-/** Whether `host` is this machine, the one place a provider may be reached over plain HTTP. */
-function isLoopbackName(host: string): boolean {
-  return ["localhost", "127.0.0.1", "[::1]"].includes(host);
-}
-
 /**
 {@link Provider} on `settings`, sending the browser back to `redirectUri`. The provider's metadata is read
 on first use and kept once read, so the server starts before the provider does. With an internal issuer
@@ -106,10 +101,8 @@ export const providerLayer = (settings: ProviderSettings, redirectUri: URL) =>
             undefined,
             {
               [client.customFetch]: rerouted,
-              execute:
-                settings.issuer.protocol === "http:" && isLoopbackName(settings.issuer.hostname)
-                  ? [client.allowInsecureRequests]
-                  : [],
+              // The settings refuse plain HTTP anywhere but on this machine.
+              execute: settings.issuer.protocol === "http:" ? [client.allowInsecureRequests] : [],
             },
           ),
         catch: (error) =>

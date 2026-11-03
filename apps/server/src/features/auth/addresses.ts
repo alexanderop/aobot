@@ -1,48 +1,6 @@
 import { lookup } from "node:dns/promises";
-import { BlockList, isIPv4 } from "node:net";
 import { Context, Effect, Layer, Schema } from "effect";
-
-/** Who can reach an address: this machine only, the networks it is on, or anyone. */
-export type Reach = "loopback" | "private" | "public";
-
-/** The subnets `ranges` names, each as its network address and prefix length. */
-function subnets(ranges: ReadonlyArray<readonly [string, number]>): BlockList {
-  const list = new BlockList();
-
-  for (const [network, prefix] of ranges) {
-    list.addSubnet(network, prefix, network.includes(":") ? "ipv6" : "ipv4");
-  }
-
-  return list;
-}
-
-const loopback = subnets([
-  ["127.0.0.0", 8],
-  ["::1", 128],
-]);
-
-const privateRanges = subnets([
-  ["10.0.0.0", 8],
-  ["172.16.0.0", 12],
-  ["192.168.0.0", 16],
-  ["100.64.0.0", 10],
-  ["169.254.0.0", 16],
-  ["fc00::", 7],
-  ["fe80::", 10],
-]);
-
-/**
-Who can reach the IP address `address`. An IPv4 address written as IPv6 counts as itself; anything that is
-neither loopback nor private, the unspecified address included, is public.
-*/
-export function reachOf(address: string): Reach {
-  const unwrapped = address.replace(/^::ffff:/iu, "");
-  const family = isIPv4(unwrapped) ? "ipv4" : "ipv6";
-
-  if (loopback.check(unwrapped, family)) return "loopback";
-
-  return privateRanges.check(unwrapped, family) ? "private" : "public";
-}
+import { bareHost, reachOf } from "../../shared/reach.ts";
 
 /** A name did not resolve. */
 export class LookupFailed extends Schema.TaggedError<LookupFailed>()("LookupFailed", {
@@ -114,11 +72,7 @@ export const checkSingleUserAddress = Effect.fn("Auth.checkSingleUserAddress")(f
 
   const isPrivate = (address: string) => reachOf(address) === "private";
 
-  const opened = yield* resolve(
-    publicUrl.hostname.replace(/^\[(.*)\]$/u, "$1"),
-    publicUrl.origin,
-    "Turn sign-in on instead.",
-  );
+  const opened = yield* resolve(bareHost(publicUrl), publicUrl.origin, "Turn sign-in on instead.");
 
   const listening = yield* resolve(host, `HOST=${host}`, keepHere);
 

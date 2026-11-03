@@ -1,7 +1,6 @@
 import type { Email } from "@aobot/domain";
-import { isIP } from "node:net";
 import { Array, Config, ConfigProvider, Data, Option, type Redacted, Result } from "effect";
-import { reachOf } from "./addresses.ts";
+import { bareHost, onThisMachine } from "../../shared/reach.ts";
 import { normalizeDomain, normalizeEmail } from "./email.ts";
 
 /** The company's OIDC provider, and this server as a client of it. */
@@ -73,11 +72,12 @@ function listConfig<A>(name: string, parse: (entry: string) => Option.Option<A>,
   );
 }
 
-/** Whether `host`, a URL's host name, is this machine. */
-function onThisMachine(host: string): boolean {
-  const address = host.replace(/^\[(.*)\]$/u, "$1");
-
-  return address === "localhost" || (isIP(address) !== 0 && reachOf(address) === "loopback");
+/**
+Whether what this server sends to `url`, tokens and the client secret among it, can be read and forged on
+the way: over plain HTTP, anywhere but on this machine.
+*/
+function readableOnTheWay(url: URL): boolean {
+  return url.protocol !== "https:" && !onThisMachine(bareHost(url));
 }
 
 const providerConfig = Config.all({
@@ -86,14 +86,28 @@ const providerConfig = Config.all({
   clientId: Config.String("OIDC_CLIENT_ID"),
   clientSecret: Config.Redacted("OIDC_CLIENT_SECRET"),
 }).pipe(
-  // Tokens fetched over plain HTTP can be read and forged on the way, except on this machine.
-  Config.flatMap((provider) =>
-    provider.issuer.protocol === "https:" || onThisMachine(provider.issuer.hostname)
-      ? Config.succeed(provider)
-      : refuse(
-          `OIDC_ISSUER must use https unless it is on this machine, but is ${provider.issuer.href}.`,
+  Config.flatMap((provider) => {
+    if (readableOnTheWay(provider.issuer)) {
+      return refuse(
+        `OIDC_ISSUER must use https unless it is on this machine, but is ${provider.issuer.href}.`,
+      );
+    }
+
+    // The internal address reaches the same issuer, so it may be plain HTTP where the issuer is: on this
+    // machine, as Compose's Dex is to the browser, reached at its service name inside.
+    const internal = Option.filter(
+      provider.internalIssuer,
+      (url) => readableOnTheWay(url) && provider.issuer.protocol === "https:",
+    );
+
+    return Option.match(internal, {
+      onNone: () => Config.succeed(provider),
+      onSome: (url) =>
+        refuse(
+          `OIDC_ISSUER_INTERNAL_URL must use https unless it is on this machine or OIDC_ISSUER is plain HTTP on this machine, but is ${url.href}.`,
         ),
-  ),
+    });
+  }),
 );
 
 const signInConfig = Config.all({

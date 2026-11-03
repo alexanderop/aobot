@@ -367,7 +367,9 @@ loopback `HOST`.
 `mallory@other.com`, password `password`, and only `example.com` allowed, on the default network only, so a
 Bot's computer cannot reach it. The browser reaches Dex at `localhost:5556` and the server at `dex:5556`:
 `OIDC_ISSUER_INTERNAL_URL` sends the server's requests to the issuer there, while tokens are still checked
-against `OIDC_ISSUER`.
+against `OIDC_ISSUER`. Both must use https unless they are on this machine, one rule in `settings.ts`
+read on `shared/reach.ts`'s `onThisMachine`; the internal address may be plain HTTP also when the issuer
+is, which the issuer may only be on this machine, as Dex is here.
 
 ## Reading the audit trail
 

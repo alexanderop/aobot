@@ -55,6 +55,39 @@ describe("authConfig", () => {
     }),
   );
 
+  it.effect("counts any loopback address as this machine", () =>
+    Effect.gen(function* () {
+      for (const issuer of ["http://127.0.0.2:5556/dex", "http://[::1]:5556/dex"]) {
+        expect((yield* authFrom({ ...signIn, OIDC_ISSUER: issuer }))._tag).toBe("SignIn");
+      }
+    }),
+  );
+
+  it.effect(
+    "refuses a plain-HTTP internal address of an https provider unless it is on this machine",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* refusalOf({ ...signIn, OIDC_ISSUER_INTERNAL_URL: "http://login.internal:5556" }),
+        ).toContain("OIDC_ISSUER_INTERNAL_URL must use https");
+        expect(
+          (yield* authFrom({ ...signIn, OIDC_ISSUER_INTERNAL_URL: "http://127.0.0.1:5556" }))._tag,
+        ).toBe("SignIn");
+      }),
+  );
+
+  it.effect("lets a plain-HTTP provider on this machine be reached inside Compose", () =>
+    Effect.gen(function* () {
+      const compose = {
+        ...signIn,
+        OIDC_ISSUER: "http://localhost:5556/dex",
+        OIDC_ISSUER_INTERNAL_URL: "http://dex:5556/dex",
+      };
+
+      expect((yield* authFrom(compose))._tag).toBe("SignIn");
+    }),
+  );
+
   it.effect(
     "reads domains and admins as sign-in compares them, and refuses one it cannot read",
     () =>
