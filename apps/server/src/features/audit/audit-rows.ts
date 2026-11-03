@@ -6,9 +6,11 @@ import { AuditLog, type AuditRowId, type Decision, type Outcome, singleUser } fr
 export type RefusalDecision = Extract<Decision, "deny" | "hand_off">;
 
 /**
-The rows written for `initiatorKind`, each in the trace that wrote it. Each is on the authority of the one
-person using this server: no sign-in exists yet, so it is `single-user` until E3 brings people, and an
-`acp` turn only runs in single-user mode, so even what a Bot asked for was that person's.
+The rows written for `initiatorKind`, each in the trace that wrote it, with the one person using this
+server as their actor: no sign-in exists yet, so it is `single-user` until E3 brings people. A `person`
+row is on that person's authority, and an `acp` turn only runs in single-user mode, so even what a Bot
+asked for was theirs. A `deployment` row is the server acting on its own, such as the pause check
+stopping a turn.
 */
 export const auditRows = (initiatorKind: InitiatorKind) =>
   Effect.gen(function* () {
