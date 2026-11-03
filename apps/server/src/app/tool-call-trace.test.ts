@@ -21,6 +21,8 @@ import {
   migrateGateway,
 } from "../features/gateway/public.ts";
 import { spanAttributesRedacted } from "../shared/span-redaction.ts";
+import { singleUser } from "../shared/actor.ts";
+import { signedInAs } from "../shared/testing/signed-in.ts";
 
 /**
 The `api` runtime wired as `main.ts` wires it, with only the model and the computer faked: a tool call
@@ -120,6 +122,8 @@ const database = Layer.effectDiscard(
 
 const lifecycle = lifecycleLayer.pipe(Layer.provide(auditLogLayer));
 
+const signedIn = signedInAs(singleUser);
+
 describe("a tool call in an api turn", () => {
   it.effect(
     "runs Gateway.act inside Chat.turn and hands the model the result marked untrusted",
@@ -168,7 +172,7 @@ describe("a tool call in an api turn", () => {
         expect(toolResults).toContain("Example Domain");
       }).pipe(
         Effect.provide(chatLayer.pipe(Layer.provide([agent, testBots, lifecycle]))),
-        Effect.provide(database),
+        Effect.provide([database, signedIn]),
         Effect.provide(recorder.layer),
       );
     },
@@ -217,7 +221,7 @@ describe("a tool call in an api turn", () => {
             controlHandlers.pipe(Layer.provide(gateway)),
           ),
         ),
-        Effect.provide(database),
+        Effect.provide([database, signedIn]),
       );
     },
   );
@@ -283,7 +287,7 @@ describe("a tool call in an api turn", () => {
       expect(JSON.stringify(rows)).not.toContain(typed);
     }).pipe(
       Effect.provide(chatLayer.pipe(Layer.provide([agent, testBots, lifecycle]))),
-      Effect.provide(database),
+      Effect.provide([database, signedIn]),
       Effect.provide(spanAttributesRedacted.pipe(Layer.provide(recorder.layer))),
     );
   });
@@ -347,7 +351,7 @@ describe("a tool call in an api turn", () => {
         );
       }).pipe(
         Effect.provide(chatLayer.pipe(Layer.provide([agent, testBots, lifecycle]))),
-        Effect.provide(database),
+        Effect.provide([database, signedIn]),
       );
     },
   );

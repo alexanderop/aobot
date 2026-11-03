@@ -7,6 +7,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 import { Effect, Exit, Layer, Option, Scope, Stream } from "effect";
 import { HttpRouter } from "effect/http";
 import { RpcSerialization, RpcServer } from "effect/rpc";
+import { singleUser } from "../shared/actor.ts";
+import { signedInAs } from "../shared/testing/signed-in.ts";
 import { rpcSocket } from "./rpc-socket.ts";
 
 const handlers = ControlRpcs.toLayer(
@@ -27,7 +29,7 @@ beforeAll(async () => {
     RpcServer.layer(ControlRpcs).pipe(
       Layer.provide(rpcSocket(Option.some("aobot.example.com"))),
       Layer.provide(RpcSerialization.layerJson),
-      Layer.provide(handlers),
+      Layer.provide([handlers, signedInAs(singleUser)]),
     ),
     { disableLogger: true, disableListenLog: true },
   ).pipe(Layer.provide(NodeHttpServer.layer(() => http, { port: 0, host: "127.0.0.1" })));

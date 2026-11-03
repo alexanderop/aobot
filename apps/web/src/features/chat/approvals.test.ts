@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import { ApprovalClient } from "./approval-client.ts";
 import { approvalPrompt, ApprovalReply } from "./approval-prompt.ts";
 import { makeApprovals } from "./approvals.ts";
+import { signedIn } from "../../shared/testing/signed-in.ts";
 
 type Answered = Rpc.Payload<Rpc.ExtractTag<RpcGroup.Rpcs<typeof ApprovalRpcs>, "Approval.answer">>;
 
@@ -29,6 +30,7 @@ function serverAnswering(
   return Atom.runtime(
     Layer.effect(ApprovalClient, RpcTest.makeClient(ApprovalRpcs, { flatten: true })).pipe(
       Layer.provide(handlers),
+      Layer.provide(signedIn),
     ),
   );
 }

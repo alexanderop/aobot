@@ -93,7 +93,7 @@ describe("Chat tracing", () => {
         expect.arrayContaining(["Chat.turn", "AgentRuntime.run", "LanguageModel.streamText"]),
       ]);
     }).pipe(
-      Effect.provide(chatLayer.pipe(Layer.provide(agent), Layer.provide(testServer()))),
+      Effect.provide(chatLayer.pipe(Layer.provide(agent), Layer.provideMerge(testServer()))),
       Effect.provide(recorder.layer),
     );
   });

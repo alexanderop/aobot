@@ -1,6 +1,7 @@
 import { Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/rpc";
 import { BotId } from "./ids.ts";
+import { SignedIn } from "./people.ts";
 
 /**
 The tools a Bot can be offered, by the name the model calls them. A grant in `bots.yaml` names some of
@@ -44,4 +45,4 @@ export class UnknownBot extends Schema.TaggedError<UnknownBot>()("UnknownBot", {
 /** The Bots the server knows, in the order `bots.yaml` lists them, so the first is the page's default. */
 export class BotRpcs extends RpcGroup.make(
   Rpc.make("Bots.list", { success: Schema.NonEmptyArray(BotSummary) }),
-) {}
+).middleware(SignedIn) {}

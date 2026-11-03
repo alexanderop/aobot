@@ -37,7 +37,6 @@ import {
   type Decision,
   type Outcome,
   type RefusalDecision,
-  singleUser,
 } from "../audit/public.ts";
 import { Bots, isGranted } from "../bots/public.ts";
 import { LiveTurns } from "../lifecycle/public.ts";
@@ -55,6 +54,7 @@ import {
   type ToolTimedOut,
   toolResult,
 } from "../../shared/tool-result.ts";
+import { actorId, CurrentActor, deployment } from "../../shared/actor.ts";
 import { redact, redactCommand, redactUrl } from "../../shared/redact.ts";
 import { actionFacts, hostOf } from "./action-facts.ts";
 import {
@@ -628,7 +628,7 @@ export const gatewayLayer = Layer.effectContext(
       audit.record({
         traceId: Option.none(),
         initiatorKind: "deployment",
-        actorId: singleUser,
+        actorId: actorId(deployment),
         decision,
         action,
         detail,
@@ -829,24 +829,27 @@ export const gatewayLayer = Layer.effectContext(
 
       const refused = (verdict: Refused) => Effect.fail(new RuleRefused({ action, verdict }));
 
-      return Verdict.match(policy.judge(actionFacts(bot, action, host)), {
-        Allowed: (allowed) =>
-          failedRules(allowed.broken).pipe(
-            Effect.andThen(
-              Option.match(
-                Option.filter(allowed.ask, (ask) => ask.failed),
-                {
-                  onNone: () => Effect.void,
-                  onSome: (ask) => failed("ask", ask.rule),
-                },
+      return Effect.flatMap(CurrentActor, (actor) =>
+        Verdict.match(policy.judge(actionFacts(bot, action, host, actor)), {
+          Allowed: (allowed) =>
+            failedRules(allowed.broken).pipe(
+              Effect.andThen(
+                Option.match(
+                  Option.filter(allowed.ask, (ask) => ask.failed),
+                  {
+                    onNone: () => Effect.void,
+                    onSome: (ask) => failed("ask", ask.rule),
+                  },
+                ),
               ),
+              Effect.as(allowed),
             ),
-            Effect.as(allowed),
-          ),
-        Denied: refused,
-        DenyRuleFailed: (failure) => Effect.andThen(failed("deny", failure.rule), refused(failure)),
-        NoneAllowed: (none) => Effect.andThen(failedRules(none.broken), refused(none)),
-      });
+          Denied: refused,
+          DenyRuleFailed: (failure) =>
+            Effect.andThen(failed("deny", failure.rule), refused(failure)),
+          NoneAllowed: (none) => Effect.andThen(failedRules(none.broken), refused(none)),
+        }),
+      );
     };
 
     /** Writes a refusal's row, and only logs it when it cannot be written: the refusal stands. */

@@ -2,6 +2,7 @@ import { Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/rpc";
 import { ToolName } from "./bot.ts";
 import { ConversationId } from "./ids.ts";
+import { SignedIn } from "./people.ts";
 
 /** How a person answers an action a rule asks them about. */
 export const ApprovalAnswer = Schema.Literals(["yes", "no"]);
@@ -75,4 +76,4 @@ export class ApprovalRpcs extends RpcGroup.make(
     payload: { conversation: ConversationId, approval: ApprovalId, answer: ApprovalAnswer },
     error: NoApprovalWaiting,
   }),
-) {}
+).middleware(SignedIn) {}

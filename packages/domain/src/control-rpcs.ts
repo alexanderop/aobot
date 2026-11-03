@@ -8,6 +8,7 @@ import {
   NotInControl,
   ScreenPoint,
 } from "./control.ts";
+import { SignedIn } from "./people.ts";
 
 /**
 Taking the mouse from the Bots. `Control.watch` streams who holds the computer, the current holder first,
@@ -27,4 +28,4 @@ export class ControlRpcs extends RpcGroup.make(
     payload: ScreenPoint,
     error: Schema.Union([NotInControl, InputFailed]),
   }),
-) {}
+).middleware(SignedIn) {}

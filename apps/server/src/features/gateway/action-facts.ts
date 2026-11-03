@@ -1,5 +1,5 @@
 import { type BotId, canonicalHost, type FileAction, type RefTarget } from "@aobot/domain";
-import { singleUser } from "../audit/public.ts";
+import { type Actor, actorId } from "../../shared/actor.ts";
 import { blankFacts, type Facts } from "../policy/public.ts";
 import { fileTarget } from "./file-target.ts";
 import { ToolAction } from "./tool-action.ts";
@@ -38,15 +38,15 @@ const ownFacts = ToolAction.match({
 });
 
 /**
-What the rules see of `action`, which `bot` asked for on a page at `host`: its own facts, and `""` for every
-fact it has none of.
+What the rules see of `action`, which `bot` asked for on a page at `host` on `actor`'s authority: its own
+facts, and `""` for every fact it has none of.
 */
-export function actionFacts(bot: BotId, action: ToolAction, host: string): Facts {
+export function actionFacts(bot: BotId, action: ToolAction, host: string, actor: Actor): Facts {
   return {
     ...blankFacts,
     tool: { name: action.action },
     bot: { id: bot },
-    actor: { id: singleUser },
+    actor: { id: actorId(actor) },
     computer: { kind: "cloud" },
     page: { host },
     ...ownFacts(action),

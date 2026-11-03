@@ -4,6 +4,7 @@ import { ChatEvent } from "./chat-event.ts";
 import { BotSummary, UnknownBot } from "./bot.ts";
 import { BotId, ConversationId, MessageId } from "./ids.ts";
 import { BotPaused, PauseUnknown } from "./pause-rpcs.ts";
+import { SignedIn } from "./people.ts";
 
 /** One stored message. A Bot message is stored once its run ends, with the text it got to. */
 export const Message = Schema.Struct({
@@ -99,4 +100,4 @@ export class ChatRpcs extends RpcGroup.make(
     stream: true,
   }),
   Rpc.make("Chat.stop", { payload: ConversationRef }),
-) {}
+).middleware(SignedIn) {}

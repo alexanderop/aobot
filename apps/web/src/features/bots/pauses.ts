@@ -1,4 +1,10 @@
-import type { BotId, PauseNotChanged, UnknownBot } from "@aobot/domain";
+import {
+  type BotId,
+  type PauseNotChanged,
+  type SignedOut,
+  signedOutWords,
+  type UnknownBot,
+} from "@aobot/domain";
 import { Effect, Match, Option, Schedule, Stream } from "effect";
 import { Atom } from "effect/reactivity";
 import type { RpcClientError } from "effect/rpc";
@@ -15,11 +21,12 @@ const notStored: Readonly<Record<PauseChange, string>> = {
 
 /** Why a pause or a resume did not happen, as the server or the connection said. */
 const whyNotChanged = Match.typeTags<
-  PauseNotChanged | UnknownBot | RpcClientError.RpcClientError,
+  PauseNotChanged | UnknownBot | SignedOut | RpcClientError.RpcClientError,
   string
 >()({
   PauseNotChanged: ({ change }) => notStored[change],
   UnknownBot: () => "The server knows no such Bot.",
+  SignedOut: () => signedOutWords,
   RpcClientError: () => "Cannot reach the server.",
 });
 

@@ -1,14 +1,6 @@
 import { createServer } from "node:http";
 import { isIPv6 } from "node:net";
-import {
-  ApprovalRpcs,
-  BotRpcs,
-  ChatRpcs,
-  ControlRpcs,
-  PauseRpcs,
-  ScreenRpcs,
-  SecretRpcs,
-} from "@aobot/domain";
+import { join } from "node:path";
 import {
   NodeChildProcessSpawner,
   NodeFileSystem,
@@ -19,7 +11,13 @@ import {
 } from "@effect/platform-node";
 import { SqliteClient } from "@effect/sql-sqlite-node";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
-import { FetchHttpClient, HttpMiddleware, HttpRouter, HttpStaticServer } from "effect/http";
+import {
+  FetchHttpClient,
+  HttpMiddleware,
+  HttpRouter,
+  HttpServerResponse,
+  HttpStaticServer,
+} from "effect/http";
 import { Otlp } from "effect/observability";
 import { RpcSerialization, RpcServer } from "effect/rpc";
 import {
@@ -31,6 +29,12 @@ import {
   layerApi,
 } from "../features/agent/public.ts";
 import { auditLogLayer, auditTrailLayer, migrateAudit } from "../features/audit/public.ts";
+import {
+  identitySingleUser,
+  sessionRoute,
+  signedInGate,
+  signedInRpc,
+} from "../features/auth/public.ts";
 import { botHandlers, botsFileLayer, botToolkit } from "../features/bots/public.ts";
 import { chatLayer, migrateChat } from "../features/chat/public.ts";
 import { lifecycleLayer, migrateLifecycle, pauseHandlers } from "../features/lifecycle/public.ts";
@@ -51,6 +55,7 @@ import { auditRoutes } from "./audit-routes.ts";
 import { serverConfig } from "./config.ts";
 import { fileRoutes } from "./file-routes.ts";
 import { rpcSocket } from "./rpc-socket.ts";
+import { serverRpcs } from "./rpcs.ts";
 
 const server = Layer.unwrap(
   Effect.gen(function* () {
@@ -132,12 +137,10 @@ const server = Layer.unwrap(
 
     // Off because the handlers name their own spans and `Chat.turn` starts its own trace. The RPC span
     // around each call would only add a second trace of one span.
-    const rpc = RpcServer.layer(
-      ChatRpcs.merge(BotRpcs, ScreenRpcs, ControlRpcs, SecretRpcs, ApprovalRpcs, PauseRpcs),
-      { disableTracing: true },
-    ).pipe(
+    const rpc = RpcServer.layer(serverRpcs, { disableTracing: true }).pipe(
       Layer.provide(rpcSocket(config.publicHost)),
       Layer.provide(RpcSerialization.layerJson),
+      Layer.provide(signedInRpc),
       Layer.provide([
         chatLayer,
         botHandlers,
@@ -162,6 +165,13 @@ const server = Layer.unwrap(
 
     const webApp = HttpStaticServer.layer({ root: config.webDistDir, spa: true });
 
+    const healthCheck = HttpRouter.add("GET", "/healthz", HttpServerResponse.text("ok"));
+
+    const signedIn = Layer.mergeAll(
+      signedInGate(join(config.webDistDir, "index.html")),
+      sessionRoute,
+    );
+
     const listener = NodeHttpServer.layer(createServer, { port: config.port, host: config.host });
 
     const telemetry = Option.match(config.otlpEndpoint, {
@@ -177,7 +187,10 @@ const server = Layer.unwrap(
     // two seconds would bury the turns.
     const untracedHttp = Layer.succeed(HttpMiddleware.TracerDisabledWhen, () => true);
 
-    return HttpRouter.serve(Layer.mergeAll(rpc, files, audit, webApp, runtime.routes)).pipe(
+    return HttpRouter.serve(
+      Layer.mergeAll(rpc, files, audit, webApp, healthCheck, signedIn, runtime.routes),
+    ).pipe(
+      Layer.provide(identitySingleUser),
       Layer.merge(runtime.beside),
       Layer.provide(listener),
       Layer.provide([spanAttributesRedacted.pipe(Layer.provide(telemetry)), untracedHttp]),

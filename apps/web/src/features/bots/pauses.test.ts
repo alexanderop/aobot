@@ -5,6 +5,7 @@ import { RpcTest } from "effect/rpc";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { PauseClient } from "./pause-client.ts";
 import { makePauses } from "./pauses.ts";
+import { signedIn } from "../../shared/testing/signed-in.ts";
 
 const chief = BotId.make("chief");
 
@@ -31,6 +32,7 @@ function pauseServer(stuck: ReadonlyArray<BotId>) {
   return Atom.runtime(
     Layer.effect(PauseClient, RpcTest.makeClient(PauseRpcs, { flatten: true })).pipe(
       Layer.provide(handlers),
+      Layer.provide(signedIn),
     ),
   );
 }

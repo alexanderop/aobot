@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import { SecretClient } from "./secret-client.ts";
 import { SecretReply, type SentAnswer } from "./secret-entry.ts";
 import { makeSecrets } from "./secrets.ts";
+import { signedIn } from "../../shared/testing/signed-in.ts";
 
 /** A secret client whose server shows `pending` and does `answer` with each answer it receives. */
 function serverAnswering(
@@ -28,6 +29,7 @@ function serverAnswering(
   return Atom.runtime(
     Layer.effect(SecretClient, RpcTest.makeClient(SecretRpcs, { flatten: true })).pipe(
       Layer.provide(handlers),
+      Layer.provide(signedIn),
     ),
   );
 }

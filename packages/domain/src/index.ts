@@ -41,6 +41,17 @@ export { BotRpcs, BotSummary, ToolName, UnknownBot } from "./bot.ts";
 
 export { BotPaused, PauseNotChanged, PauseRpcs, PauseUnknown } from "./pause-rpcs.ts";
 
+export {
+  Email,
+  Person,
+  SessionState,
+  SignedIn,
+  SignedOut,
+  signedOutWords,
+  SignInRefusalCode,
+  signInRefusalWords,
+} from "./people.ts";
+
 export { BotId, ConversationId, MessageId, RunId, ToolCallId } from "./ids.ts";
 
 export {

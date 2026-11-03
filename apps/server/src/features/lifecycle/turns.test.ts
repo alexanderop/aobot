@@ -12,6 +12,8 @@ import { PauseStore, pauseStoreLayer } from "./pause-store.ts";
 import { pauseHandlers } from "./rpcs.ts";
 import { testLifecycle } from "./testing/test-lifecycle.ts";
 import { LiveTurns, Turns, TurnStopped, turnsLayer } from "./turns.ts";
+import { singleUser } from "../../shared/actor.ts";
+import { signedInAs } from "../../shared/testing/signed-in.ts";
 
 const first = ConversationId.make("conversation-1");
 
@@ -360,6 +362,9 @@ describe("Pause RPCs", () => {
         expect(yield* client["Pause.pause"]({ botId: unknown }).pipe(Effect.flip)).toEqual(
           new UnknownBot({ botId: unknown }),
         );
-      }).pipe(Effect.provide(pauseHandlers.pipe(Layer.provide([server(), testBots])))),
+      }).pipe(
+        Effect.provide(pauseHandlers.pipe(Layer.provide([server(), testBots]))),
+        Effect.provide(signedInAs(singleUser)),
+      ),
   );
 });

@@ -28,7 +28,7 @@ const opening = { conversationId, botId: assistant.id };
 function chatWith(answer: Stream.Stream<AgentEvent, AgentError>) {
   const agent = Layer.succeed(AgentRuntime, AgentRuntime.of({ run: () => answer }));
 
-  return chatLayer.pipe(Layer.provide(agent), Layer.provide(testServer()));
+  return chatLayer.pipe(Layer.provide(agent), Layer.provideMerge(testServer()));
 }
 
 /**
@@ -443,7 +443,7 @@ describe("Chat RPCs", () => {
 
       const next = yield* client["Chat.send"](send("Again", "user-2")).pipe(Stream.runCollect);
       expect(next.at(-1)?.type).toBe("RUN_FINISHED");
-    }).pipe(Effect.provide(chatLayer.pipe(Layer.provide(agent), Layer.provide(testServer()))));
+    }).pipe(Effect.provide(chatLayer.pipe(Layer.provide(agent), Layer.provideMerge(testServer()))));
   });
 
   it.effect(
@@ -487,7 +487,9 @@ describe("Chat RPCs", () => {
         ).toEqual(["Look this up", "Ok"]);
         expect(turns.map((turn) => turn.bot)).toEqual([researcher.id]);
         expect(turns[0]?.instructions).toContain("You are Researcher.");
-      }).pipe(Effect.provide(chatLayer.pipe(Layer.provide(agent), Layer.provide(testServer()))));
+      }).pipe(
+        Effect.provide(chatLayer.pipe(Layer.provide(agent), Layer.provideMerge(testServer()))),
+      );
     },
   );
 
@@ -518,7 +520,7 @@ describe("Chat RPCs", () => {
       expect(turns.map((turn) => turn.conversation)).toEqual([conversationId, conversationId]);
       expect(new Set(turns.map((turn) => turn.run)).size).toBe(2);
       expect(started.map((event) => event?.runId)).toEqual(turns.map((turn) => turn.run));
-    }).pipe(Effect.provide(chatLayer.pipe(Layer.provide(agent), Layer.provide(testServer()))));
+    }).pipe(Effect.provide(chatLayer.pipe(Layer.provide(agent), Layer.provideMerge(testServer()))));
   });
 
   it.effect("refuses a Bot the server does not know, storing nothing and running no turn", () =>
