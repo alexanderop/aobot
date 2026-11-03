@@ -21,9 +21,9 @@ const decodeAnswer = Schema.decodeUnknownOption(
 );
 
 /**
-The rule and the reason `row`'s detail names, each when it names one as text. An action the safety list
-hands to the person is decided by that list, such as `safety:credentials`, also when its row names the ask
-rule the person had been asked under. A person's answer to an approval reads as its reason, with who or
+The rule and the reason `row`'s detail names, each when it names one as text. A `hand_off` row is decided
+by the safety list it names, such as `safety:credentials`, also when it names the ask rule the person had
+been asked under. A person's answer to an approval reads as its reason, with who or
 what gave it, such as "No (time limit)".
 */
 export function whyOf(row: AuditRow): Why {
@@ -32,9 +32,11 @@ export function whyOf(row: AuditRow): Why {
     ({ answer, by }) => `${answerLabels[answer].label} (${by})`,
   );
 
+  const safety = row.decision === "hand_off" ? decodeSafety(row.detail) : Option.none();
+
   return {
     decidedBy: Option.orElse(
-      Option.map(decodeSafety(row.detail), ({ safety }) => `safety:${safety}`),
+      Option.map(safety, ({ safety }) => `safety:${safety}`),
       () => Option.map(decodeRule(row.detail), ({ rule }) => rule),
     ),
     reason: Option.orElse(

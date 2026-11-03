@@ -1,16 +1,16 @@
-import type { AuditRow } from "@aobot/domain";
+import type { AuditDecision, AuditRow } from "@aobot/domain";
 import { Option, type Schema } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import { whyOf } from "./why.ts";
 
-function rowWith(detail: Schema.JsonObject): AuditRow {
+function rowWith(detail: Schema.JsonObject, decision: AuditDecision = "answered"): AuditRow {
   return {
     id: "row-1",
     createdAt: "2026-11-02T10:00:00.000Z",
     initiatorKind: "person",
     person: "single-user",
     bot: Option.some("assistant"),
-    decision: "answered",
+    decision,
     action: "approval.answered",
     detail,
     traceId: Option.none(),
@@ -32,9 +32,17 @@ describe("whyOf", () => {
   ])(
     "reads an action handed to the person that %s as decided by the safety list",
     (_case, detail) => {
-      expect(whyOf(rowWith(detail)).decidedBy).toEqual(Option.some(`safety:${detail.safety}`));
+      expect(whyOf(rowWith(detail, "hand_off")).decidedBy).toEqual(
+        Option.some(`safety:${detail.safety}`),
+      );
     },
   );
+
+  it("reads a safety list only on a hand-off row", () => {
+    expect(whyOf(rowWith({ rule: "browse", safety: "payments" }, "allow")).decidedBy).toEqual(
+      Option.some("browse"),
+    );
+  });
 
   it.each([
     [{ answer: "yes", by: "person" }, "Yes (person)"],
