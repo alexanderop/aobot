@@ -64,7 +64,9 @@ const server = Layer.unwrap(
     const config = yield* serverConfig;
 
     if (AuthSettings.$is("SingleUser")(config.auth)) {
-      yield* checkSingleUserAddress(config.publicUrl).pipe(Effect.provide(lookupLayer));
+      yield* checkSingleUserAddress(config.publicUrl, config.host).pipe(
+        Effect.provide(lookupLayer),
+      );
     }
 
     const publicHost = Option.some(config.publicUrl.hostname);

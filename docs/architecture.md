@@ -354,10 +354,12 @@ Stopping their computer waits for E3-3, since the computer is shared until then,
 the deployment is stored to retire: a secret goes straight to the computer.
 
 **Single-user mode.** `SINGLE_USER=true` resolves every request to the one person and mounts no sign-in
-routes. It is off unless set. At start-up the server looks up every address `PUBLIC_URL`'s host resolves
-to: a public one, or a name that does not resolve, stops it, and each private one, such as
-`192.168.1.5`, is logged as a warning. It looks at the address, never at `NODE_ENV`. `acp` still needs it
-and a loopback `HOST`.
+routes. It is off unless set. At start-up the server looks up every address `PUBLIC_URL`'s host and the
+`HOST` it listens on resolve to: a public one, or a name that does not resolve, stops it, and each
+private one, such as `192.168.1.5`, is logged as a warning. Listening on every address, as the default
+`HOST=0.0.0.0` does, warns too and names `HOST=127.0.0.1` as the way to keep it on this machine, so a
+container still starts. It looks at the addresses, never at `NODE_ENV`. `acp` still needs it and a
+loopback `HOST`.
 
 **The local provider.** Compose runs Dex with `alice@example.com`, `bob@example.com` and
 `mallory@other.com`, password `password`, and only `example.com` allowed, on the default network only, so a
