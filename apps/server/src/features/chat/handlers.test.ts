@@ -54,7 +54,8 @@ function chatHolding(step: "startup" | "reply", answer: Stream.Stream<AgentEvent
       return ConversationStore.of({
         ...store,
         append: (id, message) =>
-          step === (message.role === "user" ? "startup" : "reply")
+          (step === "startup" && message.role === "user") ||
+          (step === "reply" && message.role === "assistant")
             ? held(store.append(id, message))
             : store.append(id, message),
       });
