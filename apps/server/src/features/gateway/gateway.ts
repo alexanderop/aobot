@@ -957,7 +957,7 @@ export const gatewayLayer = Layer.effectContext(
     Writes the row of each refusal `self` fails with, `base` first in its detail, with `write`, and tells
     the model why `tool` did not run. A `ToolFailed` is already what the model reads, so it passes on.
     */
-    const denyRefusals =
+    const recordRefusals =
       (tool: ToolName, base: Detail, write: RefusalRow = rows.refuse) =>
       <A, R>(self: Effect.Effect<A, ToolFailed | Denial, R>): Effect.Effect<A, ToolFailed, R> =>
         Effect.catchTag(self, "ToolFailed", Effect.fail, refused(tool, base, write));
@@ -1173,10 +1173,10 @@ export const gatewayLayer = Layer.effectContext(
                   : closed("deny", auditAction(tool), { ...named, reason: turnStopped }),
               ),
             ),
-            denyRefusals(tool, named, closed),
+            recordRefusals(tool, named, closed),
           );
         }),
-      ).pipe(denyRefusals(tool, asked));
+      ).pipe(recordRefusals(tool, asked));
     };
 
     /**
@@ -1260,7 +1260,7 @@ export const gatewayLayer = Layer.effectContext(
                 Option.isSome(askRule) && Option.isSome(turn)
                   ? Option.some(
                       yield* approvals.hold(turn.value, askRule.value).pipe(
-                        denyRefusals("request_secret", {
+                        recordRefusals("request_secret", {
                           bot,
                           ...auditDetail(asked.action),
                           rule: askRule.value,
@@ -1365,7 +1365,7 @@ export const gatewayLayer = Layer.effectContext(
                   askThenCarryOut(granted, turnOf(claim), request, needs, queued),
                 ),
               );
-      }).pipe(denyRefusals(request.action, { bot }));
+      }).pipe(recordRefusals(request.action, { bot }));
     });
 
     return Context.make(Gateway, Gateway.of({ refuse, act })).pipe(
