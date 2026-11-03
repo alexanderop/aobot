@@ -16,7 +16,5 @@ export function testServer({
   readonly database?: Layer.Layer<SqlClient.SqlClient, Layer.Error<typeof testDatabase>>;
   readonly failures?: Ref.Ref<number>;
 } = {}) {
-  return Layer.mergeAll(testLifecycle(failures), testBots).pipe(
-    Layer.provideMerge(database ?? testDatabase),
-  );
+  return Layer.mergeAll(testLifecycle(failures), testBots).pipe(Layer.provideMerge(database));
 }
