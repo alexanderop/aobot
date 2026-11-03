@@ -5,7 +5,12 @@ import { AuditPage } from "../features/audit/public.ts";
 import { Sidebar, useBots } from "../features/bots/public.ts";
 import { ConversationView, useConversation } from "../features/chat/public.ts";
 import { LiveScreen } from "../features/screen/public.ts";
-import { PersonBar, SignInScreen, useSession } from "../features/session/public.ts";
+import {
+  type OpenSession,
+  PersonBar,
+  SignInScreen,
+  useSession,
+} from "../features/session/public.ts";
 import "./app.css";
 import { forgetPageMemory } from "./selection-atoms.ts";
 import { botLink, type Selection } from "./selection.ts";
@@ -38,7 +43,7 @@ function linkTo(bot: BotId): string {
 
 /** The sidebar of Bots and the conversation with the one picked, which the URL keeps across reloads. */
 function Messenger(props: {
-  readonly session: SessionState;
+  readonly session: OpenSession;
   readonly bots: Array.NonEmptyReadonlyArray<BotSummary>;
   readonly selection: Selection;
   readonly pick: (bot: BotId) => void;
@@ -72,7 +77,7 @@ function Connecting() {
 }
 
 /** The messenger once the server has said which Bots there are. */
-function Chat(props: { readonly session: SessionState }) {
+function Chat(props: { readonly session: OpenSession }) {
   const bots = useBots();
   const [selection, pick] = useSelection();
 

@@ -1,4 +1,4 @@
-export { PersonBar } from "./PersonBar.tsx";
+export { type OpenSession, PersonBar } from "./PersonBar.tsx";
 
 export { SignInScreen } from "./SignInScreen.tsx";
 
