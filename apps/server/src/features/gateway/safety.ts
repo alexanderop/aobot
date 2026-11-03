@@ -19,9 +19,19 @@ interface Safety {
   readonly pattern: RegExp;
 }
 
-/** One case-insensitive pattern that matches where any of `alternatives` does. */
-const anyOf = (...alternatives: ReadonlyArray<RegExp>): RegExp =>
-  new RegExp(alternatives.map(({ source }) => source).join("|"), "i");
+/**
+One case-insensitive Unicode pattern that matches where any of `alternatives` does. It joins their sources,
+so an alternative's own flags would be dropped and change what it means: it refuses any.
+*/
+const anyOf = (...alternatives: ReadonlyArray<RegExp>): RegExp => {
+  const flagged = alternatives.find(({ flags }) => flags !== "");
+
+  if (flagged !== undefined) {
+    throw new Error(`anyOf matches with "iu": drop the flags of ${String(flagged)}`);
+  }
+
+  return new RegExp(alternatives.map(({ source }) => source).join("|"), "iu");
+};
 
 /**
 Each safety list, matched in this order. Deliberately broad: a false hand-off costs the person one click,
