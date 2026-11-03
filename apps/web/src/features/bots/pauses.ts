@@ -1,10 +1,4 @@
-import {
-  type BotId,
-  type PauseNotChanged,
-  type SignedOut,
-  signedOutWords,
-  type UnknownBot,
-} from "@aobot/domain";
+import { type BotId, type PauseNotChanged, type SignedOut, type UnknownBot } from "@aobot/domain";
 import { Effect, Match, Option, Schedule, Stream } from "effect";
 import { Atom } from "effect/reactivity";
 import type { RpcClientError } from "effect/rpc";
@@ -26,7 +20,7 @@ const whyNotChanged = Match.typeTags<
 >()({
   PauseNotChanged: ({ change }) => notStored[change],
   UnknownBot: () => "The server knows no such Bot.",
-  SignedOut: () => signedOutWords,
+  SignedOut: ({ message }) => message,
   RpcClientError: () => "Cannot reach the server.",
 });
 

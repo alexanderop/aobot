@@ -47,7 +47,6 @@ export {
   SessionState,
   SignedIn,
   SignedOut,
-  signedOutWords,
   SignInRefusalCode,
   signInRefusalWords,
 } from "./people.ts";

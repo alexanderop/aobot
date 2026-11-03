@@ -62,10 +62,11 @@ export const signInRefusalWords: Readonly<Record<SignInRefusalCode, string>> = {
 The call came without a live session: none, one that expired or was signed out, one of a person who was
 removed, or one of an address that may no longer sign in.
 */
-export class SignedOut extends Schema.TaggedError<SignedOut>()("SignedOut", {}) {}
-
-/** What the page says when the server answers a call with {@link SignedOut}. */
-export const signedOutWords = "You are signed out. Reload the page to sign in again.";
+export class SignedOut extends Schema.TaggedError<SignedOut>()("SignedOut", {}) {
+  override get message() {
+    return "You are signed out. Sign in again to go on.";
+  }
+}
 
 /** On every RPC group: the server learns who each call is for, and refuses it with {@link SignedOut}. */
 export class SignedIn extends RpcMiddleware.Service<SignedIn>()("aobot/SignedIn", {

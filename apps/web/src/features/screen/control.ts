@@ -1,5 +1,4 @@
-import { signedOutWords } from "@aobot/domain";
-import { Effect, Option, Predicate, Schedule, Stream } from "effect";
+import { Effect, Option, Schedule, Stream } from "effect";
 import { Atom } from "effect/reactivity";
 import { ControlClient } from "./control-client.ts";
 import { type Answered, ControlCommand, type Sent } from "./control-state.ts";
@@ -38,7 +37,7 @@ export function makeControl(runtime: Atom.AtomRuntime<ControlClient>) {
               sentWhile: sent.sentWhile,
               failure: Option.some({
                 _tag: error._tag,
-                message: Predicate.isTagged(error, "SignedOut") ? signedOutWords : error.message,
+                message: error.message,
               }),
             }),
           }),
