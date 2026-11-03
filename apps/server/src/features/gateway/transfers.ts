@@ -11,16 +11,11 @@ import {
   Stream,
   type Tracer,
 } from "effect";
-import type { AuditRowId, Outcome } from "../audit/public.ts";
+import { type AuditRowId, auditRows, type Outcome } from "../audit/public.ts";
 import { Computers } from "../computers/public.ts";
 import { capText } from "../../shared/tool-result.ts";
 import { fileTarget } from "./file-target.ts";
-import {
-  type ComputerFailure,
-  computerMessageLimit,
-  failureOutcome,
-  personAudit,
-} from "./person-audit.ts";
+import { type ComputerFailure, computerMessageLimit, failureOutcome } from "./computer-failure.ts";
 
 /**
 Why a person's upload or download did not happen. `refused`: it was never tried, because the path leaves
@@ -119,7 +114,7 @@ The person's {@link FileTransfers}. Each one is a `deny` row when it is refused 
 `allow` row with the file's path, name, extension and size, then its outcome. Never what the file holds.
 */
 export const fileTransfers = Effect.gen(function* () {
-  const rows = yield* personAudit;
+  const rows = yield* auditRows("person");
   const computers = yield* Computers;
 
   const refuse = (action: Action, detail: Schema.JsonObject, error: TransferFailed) =>

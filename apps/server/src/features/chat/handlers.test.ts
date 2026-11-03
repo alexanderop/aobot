@@ -13,12 +13,13 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Layer, Queue, Stream } from "effect";
 import { RpcTest } from "effect/rpc";
+import { SqlClient } from "effect/sql";
 import { AgentEvent, type AgentError, AgentRuntime, Stalled, type Turn } from "../agent/public.ts";
 import { ConversationStore, conversationStoreLayer } from "./conversation-store.ts";
 import { chatHandlersLayer } from "./handlers.ts";
 import { chatLayer } from "./public.ts";
-import { assistant, researcher, testBots } from "../bots/testing/test-bots.ts";
-import { testDatabase } from "./testing/test-database.ts";
+import { assistant, researcher } from "../bots/testing/test-bots.ts";
+import { testServer } from "./testing/test-server.ts";
 
 const conversationId = ConversationId.make("conversation-1");
 
@@ -27,13 +28,23 @@ const opening = { conversationId, botId: assistant.id };
 function chatWith(answer: Stream.Stream<AgentEvent, AgentError>) {
   const agent = Layer.succeed(AgentRuntime, AgentRuntime.of({ run: () => answer }));
 
-  return chatLayer.pipe(Layer.provide([agent, testDatabase, testBots]));
+  return chatLayer.pipe(Layer.provide(agent), Layer.provide(testServer()));
 }
 
-/** A chat whose store holds `ensure` open until `release` is completed, so a turn can be caught mid-startup. */
-function chatWithSlowStartup(answer: Stream.Stream<AgentEvent, AgentError>) {
+/**
+A chat whose store holds a turn at `step` until `release` is completed, so the turn can be caught there:
+at `startup`, as it stores its conversation, or at `reply`, as it stores the Bot's message once the Bot
+finished.
+*/
+function chatHolding(step: "startup" | "reply", answer: Stream.Stream<AgentEvent, AgentError>) {
   const entered = Deferred.makeUnsafe<void>();
   const release = Deferred.makeUnsafe<void>();
+
+  const held = <A, E>(effect: Effect.Effect<A, E>) =>
+    Deferred.succeed(entered, undefined).pipe(
+      Effect.andThen(Deferred.await(release)),
+      Effect.andThen(effect),
+    );
 
   const slowStore = Layer.effect(
     ConversationStore,
@@ -43,10 +54,11 @@ function chatWithSlowStartup(answer: Stream.Stream<AgentEvent, AgentError>) {
       return ConversationStore.of({
         ...store,
         ensure: (id, botId) =>
-          Deferred.succeed(entered, undefined).pipe(
-            Effect.andThen(Deferred.await(release)),
-            Effect.andThen(store.ensure(id, botId)),
-          ),
+          step === "startup" ? held(store.ensure(id, botId)) : store.ensure(id, botId),
+        append: (id, message) =>
+          step === "reply" && message.role === "assistant"
+            ? held(store.append(id, message))
+            : store.append(id, message),
       });
     }),
   ).pipe(Layer.provide(conversationStoreLayer));
@@ -58,7 +70,8 @@ function chatWithSlowStartup(answer: Stream.Stream<AgentEvent, AgentError>) {
     release,
     layer: chatHandlersLayer.pipe(
       Layer.provide(slowStore),
-      Layer.provide([agent, testDatabase, testBots]),
+      Layer.provide(agent),
+      Layer.provideMerge(testServer()),
     ),
   };
 }
@@ -260,7 +273,8 @@ describe("Chat RPCs", () => {
   it.effect(
     "ends a turn stopped while its messages are still being stored, before the model speaks",
     () => {
-      const startup = chatWithSlowStartup(
+      const startup = chatHolding(
+        "startup",
         Stream.make(AgentEvent.TextDelta({ text: "Too late" }), AgentEvent.Done()),
       );
 
@@ -286,6 +300,33 @@ describe("Chat RPCs", () => {
           { role: "user", text: "Say hi" },
         ]);
       }).pipe(Effect.provide(startup.layer));
+    },
+  );
+
+  it.effect(
+    "records no stop for a turn stopped once its Bot finished, while its reply is stored",
+    () => {
+      const replying = chatHolding(
+        "reply",
+        Stream.make(AgentEvent.TextDelta({ text: "Ok" }), AgentEvent.Done()),
+      );
+
+      return Effect.gen(function* () {
+        const client = yield* RpcTest.makeClient(ChatRpcs);
+        const sql = yield* SqlClient.SqlClient;
+
+        const sending = yield* client["Chat.send"](send("Say hi", "user-1")).pipe(
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        yield* Deferred.await(replying.entered);
+        yield* client["Chat.stop"]({ conversationId });
+        yield* Deferred.succeed(replying.release, undefined);
+
+        expect((yield* Fiber.join(sending)).at(-1)?.type).toBe("RUN_FINISHED");
+        expect(yield* sql`SELECT action, decision FROM audit_rows`).toEqual([]);
+      }).pipe(Effect.provide(replying.layer));
     },
   );
 
@@ -402,7 +443,7 @@ describe("Chat RPCs", () => {
 
       const next = yield* client["Chat.send"](send("Again", "user-2")).pipe(Stream.runCollect);
       expect(next.at(-1)?.type).toBe("RUN_FINISHED");
-    }).pipe(Effect.provide(chatLayer.pipe(Layer.provide([agent, testDatabase, testBots]))));
+    }).pipe(Effect.provide(chatLayer.pipe(Layer.provide(agent), Layer.provide(testServer()))));
   });
 
   it.effect(
@@ -446,7 +487,7 @@ describe("Chat RPCs", () => {
         ).toEqual(["Look this up", "Ok"]);
         expect(turns.map((turn) => turn.bot)).toEqual([researcher.id]);
         expect(turns[0]?.instructions).toContain("You are Researcher.");
-      }).pipe(Effect.provide(chatLayer.pipe(Layer.provide([agent, testDatabase, testBots]))));
+      }).pipe(Effect.provide(chatLayer.pipe(Layer.provide(agent), Layer.provide(testServer()))));
     },
   );
 
@@ -477,7 +518,7 @@ describe("Chat RPCs", () => {
       expect(turns.map((turn) => turn.conversation)).toEqual([conversationId, conversationId]);
       expect(new Set(turns.map((turn) => turn.run)).size).toBe(2);
       expect(started.map((event) => event?.runId)).toEqual(turns.map((turn) => turn.run));
-    }).pipe(Effect.provide(chatLayer.pipe(Layer.provide([agent, testDatabase, testBots]))));
+    }).pipe(Effect.provide(chatLayer.pipe(Layer.provide(agent), Layer.provide(testServer()))));
   });
 
   it.effect("refuses a Bot the server does not know, storing nothing and running no turn", () =>

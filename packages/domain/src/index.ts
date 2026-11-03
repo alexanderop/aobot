@@ -39,6 +39,8 @@ export {
 
 export { BotRpcs, BotSummary, ToolName, UnknownBot } from "./bot.ts";
 
+export { BotPaused, PauseNotChanged, PauseRpcs, PauseUnknown } from "./pause-rpcs.ts";
+
 export { BotId, ConversationId, MessageId, RunId, ToolCallId } from "./ids.ts";
 
 export {

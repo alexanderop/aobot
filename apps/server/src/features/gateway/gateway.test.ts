@@ -947,59 +947,63 @@ describe("Gateway run", () => {
     }).pipe(Effect.provide(database)),
   );
 
-  it.effect("never forwards a command stopped while it waits for the Bot's command before it", () =>
-    Effect.gen(function* () {
-      const forwarded = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
+  it.effect(
+    "never forwards a command stopped while it waits for the Bot's command before it, and denies it",
+    () =>
+      Effect.gen(function* () {
+        const forwarded = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
 
-      const computer = fakeComputers({
-        run: () =>
-          Deferred.succeed(forwarded, undefined).pipe(
-            Effect.andThen(Deferred.await(release)),
-            Effect.as({
-              action: "run",
-              end: Exited.make({ code: 0 }),
-              stdout: printed(""),
-              stderr: printed(""),
-              leftOutputOpen: false,
-            } as const),
-          ),
-      });
+        const computer = fakeComputers({
+          run: () =>
+            Deferred.succeed(forwarded, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.as({
+                action: "run",
+                end: Exited.make({ code: 0 }),
+                stdout: printed(""),
+                stderr: printed(""),
+                leftOutputOpen: false,
+              } as const),
+            ),
+        });
 
-      const first = { action: "run", command: "sleep 3" } as const;
-      const next = { action: "run", command: "ls" } as const;
+        const first = { action: "run", command: "sleep 3" } as const;
+        const next = { action: "run", command: "ls" } as const;
 
-      yield* Gateway.use((gateway) =>
-        Effect.gen(function* () {
-          const running = yield* Effect.forkChild(gateway.act(bot, first));
-          yield* Deferred.await(forwarded);
+        yield* Gateway.use((gateway) =>
+          Effect.gen(function* () {
+            const running = yield* Effect.forkChild(gateway.act(bot, first));
+            yield* Deferred.await(forwarded);
 
-          const waiting = yield* Effect.forkChild(
-            gateway.act(bot, { action: "run", command: "touch b-ran" }),
-            { startImmediately: true },
-          );
+            const waiting = yield* Effect.forkChild(
+              gateway.act(bot, { action: "run", command: "touch b-ran" }),
+              { startImmediately: true },
+            );
 
-          yield* Fiber.interrupt(waiting);
+            yield* Fiber.interrupt(waiting);
 
-          yield* Deferred.succeed(release, undefined);
-          yield* Fiber.join(running);
-          yield* gateway.act(bot, next);
-        }),
-      ).pipe(Effect.provide(startGateway(computer.layer)));
+            yield* Deferred.succeed(release, undefined);
+            yield* Fiber.join(running);
+            yield* gateway.act(bot, next);
+          }),
+        ).pipe(Effect.provide(startGateway(computer.layer)));
 
-      expect(computer.actions).toEqual([first, next]);
-      expect(
-        (yield* auditRows).map((row) => [
-          row["decision"],
-          JSON.parse(String(row["detail"])).command,
-        ]),
-      ).toEqual([
-        ["allow", first.command],
-        ["succeeded", undefined],
-        ["allow", next.command],
-        ["succeeded", undefined],
-      ]);
-    }).pipe(Effect.provide(database)),
+        expect(computer.actions).toEqual([first, next]);
+        expect(
+          (yield* auditRows).map((row) => {
+            const detail = JSON.parse(String(row["detail"]));
+
+            return [row["decision"], detail.command ?? detail.reason];
+          }),
+        ).toEqual([
+          ["allow", first.command],
+          ["deny", "turn ended"],
+          ["succeeded", undefined],
+          ["allow", next.command],
+          ["succeeded", undefined],
+        ]);
+      }).pipe(Effect.provide(database)),
   );
 
   it.effect("never takes a page the computer answers a command with as the latest snapshot", () =>

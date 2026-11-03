@@ -31,12 +31,16 @@ import {
 } from "effect";
 import {
   AuditLog,
+  auditRows,
   type AuditRowId,
   type AuditWriteFailed,
   type Decision,
   type Outcome,
+  type RefusalDecision,
+  singleUser,
 } from "../audit/public.ts";
 import { Bots, isGranted } from "../bots/public.ts";
+import { LiveTurns } from "../lifecycle/public.ts";
 import { type Allowed, Policy, Refused, Verdict } from "../policy/public.ts";
 import {
   type Computer,
@@ -68,13 +72,7 @@ import {
   type OutcomeUnknown,
 } from "./approvals.ts";
 import { ComputerControl, controlDoors, type PersonHasControl } from "./control.ts";
-import {
-  type ComputerFailure,
-  failureOutcome,
-  personAudit,
-  type RefusalDecision,
-  singleUser,
-} from "./person-audit.ts";
+import { type ComputerFailure, failureOutcome } from "./computer-failure.ts";
 import { fileTarget } from "./file-target.ts";
 import {
   endAttributes,
@@ -156,12 +154,14 @@ export class Gateway extends Context.Service<
   {
     readonly refuse: (refusal: Refusal) => Effect.Effect<void>;
     /**
-    Refuses the call when the Bot it claims was not granted its tool, or is no Bot the server knows,
-    before anything else the gateway does. Then refuses it while a person holds the computer. Otherwise
-    resolves its ref against the latest snapshot, judges it by the rules, records the call, forwards it
-    to the computer, records what became of it, and answers what the model reads. `request_secret` waits
-    for the person's answer outside the door, at most {@link secretWaitLimit}, before what they typed is
-    forwarded. A call that could not be carried out is a `ToolFailed` the model reads, never a dead turn.
+    Refuses the call when the turn it names no longer runs, then when the Bot it claims was not granted
+    its tool, or is no Bot the server knows, before anything else the gateway does. Then refuses it while
+    a person holds the computer. Otherwise resolves its ref against the latest snapshot, judges it by the
+    rules, records the call, forwards it to the computer, records what became of it, and answers what the
+    model reads. `request_secret` waits for the person's answer outside the door, at most
+    {@link secretWaitLimit}, before what they typed is forwarded. A call that could not be carried out is
+    a `ToolFailed` the model reads, never a dead turn. A call still running when its turn is stopped is
+    cut off there.
     */
     readonly act: (claim: Claim, request: BotRequest) => Effect.Effect<string, ToolFailed>;
   }
@@ -169,6 +169,12 @@ export class Gateway extends Context.Service<
 
 /** What the computer is sent, by its action. */
 type ActionName = ComputerAction["action"];
+
+/**
+The turn a call names no longer runs here: it was stopped, or ended, so nothing more is done in it, such
+as by a CLI that keeps calling tools after its turn was stopped.
+*/
+class TurnEnded extends Schema.TaggedError<TurnEnded>()("TurnEnded", {}) {}
 
 /** The Bot a call claims was not granted the tool, or is no Bot the server knows, so it is denied. */
 class NotGranted extends Schema.TaggedError<NotGranted>()("NotGranted", { claim: Claim }) {}
@@ -262,6 +268,7 @@ Why the gateway did not carry out a Bot's call: each is one `deny` row, or for {
 `hand_off` row, and what the model reads.
 */
 type Denial =
+  | TurnEnded
   | NotGranted
   | AlreadyAsked
   | PersonHasControl
@@ -391,7 +398,7 @@ export const secretWaitLimit = Duration.minutes(10);
 /** How long an action a rule asks the person about waits for their answer, which is no after it. */
 export const approvalWaitLimit = Duration.minutes(10);
 
-/** Why a call ended early: the person stopped the turn it was made in. */
+/** Why a call ended early: its turn was stopped, by Stop, a pause, or the deployment's check. */
 const turnStopped = "the turn was stopped";
 
 /** Why a question an earlier run left open was answered no and refused at start-up. */
@@ -607,13 +614,14 @@ export const gatewayLayer = Layer.effectContext(
     const audit = yield* AuditLog;
     const bots = yield* Bots;
     const policy = yield* Policy;
-    const rows = yield* personAudit;
+    const rows = yield* auditRows("person");
     const computers = yield* Computers;
     const snapshots = yield* snapshotStore;
     const doors = yield* controlDoors;
     const transfers = yield* fileTransfers;
     const secrets = yield* secretRequests;
     const approvals = yield* approvalRequests;
+    const turns = yield* LiveTurns;
 
     /** A row the deployment writes at start-up to close a question an earlier run left open. */
     const byDeployment = (decision: Decision, action: AuditAction, detail: Schema.JsonObject) =>
@@ -972,6 +980,11 @@ export const gatewayLayer = Layer.effectContext(
       const unrecorded = () => deny({ reason: "not recorded" }, unrecordedAnswer(tool));
 
       return Match.typeTags<Denial, Effect.Effect<never, ToolFailed>>()({
+        TurnEnded: () =>
+          deny(
+            { reason: "turn ended" },
+            notRun("your turn has ended, so nothing more runs in it. Stop calling tools"),
+          ),
         AlreadyAsked: () => deny({ reason: "already asked" }, alreadyAskedAnswer),
         NotGranted: ({ claim }) =>
           deny({ reason: `not granted to ${claimedName(claim)}` }, notGrantedAnswer(tool, claim)),
@@ -1064,6 +1077,35 @@ export const gatewayLayer = Layer.effectContext(
     };
 
     /**
+    Refuses a call in a turn that no longer runs. Checked as a call starts and again once the door lets
+    it in, since a command may wait there for the one before it while its turn ends. A call that names no
+    turn has none to check.
+    */
+    const inLiveTurn = (turn: Option.Option<TurnRef>) =>
+      Option.match(turn, {
+        onNone: () => Effect.void,
+        onSome: ({ conversation, run }) =>
+          Effect.flatMap(turns.live(conversation, run), (live) =>
+            live ? Effect.void : Effect.fail(new TurnEnded()),
+          ),
+      });
+
+    /**
+    `effect`, an action of `tool` in `turn`, through the door once its turn is checked again. Commands run
+    one at a time, in the order they were asked for, and one cut off while it waits runs `leftQueue`.
+    */
+    const enter = <A, E, R>(
+      tool: ToolName,
+      turn: Option.Option<TurnRef>,
+      effect: Effect.Effect<A, E, R>,
+      leftQueue: Effect.Effect<void>,
+    ) => {
+      const checked = Effect.andThen(inLiveTurn(turn), effect);
+
+      return tool === "run" ? doors.queue(checked, leftQueue) : doors.admit(checked);
+    };
+
+    /**
     Writes the row that ends `approval` without its action, in one write with lapsing it. When that fails,
     the question stays open in the ledger, and the next start-up closes it in the trail.
     */
@@ -1133,7 +1175,6 @@ export const gatewayLayer = Layer.effectContext(
       turn: Option.Option<TurnRef>,
       request: DirectRequest,
       needs: NeedsApproval,
-      queued: boolean,
     ) => {
       const { action, host, askRule, allowRule } = needs;
       const tool = action.action;
@@ -1144,9 +1185,13 @@ export const gatewayLayer = Layer.effectContext(
 
         if (answer === "no") return yield* new Declined({ by });
 
-        return yield* doors.admit(carryOutApproved(bot, request, approval, allowRule, askRule), {
-          queued,
-        });
+        // A command cut off while it waits closes its approval, as anything cut off after the ask does.
+        return yield* enter(
+          tool,
+          turn,
+          carryOutApproved(bot, request, approval, allowRule, askRule),
+          Effect.void,
+        );
       });
 
       return Effect.scoped(
@@ -1207,7 +1252,6 @@ export const gatewayLayer = Layer.effectContext(
 
             return suppliedAnswer(request, page);
           }),
-          { queued: false },
         )
         .pipe(
           Effect.catchTag("PersonHasControl", () =>
@@ -1282,7 +1326,6 @@ export const gatewayLayer = Layer.effectContext(
 
               return { ...asked, allowRow, allowRule: allowed.rule, question };
             }),
-            { queued: false },
           );
 
           const answered = yield* open.ask(capText(field, fieldLimit), host).pipe(
@@ -1339,6 +1382,26 @@ export const gatewayLayer = Layer.effectContext(
       );
     };
 
+    /**
+    Cuts `self` off once the turn stops, with an answer and no row of its own: what was cut off records
+    how it ended, as it does when the turn's own fiber is interrupted, an allowed call as `unknown`, a
+    question to the person as answered no, and a command still waiting for the one before it as denied.
+    */
+    const untilStopped =
+      (tool: ToolName, turn: Option.Option<TurnRef>) =>
+      <A, E, R>(self: Effect.Effect<A, E, R>): Effect.Effect<A, E | ToolFailed, R> =>
+        Option.match(turn, {
+          onNone: () => self,
+          onSome: ({ conversation, run }) =>
+            Effect.raceFirst(
+              self,
+              Effect.andThen(
+                turns.stopped(conversation, run),
+                Effect.fail(new ToolFailed({ message: `${tool} was cut off: ${turnStopped}.` })),
+              ),
+            ),
+        });
+
     const act = Effect.fn("Gateway.act")(function* (claim: Claim, request: BotRequest) {
       const named = namedBot(claim);
       yield* Effect.annotateCurrentSpan({ "gateway.action": request.action });
@@ -1350,22 +1413,30 @@ export const gatewayLayer = Layer.effectContext(
       // A row's JSON says null for a call that named no Bot by its id.
       const bot = Option.getOrNull(named);
 
-      // Commands run one at a time, in the order they were asked for.
-      const queued = request.action === "run";
+      const turn = turnOf(claim);
 
-      return yield* Effect.gen(function* () {
+      const carried = Effect.gen(function* () {
         const granted = yield* grant(claim, request.action);
 
+        // A command cut off while it waits has written nothing yet, so its turn's end is its deny row.
+        const leftQueue = Effect.fail(new TurnEnded()).pipe(
+          recordRefusals(request.action, { bot }),
+          Effect.ignore,
+        );
+
         return yield* BotRequest.guards.request_secret(request)
-          ? askForSecret(granted, turnOf(claim), request.ref, request.field)
-          : doors
-              .admit(carryOut(granted, request), { queued })
-              .pipe(
-                Effect.catchTag("NeedsApproval", (needs) =>
-                  askThenCarryOut(granted, turnOf(claim), request, needs, queued),
-                ),
-              );
-      }).pipe(recordRefusals(request.action, { bot }));
+          ? askForSecret(granted, turn, request.ref, request.field)
+          : enter(request.action, turn, carryOut(granted, request), leftQueue).pipe(
+              Effect.catchTag("NeedsApproval", (needs) =>
+                askThenCarryOut(granted, turn, request, needs),
+              ),
+            );
+      });
+
+      return yield* inLiveTurn(turn).pipe(
+        Effect.andThen(carried.pipe(untilStopped(request.action, turn))),
+        recordRefusals(request.action, { bot }),
+      );
     });
 
     return Context.make(Gateway, Gateway.of({ refuse, act })).pipe(

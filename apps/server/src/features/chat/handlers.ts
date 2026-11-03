@@ -2,7 +2,6 @@ import {
   type BotId,
   type ChatEvent,
   ChatRpcs,
-  ConversationBusy,
   type ConversationId,
   ConversationOfAnotherBot,
   type ConversationRef,
@@ -14,11 +13,12 @@ import {
   type SendMessage,
   UnknownBot,
 } from "@aobot/domain";
-import { Deferred, Effect, MutableHashMap, Option, Ref, Stream } from "effect";
+import { Deferred, Effect, Option, Ref, Stream } from "effect";
 import { AgentRuntime } from "../agent/public.ts";
 import { Bots, botSummary, turnInstructions } from "../bots/public.ts";
+import { Turns } from "../lifecycle/public.ts";
 import { ConversationStore } from "./conversation-store.ts";
-import { TurnStopped, isTerminal, turnEvents } from "./turn.ts";
+import { isTerminal, turnEvents, turnStatus } from "./turn.ts";
 
 /** The Bot's messages so far with one more streamed event folded in: text grows the message it names. */
 function recordText(messages: ReadonlyArray<Message>, event: ChatEvent): ReadonlyArray<Message> {
@@ -37,11 +37,7 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
     const store = yield* ConversationStore;
     const agent = yield* AgentRuntime;
     const bots = yield* Bots;
-
-    // One server process owns every run, so this map is the whole "one run per conversation" rule:
-    // an entry exists exactly while a turn runs, and a restart starts with none. Its value is that
-    // turn's stop signal.
-    const runs = MutableHashMap.empty<ConversationId, Deferred.Deferred<void>>();
+    const turns = yield* Turns;
 
     /**
     The Bot the page picked, unless the conversation belongs to another. A Bot no longer in `bots.yaml` is
@@ -70,7 +66,7 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
       return {
         bot: botSummary(bot),
         messages,
-        isRunning: MutableHashMap.has(runs, conversationId),
+        isRunning: yield* turns.isRunning(conversationId),
       };
     });
 
@@ -83,29 +79,13 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
         messageId: MessageId.make(crypto.randomUUID()),
       };
 
-      const stopped = yield* Deferred.make<void>();
-
-      // Removes this turn's entry only. By the time a finalizer calls it again, the next turn may
-      // already hold the slot.
-      const release = Effect.sync(() => {
-        const held = MutableHashMap.get(runs, conversationId);
-
-        if (Option.exists(held, (signal) => signal === stopped)) {
-          MutableHashMap.remove(runs, conversationId);
-        }
-      });
-
-      // The check and the insert run in one synchronous step, so two sends cannot both pass it.
-      yield* Effect.acquireRelease(
-        Effect.suspend(() =>
-          MutableHashMap.has(runs, conversationId)
-            ? Effect.fail(new ConversationBusy({ conversationId }))
-            : Effect.sync(() => MutableHashMap.set(runs, conversationId, stopped)),
-        ),
-        () => release,
-      );
-
       const bot = yield* botOf(conversationId, message.botId);
+
+      const { stopped, recordStop, release } = yield* turns.start(
+        conversationId,
+        ids.runId,
+        bot.id,
+      );
 
       yield* store.ensure(conversationId, bot.id);
 
@@ -149,7 +129,7 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
         Deferred.isDone(stopped).pipe(
           Effect.map((isStopped) =>
             isStopped
-              ? Stream.fail(new TurnStopped())
+              ? Stream.fromEffect(Deferred.await(stopped))
               : agent
                   .run({
                     bot: bot.id,
@@ -158,19 +138,24 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
                     instructions: turnInstructions(bot),
                     history,
                   })
-                  .pipe(
-                    Stream.interruptWhen(
-                      Effect.andThen(Deferred.await(stopped), Effect.fail(new TurnStopped())),
-                    ),
-                  ),
+                  .pipe(Stream.interruptWhen(Deferred.await(stopped))),
           ),
         ),
+      ).pipe(
+        // Here, where the stop becomes how the turn ends: a stop that lands once the Bot finished
+        // records nothing.
+        Stream.tapErrorTag("TurnStopped", recordStop),
       );
 
       return turnEvents(ids, answer).pipe(
         Stream.tap((event) => Ref.update(written, (messages) => recordText(messages, event))),
         Stream.mapEffect((event) =>
-          isTerminal(event) ? Effect.as(settle, event) : Effect.succeed(event),
+          isTerminal(event)
+            ? settle.pipe(
+                Effect.andThen(Effect.annotateCurrentSpan("chat.status", turnStatus(event))),
+                Effect.as(event),
+              )
+            : Effect.succeed(event),
         ),
       );
     });
@@ -178,10 +163,7 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
     const stop = Effect.fn("Chat.stop")(function* ({
       conversationId,
     }: typeof ConversationRef.Type) {
-      yield* Option.match(MutableHashMap.get(runs, conversationId), {
-        onNone: () => Effect.void,
-        onSome: (signal) => Deferred.succeed(signal, undefined),
-      });
+      yield* turns.stop(conversationId);
     });
 
     return ChatRpcs.of({

@@ -3,10 +3,12 @@ import { describe, expect, it } from "@effect/vitest";
 import { Duration, Effect, Layer, Option, Predicate, Stream, Tracer } from "effect";
 import { LanguageModel, type Response, Toolkit } from "effect/ai";
 import { RpcTest } from "effect/rpc";
+import { SqlClient } from "effect/sql";
 import { layerApi } from "../agent/public.ts";
 import { chatLayer } from "./public.ts";
-import { assistant, testBots } from "../bots/testing/test-bots.ts";
-import { testDatabase } from "./testing/test-database.ts";
+import { assistant } from "../bots/testing/test-bots.ts";
+import { workingAgent } from "./testing/test-agents.ts";
+import { testServer } from "./testing/test-server.ts";
 
 /** A tracer that keeps every span it starts, so a test can read the tree a turn produced. */
 function recordingTracer() {
@@ -79,6 +81,7 @@ describe("Chat tracing", () => {
       const turns = named("Chat.turn");
       expect(turns.map((span) => Option.isNone(span.parent))).toEqual([true]);
       expect(turns[0]?.attributes.get("chat.bot")).toBe(assistant.id);
+      expect(turns[0]?.attributes.get("chat.status")).toBe("finished");
       const traceId = turns[0]?.traceId;
 
       const setup = named("Chat.send").filter((span) => span.traceId === traceId);
@@ -90,8 +93,49 @@ describe("Chat tracing", () => {
         expect.arrayContaining(["Chat.turn", "AgentRuntime.run", "LanguageModel.streamText"]),
       ]);
     }).pipe(
-      Effect.provide(chatLayer.pipe(Layer.provide([agent, testDatabase, testBots]))),
+      Effect.provide(chatLayer.pipe(Layer.provide(agent), Layer.provide(testServer()))),
       Effect.provide(recorder.layer),
     );
   });
+
+  it.effect(
+    "records a turn the person stopped as cancelled, with its stop row in its trace",
+    () => {
+      const recorder = recordingTracer();
+
+      return Effect.gen(function* () {
+        const client = yield* RpcTest.makeClient(ChatRpcs);
+        const conversationId = ConversationId.make("conversation-1");
+
+        yield* client["Chat.send"]({
+          conversationId,
+          botId: assistant.id,
+          messageId: MessageId.make("user-1"),
+          text: "Count to a million",
+        }).pipe(
+          Stream.tap((event) =>
+            event.type === "TEXT_MESSAGE_CONTENT"
+              ? client["Chat.stop"]({ conversationId })
+              : Effect.void,
+          ),
+          Stream.runDrain,
+        );
+
+        const turns = recorder.spans.filter((span) => span.name === "Chat.turn");
+        expect(turns.map((span) => span.attributes.get("chat.status"))).toEqual(["cancelled"]);
+
+        const sql = yield* SqlClient.SqlClient;
+        const rows = yield* sql`SELECT action, decision, trace_id FROM audit_rows ORDER BY seq`;
+        expect(rows).toEqual([
+          { action: "turn.stopped", decision: "allow", trace_id: turns[0]?.traceId },
+          { action: "turn.stopped", decision: "succeeded", trace_id: turns[0]?.traceId },
+        ]);
+      }).pipe(
+        Effect.provide(
+          chatLayer.pipe(Layer.provide(workingAgent), Layer.provideMerge(testServer())),
+        ),
+        Effect.provide(recorder.layer),
+      );
+    },
+  );
 });

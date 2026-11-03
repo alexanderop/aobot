@@ -17,11 +17,12 @@ import {
   SubscriptionRef,
 } from "effect";
 import { SqlClient } from "effect/sql";
+import { auditRows } from "../audit/public.ts";
 import { Computers } from "../computers/public.ts";
 import { capText } from "../../shared/tool-result.ts";
 import { controlStore } from "./control-store.ts";
 import { close, Door, drained, enter, inFlight, leave, reopen, view } from "./door.ts";
-import { computerMessageLimit, personAudit } from "./person-audit.ts";
+import { computerMessageLimit } from "./computer-failure.ts";
 import { snapshotStore } from "./snapshot-store.ts";
 import { spanEvent } from "./span-event.ts";
 
@@ -82,7 +83,7 @@ queue commands wait in, one at a time, since they share one shell. Who holds the
 read once here: one server process owns the database (architecture.md, "Local now, AWS later").
 */
 export const controlDoors = Effect.gen(function* () {
-  const rows = yield* personAudit;
+  const rows = yield* auditRows("person");
   const computers = yield* Computers;
   const sql = yield* SqlClient.SqlClient;
   const store = yield* controlStore;
@@ -100,23 +101,41 @@ export const controlDoors = Effect.gen(function* () {
 
   /**
   `effect` as one action through the door, or `PersonHasControl` when the door is not open. Every Bot
-  action comes here, whatever its tool and whichever Bot asks, so none can skip it. A `queued` action
-  waits for the one before it outside the door, so a take never waits on the queue and one whose turn
-  comes while a person holds the computer is refused.
+  action comes here, whatever its tool and whichever Bot asks, so none can skip it.
   */
   const admit = <A, E, R>(
     effect: Effect.Effect<A, E, R>,
-    { queued }: { readonly queued: boolean },
-  ): Effect.Effect<A, E | PersonHasControl, R> => {
-    const through = Effect.acquireUseRelease(
+  ): Effect.Effect<A, E | PersonHasControl, R> =>
+    Effect.acquireUseRelease(
       SubscriptionRef.modify(door, enter),
       (admission): Effect.Effect<A, E | PersonHasControl, R> =>
         admission === "admitted" ? effect : Effect.fail(new PersonHasControl()),
       (admission) => (admission === "admitted" ? SubscriptionRef.update(door, leave) : Effect.void),
     );
 
-    return queued ? commands.withPermits(1)(through) : through;
-  };
+  /**
+  A command through the door once the one before it is done, since they share one shell. It waits outside
+  the door, so a take never waits on the queue and one whose turn comes while a person holds the computer
+  is refused. Cut off while it waits, it runs `leftQueue` instead, as `effect`, which records what became
+  of it, never started.
+  */
+  const queue = <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+    leftQueue: Effect.Effect<void>,
+  ): Effect.Effect<A, E | PersonHasControl, R> =>
+    Effect.suspend(() => {
+      let waiting = true;
+
+      return commands
+        .withPermits(1)(
+          Effect.suspend(() => {
+            waiting = false;
+
+            return admit(effect);
+          }),
+        )
+        .pipe(Effect.onInterrupt(() => (waiting ? leftQueue : Effect.void)));
+    });
 
   const recordChange = (action: "control_taken" | "control_released") =>
     rows.decide("allow", action, {}).pipe(
@@ -243,6 +262,7 @@ export const controlDoors = Effect.gen(function* () {
 
   return {
     admit,
+    queue,
     control: ComputerControl.of({ take, handBack, input, watch }),
   };
 });

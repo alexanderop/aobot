@@ -5,6 +5,7 @@ import {
   BotRpcs,
   ChatRpcs,
   ControlRpcs,
+  PauseRpcs,
   ScreenRpcs,
   SecretRpcs,
 } from "@aobot/domain";
@@ -32,6 +33,7 @@ import {
 import { auditLogLayer, auditTrailLayer, migrateAudit } from "../features/audit/public.ts";
 import { botHandlers, botsFileLayer, botToolkit } from "../features/bots/public.ts";
 import { chatLayer, migrateChat } from "../features/chat/public.ts";
+import { lifecycleLayer, migrateLifecycle, pauseHandlers } from "../features/lifecycle/public.ts";
 import { policyFileLayer } from "../features/policy/public.ts";
 import { computersLayer } from "../features/computers/public.ts";
 import {
@@ -64,7 +66,7 @@ const server = Layer.unwrap(
     ).pipe(Layer.provide([NodeFileSystem.layer, NodePath.layer]));
 
     const database = Layer.effectDiscard(
-      Effect.all([migrateChat, migrateAudit, migrateGateway]),
+      Effect.all([migrateChat, migrateAudit, migrateGateway, migrateLifecycle]),
     ).pipe(
       Layer.provideMerge(SqliteClient.layer({ filename: config.databasePath })),
       Layer.provide(databaseFolder),
@@ -82,9 +84,14 @@ const server = Layer.unwrap(
       Layer.provide([FetchHttpClient.layer, NodeWS.layerWebSocketConstructor]),
     );
 
+    // One for the chat, the pause handlers and the gateway, so a pause stops the turns the chat started
+    // and the tool calls made in them.
+    const lifecycle = lifecycleLayer.pipe(Layer.provide(auditLogLayer), Layer.provide(database));
+
     // One gateway for both runtimes, the MCP server and the control handlers: layers are built once per
     // reference, so there is one door to the computer whoever asks.
     const gateway = gatewayLayer.pipe(
+      Layer.provide(lifecycle),
       Layer.provide(auditLogLayer),
       Layer.provide(computers),
       Layer.provide(bots),
@@ -126,7 +133,7 @@ const server = Layer.unwrap(
     // Off because the handlers name their own spans and `Chat.turn` starts its own trace. The RPC span
     // around each call would only add a second trace of one span.
     const rpc = RpcServer.layer(
-      ChatRpcs.merge(BotRpcs, ScreenRpcs, ControlRpcs, SecretRpcs, ApprovalRpcs),
+      ChatRpcs.merge(BotRpcs, ScreenRpcs, ControlRpcs, SecretRpcs, ApprovalRpcs, PauseRpcs),
       { disableTracing: true },
     ).pipe(
       Layer.provide(rpcSocket(config.publicHost)),
@@ -138,7 +145,9 @@ const server = Layer.unwrap(
         controlHandlers.pipe(Layer.provide(gateway)),
         secretHandlers.pipe(Layer.provide(gateway)),
         approvalHandlers.pipe(Layer.provide(gateway)),
+        pauseHandlers,
       ]),
+      Layer.provide(lifecycle),
       Layer.provide(runtime.agent),
       Layer.provide(bots),
       Layer.provide(database),

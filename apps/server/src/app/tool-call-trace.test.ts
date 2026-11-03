@@ -11,6 +11,7 @@ import { botToolkit } from "../features/bots/public.ts";
 import { assistant, researcher, testBots } from "../features/bots/testing/test-bots.ts";
 import { allowEverything } from "../features/policy/testing/test-policy.ts";
 import { chatLayer, migrateChat } from "../features/chat/public.ts";
+import { lifecycleLayer, migrateLifecycle } from "../features/lifecycle/public.ts";
 import { Computers } from "../features/computers/public.ts";
 import { fakeComputer } from "../features/computers/testing/fake-computer.ts";
 import {
@@ -113,10 +114,11 @@ const computers = Layer.succeed(
   }),
 );
 
-const database = Layer.effectDiscard(Effect.all([migrateChat, migrateAudit, migrateGateway])).pipe(
-  Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })),
-  Layer.fresh,
-);
+const database = Layer.effectDiscard(
+  Effect.all([migrateChat, migrateAudit, migrateGateway, migrateLifecycle]),
+).pipe(Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })), Layer.fresh);
+
+const lifecycle = lifecycleLayer.pipe(Layer.provide(auditLogLayer));
 
 describe("a tool call in an api turn", () => {
   it.effect(
@@ -126,7 +128,7 @@ describe("a tool call in an api turn", () => {
       const model = navigatingModel();
 
       const gateway = gatewayLayer.pipe(
-        Layer.provide([auditLogLayer, computers, testBots, allowEverything]),
+        Layer.provide([auditLogLayer, computers, testBots, allowEverything, lifecycle]),
       );
 
       const agent = layerApi(botToolkit, { maxSteps: 4, stallTimeout: Duration.seconds(60) }).pipe(
@@ -165,7 +167,7 @@ describe("a tool call in an api turn", () => {
         expect(toolResults).toContain("untrusted_data");
         expect(toolResults).toContain("Example Domain");
       }).pipe(
-        Effect.provide(chatLayer.pipe(Layer.provide([agent, testBots]))),
+        Effect.provide(chatLayer.pipe(Layer.provide([agent, testBots, lifecycle]))),
         Effect.provide(database),
         Effect.provide(recorder.layer),
       );
@@ -179,7 +181,7 @@ describe("a tool call in an api turn", () => {
 
       // As main.ts builds it: one gateway reference, provided to the agent's tools and the page's controls.
       const gateway = gatewayLayer.pipe(
-        Layer.provide([auditLogLayer, computers, testBots, allowEverything]),
+        Layer.provide([auditLogLayer, computers, testBots, allowEverything, lifecycle]),
       );
 
       const agent = layerApi(botToolkit, { maxSteps: 4, stallTimeout: Duration.seconds(60) }).pipe(
@@ -211,7 +213,7 @@ describe("a tool call in an api turn", () => {
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
-            chatLayer.pipe(Layer.provide([agent, testBots])),
+            chatLayer.pipe(Layer.provide([agent, testBots, lifecycle])),
             controlHandlers.pipe(Layer.provide(gateway)),
           ),
         ),
@@ -240,7 +242,7 @@ describe("a tool call in an api turn", () => {
     ]);
 
     const gateway = gatewayLayer.pipe(
-      Layer.provide([auditLogLayer, computers, testBots, allowEverything]),
+      Layer.provide([auditLogLayer, computers, testBots, allowEverything, lifecycle]),
     );
 
     const agent = layerApi(botToolkit, { maxSteps: 4, stallTimeout: Duration.seconds(60) }).pipe(
@@ -280,7 +282,7 @@ describe("a tool call in an api turn", () => {
       expect(JSON.stringify(attributes)).not.toContain(typed);
       expect(JSON.stringify(rows)).not.toContain(typed);
     }).pipe(
-      Effect.provide(chatLayer.pipe(Layer.provide([agent, testBots]))),
+      Effect.provide(chatLayer.pipe(Layer.provide([agent, testBots, lifecycle]))),
       Effect.provide(database),
       Effect.provide(spanAttributesRedacted.pipe(Layer.provide(recorder.layer))),
     );
@@ -313,7 +315,7 @@ describe("a tool call in an api turn", () => {
       );
 
       const gateway = gatewayLayer.pipe(
-        Layer.provide([auditLogLayer, untouched, testBots, allowEverything]),
+        Layer.provide([auditLogLayer, untouched, testBots, allowEverything, lifecycle]),
       );
 
       const agent = layerApi(botToolkit, { maxSteps: 4, stallTimeout: Duration.seconds(60) }).pipe(
@@ -344,7 +346,7 @@ describe("a tool call in an api turn", () => {
           "run did not run: it is not granted to researcher",
         );
       }).pipe(
-        Effect.provide(chatLayer.pipe(Layer.provide([agent, testBots]))),
+        Effect.provide(chatLayer.pipe(Layer.provide([agent, testBots, lifecycle]))),
         Effect.provide(database),
       );
     },

@@ -25,6 +25,14 @@ OpenTelemetry for traces, logs and metrics, from the first ticket.
   └─ ConversationStore.append   (storing the reply)
   ```
 
+  `Chat.turn` records how the turn ended as `chat.status`: `finished`, `cancelled` for a Stop or a pause,
+  or `failed`. OTLP has no cancelled status, and a stopped turn's stream still ends normally, so Tempo
+  finds cancelled turns with `{ span.chat.status = "cancelled" }`. A turn refused for a pause ends its
+  span in error. Pausing and resuming a Bot are traces of their own, `Turns.pause` and `Turns.resume`.
+  The check of running turns every five seconds is untraced, so it adds no trace every five seconds: a
+  turn it stops is logged with its Bot and why. Every `turn.stopped` row, whoever stopped the turn, is
+  written by the turn as it ends, so it carries the trace of that turn's `Chat.turn`.
+
   RPC and HTTP request spans are off. RPC spans would add a second trace per call, and HTTP carries only
   the web app's files, the health check, the RPC socket and a person's files. Logs written inside a span carry its
   `trace_id`.

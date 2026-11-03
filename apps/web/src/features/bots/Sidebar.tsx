@@ -3,6 +3,7 @@ import { type MouseEvent, useId } from "react";
 import { BotAvatar } from "./BotAvatar.tsx";
 import { sidebarSections } from "./sidebar-sections.ts";
 import "./sidebar.css";
+import { usePausedBots } from "./use-pause.ts";
 
 interface Picking {
   readonly selected: BotId;
@@ -18,9 +19,15 @@ function isPlainClick(event: MouseEvent): boolean {
 
 const avatarSize = { tile: 52, row: 32 } as const;
 
-/** One Bot: a tile in the pinned grid, or a row under a group. */
-function BotLink(props: Picking & { readonly bot: BotSummary; readonly layout: "tile" | "row" }) {
-  const { bot } = props;
+/** One Bot: a tile in the pinned grid, or a row under a group. A paused Bot says so under its name. */
+function BotLink(
+  props: Picking & {
+    readonly bot: BotSummary;
+    readonly layout: "tile" | "row";
+    readonly paused: boolean;
+  },
+) {
+  const { bot, paused } = props;
 
   return (
     <li>
@@ -28,6 +35,7 @@ function BotLink(props: Picking & { readonly bot: BotSummary; readonly layout: "
         href={props.linkTo(bot.id)}
         className={`sidebar__${props.layout}`}
         aria-current={bot.id === props.selected ? "page" : undefined}
+        data-paused={paused}
         onClick={(event) => {
           if (!isPlainClick(event)) return;
 
@@ -36,8 +44,11 @@ function BotLink(props: Picking & { readonly bot: BotSummary; readonly layout: "
         }}
       >
         <BotAvatar bot={bot.id} size={avatarSize[props.layout]} />
-        <span className="sidebar__name" title={bot.name}>
-          {bot.name}
+        <span className="sidebar__label">
+          <span className="sidebar__name" title={bot.name}>
+            {bot.name}
+          </span>
+          {paused ? <span className="sidebar__paused">Paused</span> : null}
         </span>
       </a>
     </li>
@@ -48,6 +59,7 @@ function BotLink(props: Picking & { readonly bot: BotSummary; readonly layout: "
 function Group(props: {
   readonly name: string;
   readonly bots: ReadonlyArray<BotSummary>;
+  readonly paused: ReadonlyArray<BotId>;
   readonly picking: Picking;
 }) {
   const heading = useId();
@@ -59,7 +71,13 @@ function Group(props: {
       </h2>
       <ul className="sidebar__rows">
         {props.bots.map((bot) => (
-          <BotLink key={bot.id} bot={bot} layout="row" {...props.picking} />
+          <BotLink
+            key={bot.id}
+            bot={bot}
+            layout="row"
+            paused={props.paused.includes(bot.id)}
+            {...props.picking}
+          />
         ))}
       </ul>
     </div>
@@ -73,25 +91,44 @@ per Bot under each group's heading. The selected Bot's conversation is the one o
 export function Sidebar(props: Picking & { readonly bots: ReadonlyArray<BotSummary> }) {
   const { pinned, ungrouped, groups } = sidebarSections(props.bots);
   const picking: Picking = { selected: props.selected, linkTo: props.linkTo, onPick: props.onPick };
+  const paused = usePausedBots();
 
   return (
     <nav className="sidebar" aria-label="Bots">
       {pinned.length === 0 ? null : (
         <ul className="sidebar__pinned" aria-label="Pinned">
           {pinned.map((bot) => (
-            <BotLink key={bot.id} bot={bot} layout="tile" {...picking} />
+            <BotLink
+              key={bot.id}
+              bot={bot}
+              layout="tile"
+              paused={paused.includes(bot.id)}
+              {...picking}
+            />
           ))}
         </ul>
       )}
       {ungrouped.length === 0 ? null : (
         <ul className="sidebar__rows">
           {ungrouped.map((bot) => (
-            <BotLink key={bot.id} bot={bot} layout="row" {...picking} />
+            <BotLink
+              key={bot.id}
+              bot={bot}
+              layout="row"
+              paused={paused.includes(bot.id)}
+              {...picking}
+            />
           ))}
         </ul>
       )}
       {groups.map((group) => (
-        <Group key={group.name} name={group.name} bots={group.bots} picking={picking} />
+        <Group
+          key={group.name}
+          name={group.name}
+          bots={group.bots}
+          paused={paused}
+          picking={picking}
+        />
       ))}
     </nav>
   );

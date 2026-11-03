@@ -6,7 +6,7 @@ import {
   type RunId,
   type ToolCallId,
 } from "@aobot/domain";
-import { Data, Duration, Effect, Option, Schema, Stream } from "effect";
+import { Data, Duration, Effect, Option, Stream } from "effect";
 import {
   AgentEvent,
   type AgentError,
@@ -14,9 +14,7 @@ import {
   type Stalled,
   type StepLimit,
 } from "../agent/public.ts";
-
-/** The person pressed stop. */
-export class TurnStopped extends Schema.TaggedError<TurnStopped>()("TurnStopped", {}) {}
+import type { TurnStopped } from "../lifecycle/public.ts";
 
 /** The names one turn's events carry: its conversation, its run and the Bot's first message. */
 export interface TurnIds {
@@ -84,7 +82,12 @@ function modelFailedStep(error: ModelFailed) {
   );
 }
 
-const stoppedStep = TurnStep.Fail({ code: "stopped", message: "Stopped." });
+/** What the person reads when a turn was stopped, by why. */
+const stopMessages: Readonly<Record<TurnStopped["code"], string>> = {
+  stopped: "Stopped.",
+  paused: "This Bot is paused.",
+  pause_unknown: "The server could not tell whether this Bot is paused, so it stopped this turn.",
+};
 
 /** Where the turn is after a step, and the AG-UI events the step produced. */
 type Transition = readonly [TurnState, ReadonlyArray<ChatEvent>];
@@ -191,11 +194,30 @@ export function isTerminal(event: ChatEvent): boolean {
   return event.type === "RUN_FINISHED" || event.type === "RUN_ERROR";
 }
 
+/** How each early end reads on the turn's span: a stop or a pause cancels the turn, anything else fails it. */
+const earlyEnds: Readonly<Record<RunErrorCode, "cancelled" | "failed">> = {
+  stalled: "failed",
+  step_limit: "failed",
+  model: "failed",
+  stopped: "cancelled",
+  paused: "cancelled",
+  pause_unknown: "cancelled",
+};
+
+/**
+How a turn ended, from its terminal event, as its `Chat.turn` span records it in `chat.status`. OTLP has
+no cancelled status of its own, and a stopped turn still ends its stream normally.
+*/
+export function turnStatus(terminal: ChatEvent): "finished" | "cancelled" | "failed" {
+  return terminal.type === "RUN_ERROR" ? earlyEnds[terminal.code] : "finished";
+}
+
 /**
 One turn as AG-UI events: `RUN_STARTED`, then the Bot's messages as `TEXT_MESSAGE_START`, `…_CONTENT` and
 `…_END`, with each tool call between them as `TOOL_CALL_START`, `…_ARGS`, `…_END` and later
 `TOOL_CALL_RESULT` (its `metadata.failed` says whether the tool failed), then `RUN_FINISHED`, or `RUN_ERROR`
-saying why the turn ended early. Text after a tool call is a new message.
+saying why the turn ended early. Text after a tool call is a new message. Nothing `agentEvents` holds after
+the step that ends the turn is read, so a stop that lands once the Bot finished never fails the stream.
 */
 export function turnEvents(
   ids: TurnIds,
@@ -214,7 +236,7 @@ export function turnEvents(
       Stalled: (error) => Stream.make(stalledStep(error)),
       StepLimit: (error) => Stream.make(stepLimitStep(error)),
       ModelFailed: (error) => Stream.fromEffect(modelFailedStep(error)),
-      TurnStopped: () => Stream.make(stoppedStep),
+      TurnStopped: ({ code }) => Stream.make(TurnStep.Fail({ code, message: stopMessages[code] })),
     }),
   );
 
@@ -231,6 +253,7 @@ export function turnEvents(
         (): TurnState => TurnState.Waiting({ segment: 0 }),
         (state, step) => advance(ids, state, step),
       ),
+      Stream.takeUntil(isTerminal),
     ),
   );
 }

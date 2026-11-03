@@ -65,6 +65,26 @@
   outline-offset: -2px;
 }
 
+.sidebar__label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sidebar__tile .sidebar__label {
+  align-items: center;
+  max-width: 100%;
+}
+
+.sidebar__paused {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+[data-paused="true"] .bot-avatar {
+  opacity: 0.45;
+}
+
 .sidebar__name {
   min-width: 0;
   overflow: hidden;

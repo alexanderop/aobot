@@ -1,0 +1,17 @@
+import { SqliteMigrator } from "@effect/sql-sqlite-node";
+import { Effect } from "effect";
+import { SqlClient } from "effect/sql";
+
+const createBotPauses = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+
+  // A row means the Bot is paused; resuming it deletes the row. Who paused it, and when, is in the
+  // audit trail.
+  yield* sql`CREATE TABLE bot_pauses (bot_id text PRIMARY KEY)`;
+});
+
+/** Brings the lifecycle's tables up to date. Safe to run at every boot. */
+export const migrateLifecycle = SqliteMigrator.run({
+  table: "lifecycle_migrations",
+  loader: SqliteMigrator.fromRecord({ "0001_create_bot_pauses": createBotPauses }),
+});
