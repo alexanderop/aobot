@@ -87,7 +87,7 @@ export default async function scenario(baseUrl: string): Promise<void> {
 
   assert(answers()[0] === "I may not run commands.", "Researcher reported the refusal");
   assert(
-    browser("get", "text", ".conversation__header") === "Researcher",
+    browser("get", "text", ".conversation__header .pill") === "Researcher",
     "the header pill names Researcher",
   );
 
@@ -102,7 +102,7 @@ export default async function scenario(baseUrl: string): Promise<void> {
   await waitFor(
     "the header pill to name Assistant",
     10_000,
-    () => browser("get", "text", ".conversation__header") === "Assistant",
+    () => browser("get", "text", ".conversation__header .pill") === "Assistant",
   );
 
   const misnamed = new URL(researchers);
@@ -119,6 +119,6 @@ export default async function scenario(baseUrl: string): Promise<void> {
   await waitFor(
     "the header pill to name Researcher again",
     10_000,
-    () => browser("get", "text", ".conversation__header") === "Researcher",
+    () => browser("get", "text", ".conversation__header .pill") === "Researcher",
   );
 }
