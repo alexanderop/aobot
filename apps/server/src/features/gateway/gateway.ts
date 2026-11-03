@@ -249,13 +249,6 @@ class HandedOff extends Schema.TaggedError<HandedOff>()("HandedOff", {
   safety: SafetyList,
 }) {}
 
-/** Fails with {@link HandedOff} when `action`, on a page at `path`, is always the person's to do. */
-const handOff = (action: ToolAction, path: string) =>
-  Option.match(safetyOf(action, path), {
-    onNone: () => Effect.void,
-    onSome: (safety) => Effect.fail(new HandedOff({ action, path, safety })),
-  });
-
 /** An ask rule holds for an action from a call that names no turn, so there is no person to ask. */
 class NoOneToAsk extends Schema.TaggedError<NoOneToAsk>()("NoOneToAsk", {}) {}
 
@@ -769,19 +762,21 @@ export const gatewayLayer = Layer.effectContext(
         : Effect.succeed(file);
 
     /**
-    `request` as the computer is sent it, the host of the page it acts on, `""` for none, and the path of
-    the page the element it names is on, `""` for an action that names none.
+    `request` as the computer is sent it, and the host of the page it acts on, `""` for none, unless the
+    safety list hands it to the person, judged by the path of the page the element it names is on. Every
+    call that carries an action out resolves it here, a yes already given included: the page can have
+    moved on since the person was asked, to one where the same element is theirs.
     */
     const resolve = (
       bot: BotId,
       request: DirectRequest,
     ): Effect.Effect<
-      { readonly action: DirectAction; readonly host: string; readonly path: string },
-      UnknownRef | UnknownPage | OutsideWorkspace
+      { readonly action: DirectAction; readonly host: string },
+      UnknownRef | UnknownPage | OutsideWorkspace | HandedOff
     > => {
       const offThePage = (action: DirectAction) => Effect.succeed({ action, host: "", path: "" });
 
-      return DirectRequest.match(request, {
+      const resolved = DirectRequest.match(request, {
         navigate: (navigate) =>
           Effect.succeed({ action: navigate, host: hostOf(navigate.url), path: "" }),
         snapshot: (snapshot) =>
@@ -796,6 +791,13 @@ export const gatewayLayer = Layer.effectContext(
         write_file: (file) => Effect.flatMap(inWorkspace(file), offThePage),
         list_files: (file) => Effect.flatMap(inWorkspace(file), offThePage),
       });
+
+      return Effect.flatMap(resolved, ({ action, host, path }) =>
+        Option.match(safetyOf(action, path), {
+          onNone: () => Effect.succeed({ action, host }),
+          onSome: (safety) => Effect.fail(new HandedOff({ action, path, safety })),
+        }),
+      );
     };
 
     /**
@@ -933,9 +935,7 @@ export const gatewayLayer = Layer.effectContext(
       // A ref is resolved before any rule, so the rules judge the element the server's snapshot names,
       // and a ref that does not resolve is denied for that. A path outside the workspace is denied here;
       // the computer still confines every path itself.
-      const { action, host, path } = yield* resolve(bot, request);
-
-      yield* handOff(action, path);
+      const { action, host } = yield* resolve(bot, request);
 
       const allowed = yield* allowedBy(bot, action, host);
 
@@ -1110,10 +1110,7 @@ export const gatewayLayer = Layer.effectContext(
       allowRule: string,
       askRule: string,
     ) {
-      const { action, host, path } = yield* resolve(bot, request);
-
-      // The page can have moved on since the person was asked, to one where the same element is theirs.
-      yield* handOff(action, path);
+      const { action, host } = yield* resolve(bot, request);
 
       const allowRowId = yield* approval.spend(
         { bot, action, host },
