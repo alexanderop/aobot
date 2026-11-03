@@ -17,3 +17,8 @@ export function sessionToken(headers: Headers.Headers): Option.Option<string> {
 export function tokenHash(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
+
+/** An instant as the database writes its own, so a session's expiry compares to it as text. */
+export function instant(millis: number): string {
+  return new Date(millis).toISOString();
+}

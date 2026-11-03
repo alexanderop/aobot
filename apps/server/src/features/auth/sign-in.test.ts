@@ -127,7 +127,7 @@ describe("signing in", () => {
   it("sends the browser to the provider, remembering the sign-in in a short-lived cookie", async () => {
     const left = await get("/auth/sign-in?return=/audit");
 
-    expect(left.status).toBe(302);
+    expect(left.status).toBe(303);
     expect(left.headers.get("location")).toBe("https://login.example.com/auth?state=state-1");
     expect(cookiesOf(left).attributes("aobot_signin")).toMatch(
       /Max-Age=600.*Path=\/auth.*HttpOnly.*SameSite=Lax/u,

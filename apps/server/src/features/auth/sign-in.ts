@@ -84,10 +84,7 @@ export const signInRoutes = (publicUrl: URL) =>
 
           const { url, pending } = yield* provider.begin(returnTo);
 
-          return yield* HttpServerResponse.empty({
-            status: 302,
-            headers: { location: url.href },
-          }).pipe(
+          return yield* goTo(url.href).pipe(
             HttpServerResponse.setCookie(
               signInCookie,
               encodePending(pending),

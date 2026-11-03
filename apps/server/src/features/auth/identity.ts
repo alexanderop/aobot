@@ -4,7 +4,7 @@ import type { Headers } from "effect/http";
 import { SqlClient } from "effect/sql";
 import { Actor, type PersonActor, singleUser } from "../../shared/actor.ts";
 import { isAllowedDomain } from "./email.ts";
-import { sessionToken, tokenHash } from "./sessions.ts";
+import { instant, sessionToken, tokenHash } from "./sessions.ts";
 import type { SignInSettings } from "./settings.ts";
 
 /**
@@ -55,7 +55,7 @@ export const identitySignIn = (settings: Pick<SignInSettings, "allowedDomains">)
 
         if (Option.isNone(token)) return Option.none<PersonActor>();
 
-        const now = new Date(yield* Clock.currentTimeMillis).toISOString();
+        const now = instant(yield* Clock.currentTimeMillis);
 
         const [session] = yield* sql`
           SELECT people.email, people.name FROM sessions JOIN people USING (email)

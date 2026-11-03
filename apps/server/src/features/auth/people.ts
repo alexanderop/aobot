@@ -5,7 +5,7 @@ import { SqlClient } from "effect/sql";
 import { Actor, CurrentActor, deployment } from "../../shared/actor.ts";
 import { auditRows } from "../audit/public.ts";
 import { domainOf, isAllowedDomain } from "./email.ts";
-import { sessionLifetime, tokenHash } from "./sessions.ts";
+import { instant, sessionLifetime, tokenHash } from "./sessions.ts";
 import type { SignInSettings } from "./settings.ts";
 
 /** A verified address, and what else the provider said of the person behind it. */
@@ -52,11 +52,6 @@ const refusalWords: Readonly<Record<SignInRefusalCode, string>> = {
   expired: "expired",
   unavailable: "unavailable",
 };
-
-/** An instant as the database writes its own, so the two compare as text. */
-function instant(millis: number): string {
-  return new Date(millis).toISOString();
-}
 
 const decodeKnown = Schema.decodeUnknownEffect(
   Schema.Array(
@@ -221,9 +216,6 @@ export const peopleLayer = (settings: Pick<SignInSettings, "allowedDomains" | "a
         );
       });
 
-      const notRemoved = (error: { readonly message: string }) =>
-        new PersonNotRemoved({ message: error.message });
-
       const remove = Effect.fn("People.remove")(function* (email: Email) {
         return yield* Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis;
@@ -248,7 +240,7 @@ export const peopleLayer = (settings: Pick<SignInSettings, "allowedDomains" | "a
         }).pipe(
           sql.withTransaction,
           Effect.provideService(CurrentActor, deployment),
-          Effect.mapError(notRemoved),
+          Effect.mapError((error) => new PersonNotRemoved({ message: error.message })),
         );
       });
 
