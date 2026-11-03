@@ -226,9 +226,12 @@ there at all. Judging the page an action lands on is a follow-up (`docs/backlog/
 A Bot never enters or changes a credential, changes a security setting, or pays, whatever `rules.yaml`
 says. The safety list is code, in `gateway/safety.ts`, not configuration: no rule, no admin setting and no
 yes to an ask rule turns it off. It has three lists, matched in order: `credentials` (a password,
-passcode, one-time code, security question), `security` (two-factor sign-in, recovery codes, API keys and
-access tokens, security, sharing and permission settings, deleting or closing the account) and `payments`
-(paying, checkout, buying, adding a card, card numbers, wires and transfers, billing).
+passcode, PIN, one-time or verification code, security question), `security` (two-factor and 2-step
+sign-in, passkeys, authenticator apps, recovery codes, API keys, access tokens and SSH keys, revoking
+sessions, changing the account's email, making an admin, security, sharing and permission settings,
+deleting or closing the account) and `payments` (paying, checkout, buying, ordering, subscribing and
+upgrading a plan, adding or changing a card, card numbers, bank accounts, wires, transfers, withdrawals
+and donations, billing). Each also matches its German words for a password, buying, ordering and paying.
 
 **What it reads.** A `click`, `type` or `press` is matched on the element its ref resolved to, as the
 server's snapshot names it (role and name), and the host and path of the page that snapshot was read at,
@@ -253,7 +256,7 @@ It is one `hand_off` row, a decision no outcome follows, with the action's audit
 person" and shows `safety:credentials` where another row shows its rule. The `Gateway.act` span records
 `gateway.decision=hand_off`, `decision.source=safety` and `gateway.safety`. The model reads:
 
-> click did not run: entering or changing a password, one-time code or other credential is always your person's to do, never a Bot's, whatever the rules say. Stop, tell your person what needs doing, and ask them to take control of your computer and do it themselves.
+> click did not run: entering or changing a password, PIN, one-time code or other credential is always your person's to do, never a Bot's, whatever the rules say. Stop, tell your person what needs doing, and ask them to take control of your computer and do it themselves.
 
 The person does it on the live screen ([Taking control](#taking-control)). An action the person said yes
 to is matched again when it runs, since the page can have moved on to one where the same element is

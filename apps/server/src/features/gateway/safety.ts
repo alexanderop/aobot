@@ -14,10 +14,14 @@ export const SafetyList = Schema.Literals(["credentials", "security", "payments"
 export type SafetyList = typeof SafetyList.Type;
 
 interface Safety {
-  /** What the list covers, as the Bot is told it, such as "paying, buying or moving money". */
+  /** What the list covers, as the Bot is told it, such as "paying, buying, subscribing or moving money". */
   readonly about: string;
   readonly pattern: RegExp;
 }
+
+/** One case-insensitive pattern that matches where any of `alternatives` does. */
+const anyOf = (...alternatives: ReadonlyArray<RegExp>): RegExp =>
+  new RegExp(alternatives.map(({ source }) => source).join("|"), "i");
 
 /**
 Each safety list, matched in this order. Deliberately broad: a false hand-off costs the person one click,
@@ -25,21 +29,45 @@ a missed one costs them their account or their money. Fixed in code, so no rule 
 */
 const safetyLists = {
   credentials: {
-    about: "entering or changing a password, one-time code or other credential",
-    pattern:
-      /pass(word|code|phrase)|passwd|one[-_ ]?time[-_ ]?(code|password)|\botp\b|security[-_ ]?question|credential|sign[-_ ]?in[-_ ]?method/i,
+    about: "entering or changing a password, PIN, one-time code or other credential",
+    pattern: anyOf(
+      /pass(word|code|phrase)|passwd|passwort|kennwort/,
+      /one[-_ ]?time[-_ ]?(code|password)|\botp\b|verification[-_ ]?code/,
+      // A PIN only as a field or with what is done to it: a "Pin" button pins a message, and Pinterest
+      // keeps its pages under /pin/, so a field's match starts at its role and stops at the first slash.
+      /^(textbox|spinbutton)\b[^/]*\bpin\b|\bpin[-_ ]?(code|number)\b|\b(enter|change|reset|forgot)[-_ ]?(your[-_ ]?)?pin\b/,
+      /security[-_ ]?question|credential|sign[-_ ]?in[-_ ]?method/,
+    ),
   },
   security: {
     about:
-      "changing a security setting, such as two-factor sign-in, recovery codes, API keys or who has access",
-    pattern:
-      /\b2fa\b|two[-_ ]?factor|\bmfa\b|recovery[-_ ]?(code|key|email|phone)|api[-_ ]?key|access[-_ ]?token|security[-_ ]?settings?|\/settings\/security|account[-_ ]?security|sharing[-_ ]?settings?|share[-_ ]?with[-_ ]?(anyone|public)|make[-_ ]?public|admin[-_ ]?role|grant[-_ ]?admin|permission[-_ ]?settings?|delete[-_ ]?(my[-_ ]?)?account|close[-_ ]?account/i,
+      "changing a security setting, such as two-factor sign-in, passkeys, recovery codes, API keys, sessions or who has access",
+    pattern: anyOf(
+      /\b2fa\b|two[-_ ]?factor|\bmfa\b|\b(2|two)[-_ ]?step|authenticator|passkey/,
+      /recovery[-_ ]?(code|key|email|phone)/,
+      /api[-_ ]?key|access[-_ ]?token|ssh[-_ ]?key|\/settings\/(tokens|keys|ssh)/,
+      /security[-_ ]?settings?|\/settings\/security|account[-_ ]?security/,
+      /\brevoke\b|\b(sign|log)[-_ ]?out[-_ ]?(of[-_ ]?)?(all|every|other)/,
+      /change[-_ ]?(your[-_ ]?)?e-?mail/,
+      /sharing[-_ ]?settings?|share[-_ ]?with[-_ ]?(anyone|public)|make[-_ ]?public/,
+      /admin[-_ ]?role|grant[-_ ]?admin|make[-_ ]?(an?[-_ ]?)?admin|permission[-_ ]?settings?/,
+      /delete[-_ ]?(my[-_ ]?)?account|close[-_ ]?account/,
+    ),
   },
   payments: {
-    about: "paying, buying or moving money",
-    pattern:
+    about: "paying, buying, subscribing or moving money",
+    pattern: anyOf(
+      /payment|\bpay(ing)?\b|pay[-_ ]?now|checkout|purchase|billing/,
+      /\bbuy\b|place[-_ ]?(your[-_ ]?)?order|order[-_ ]?now/,
+      /\bsubscri(be|ptions?)\b|upgrade[-_ ]?(your[-_ ]?)?(plan|account|subscription)/,
+      /kaufen|bestellen|bezahlen|zahlung/,
+      /(add|update|change|remove)[-_ ]?(a[-_ ]?)?card\b|name[-_ ]?on[-_ ]?card|card[-_ ]?(details|number)/,
+      /(credit|debit)[-_ ]?card|\bcv[cv]\b/,
+      /\btransfers?\b|withdraw|send[-_ ]?money|donat(e|ion)/,
+      /bank[-_ ]?account|\biban\b|routing[-_ ]?number/,
       // A wire of money, not a news wire: "Business Wire" is where press releases go out.
-      /payment|\bpay(ing)?\b|pay[-_ ]?now|checkout|purchase|place[-_ ]?order|buy[-_ ]?now|add[-_ ]?(a[-_ ]?)?card|(?<!\b(business|news|press)[-_ ]?)\bwire\b|bank[-_ ]?transfer|transfer[-_ ]?(money|funds)|send[-_ ]?money|credit[-_ ]?card|card[-_ ]?number|\bcv[cv]\b|\biban\b|routing[-_ ]?number|billing/i,
+      /(?<!\b(business|news|press)[-_ ]?)\bwire\b/,
+    ),
   },
 } satisfies { readonly [List in SafetyList]: Safety };
 

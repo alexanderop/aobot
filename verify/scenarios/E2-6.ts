@@ -16,7 +16,7 @@ import { attribute, gatewayActSpan, type TempoSpan, traceSpans } from "../tempo.
 const accountPage = "http://fixture:8080/account";
 
 const handOff =
-  "click did not run: entering or changing a password, one-time code or other credential is always your person's to do, never a Bot's, whatever the rules say.";
+  "click did not run: entering or changing a password, PIN, one-time code or other credential is always your person's to do, never a Bot's, whatever the rules say.";
 
 const report =
   "Changing a password is yours to do. Please take control of my computer and change it yourself.";

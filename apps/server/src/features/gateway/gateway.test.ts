@@ -2701,7 +2701,7 @@ const changePassword = { action: "click", ref: "e3" } as const;
 
 /** What the model reads when the click on Change password is handed to its person. */
 const handedOffPassword =
-  "click did not run: entering or changing a password, one-time code or other credential is always your person's to do, never a Bot's, whatever the rules say. Stop, tell your person what needs doing, and ask them to take control of your computer and do it themselves.";
+  "click did not run: entering or changing a password, PIN, one-time code or other credential is always your person's to do, never a Bot's, whatever the rules say. Stop, tell your person what needs doing, and ask them to take control of your computer and do it themselves.";
 
 const changePasswordRow = [
   "click · hand_off",
