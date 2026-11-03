@@ -25,6 +25,7 @@ import {
 import { SqlClient, SqlError } from "effect/sql";
 import { ToolAction } from "./tool-action.ts";
 import type { TurnRef } from "./turn.ts";
+import { type Asked, askedOf, shownToCaller } from "./asked.ts";
 import { actorId, CurrentActor } from "../../shared/actor.ts";
 
 /** One action as it resolved, as a digest: an approval covers that action only. */
@@ -199,9 +200,8 @@ A question held for its conversation: the `actorId` of the person whose turn ask
 answers it, their answer, and the card while they may answer it. A card that asks in place of an approval
 card, as a secret's does, holds the conversation without one.
 */
-interface Waiting {
+interface Waiting extends Asked {
   readonly id: ApprovalId;
-  readonly asker: string;
   readonly answer: Deferred.Deferred<ApprovalAnswer>;
   readonly card: Option.Option<PendingApproval>;
 }
@@ -228,7 +228,31 @@ const notWaiting = new NoApprovalWaiting({
   message: "The Bot is not waiting for that answer any more, so it was not taken.",
 });
 
-const sameCard = Option.makeEquivalence<PendingApproval>((a, b) => a.approval === b.approval);
+const sameCard = (a: PendingApproval, b: PendingApproval) => a.approval === b.approval;
+
+/**
+`all` with the card of `conversation`'s question taken down, when it is up and `which` picks the question,
+and that question's answer to hand over.
+*/
+function takingCard(
+  all: Questions,
+  conversation: ConversationId,
+  which: (waiting: Waiting) => boolean,
+): readonly [Option.Option<Deferred.Deferred<ApprovalAnswer>>, Questions] {
+  return Option.match(
+    Option.filter(
+      HashMap.get(all, conversation),
+      (waiting) => which(waiting) && Option.isSome(waiting.card),
+    ),
+    {
+      onNone: () => [Option.none(), all],
+      onSome: (waiting) => [
+        Option.some(waiting.answer),
+        HashMap.set(all, conversation, { ...waiting, card: Option.none() }),
+      ],
+    },
+  );
+}
 
 function ledgerFailed(error: { readonly message: string }) {
   return new LedgerFailed({ message: error.message });
@@ -312,27 +336,12 @@ export const approvalRequests = Effect.gen(function* () {
     );
 
   /**
-  Takes the card of the question `id`, asked of `asker`, down, when it is still up, and gives its answer to
-  hand over. Whoever takes it, the person or the time limit, answers.
+  Takes the card of the question `id` down, when it is still up, and gives its answer to hand over. Whoever
+  takes it, the person or the time limit, answers.
   */
-  const takeCard = (conversation: ConversationId, id: ApprovalId, asker: string) =>
-    SubscriptionRef.modify(
-      questions,
-      (all): readonly [Option.Option<Deferred.Deferred<ApprovalAnswer>>, Questions] =>
-        Option.match(
-          Option.filter(
-            HashMap.get(all, conversation),
-            (waiting) =>
-              waiting.id === id && waiting.asker === asker && Option.isSome(waiting.card),
-          ),
-          {
-            onNone: () => [Option.none(), all],
-            onSome: (waiting) => [
-              Option.some(waiting.answer),
-              HashMap.set(all, conversation, { ...waiting, card: Option.none() }),
-            ],
-          },
-        ),
+  const takeCard = (conversation: ConversationId, id: ApprovalId) =>
+    SubscriptionRef.modify(questions, (all) =>
+      takingCard(all, conversation, (waiting) => waiting.id === id),
     );
 
   /** Refuses an action the ask rule `rule` holds for after the person said no to it earlier in `turn`'s run. */
@@ -399,7 +408,7 @@ export const approvalRequests = Effect.gen(function* () {
     Scope.Scope
   > =>
     Effect.gen(function* () {
-      const { id, asker, answer } = yield* holdConversation(turn.conversation);
+      const { id, answer } = yield* holdConversation(turn.conversation);
       yield* ledgerAllows(turn, rule);
 
       const tool = asked.action.action;
@@ -430,7 +439,7 @@ export const approvalRequests = Effect.gen(function* () {
             Option.match({
               onSome: Effect.succeedSome,
               onNone: () =>
-                Effect.flatMap(takeCard(turn.conversation, id, asker), (timedOut) =>
+                Effect.flatMap(takeCard(turn.conversation, id), (timedOut) =>
                   Option.isSome(timedOut)
                     ? Effect.succeedNone
                     : Effect.asSome(Deferred.await(answer)),
@@ -504,21 +513,11 @@ export const approvalRequests = Effect.gen(function* () {
     });
 
   const pending = (conversation: ConversationId) =>
-    Stream.unwrap(
-      Effect.map(CurrentActor, (actor) =>
-        SubscriptionRef.changes(questions).pipe(
-          Stream.map((all) =>
-            Option.flatMap(
-              Option.filter(
-                HashMap.get(all, conversation),
-                (waiting) => waiting.asker === actorId(actor),
-              ),
-              ({ card }) => card,
-            ),
-          ),
-          Stream.changesWith(sameCard),
-        ),
-      ),
+    shownToCaller(
+      questions,
+      () => conversation,
+      ({ card }) => card,
+      sameCard,
     );
 
   const answer = Effect.fn("ApprovalRequests.answer")(function* (
@@ -526,7 +525,11 @@ export const approvalRequests = Effect.gen(function* () {
     approval: ApprovalId,
     given: ApprovalAnswer,
   ) {
-    const taken = yield* takeCard(conversation, approval, actorId(yield* CurrentActor));
+    const mine = askedOf(actorId(yield* CurrentActor));
+
+    const taken = yield* SubscriptionRef.modify(questions, (all) =>
+      takingCard(all, conversation, (waiting) => waiting.id === approval && mine(waiting)),
+    );
 
     yield* Option.match(taken, {
       onNone: () => Effect.fail(notWaiting),

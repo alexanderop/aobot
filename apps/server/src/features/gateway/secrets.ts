@@ -14,10 +14,11 @@ import {
   Option,
   Schema,
   type Scope,
-  Stream,
+  type Stream,
   SubscriptionRef,
 } from "effect";
 import { actorId, CurrentActor } from "../../shared/actor.ts";
+import { type Asked, askedOf, shownToCaller } from "./asked.ts";
 
 /** A person answering the secret a Bot asked them for. */
 export class SecretRequests extends Context.Service<
@@ -46,9 +47,8 @@ One Bot's request for a secret, made in the turn of the person whose `actorId` i
 the Bot while its ref is resolved and judged, so a second request is refused before any rule runs, and
 `shown` to that person only once the rules allowed it; only then is their answer taken.
 */
-interface Waiting {
+interface Waiting extends Asked {
   readonly id: SecretRequestId;
-  readonly asker: string;
   readonly answer: Deferred.Deferred<SecretAnswer>;
   readonly shown: Option.Option<PendingSecret>;
 }
@@ -74,7 +74,7 @@ const noRequest = new NoSecretRequested({
   message: "The Bot is not waiting for that secret any more, so nothing was typed.",
 });
 
-const samePending = Option.makeEquivalence<PendingSecret>((a, b) => a.request === b.request);
+const samePending = (a: PendingSecret, b: PendingSecret) => a.request === b.request;
 
 /**
 Where each Bot's request for a secret waits for the person's answer, one request per Bot at a time. In
@@ -154,18 +154,11 @@ export const secretRequests = Effect.gen(function* () {
     );
 
   const pending = (bot: BotId) =>
-    Stream.unwrap(
-      Effect.map(CurrentActor, (actor) =>
-        SubscriptionRef.changes(requests).pipe(
-          Stream.map((all) =>
-            Option.flatMap(
-              Option.filter(HashMap.get(all, bot), (waiting) => waiting.asker === actorId(actor)),
-              ({ shown }) => shown,
-            ),
-          ),
-          Stream.changesWith(samePending),
-        ),
-      ),
+    shownToCaller(
+      requests,
+      () => bot,
+      ({ shown }) => shown,
+      samePending,
     );
 
   const answer = Effect.fn("SecretRequests.answer")(function* (
@@ -173,7 +166,7 @@ export const secretRequests = Effect.gen(function* () {
     request: SecretRequestId,
     given: SecretAnswer,
   ) {
-    const by = actorId(yield* CurrentActor);
+    const mine = askedOf(actorId(yield* CurrentActor));
 
     const taken = yield* SubscriptionRef.modify(
       requests,
@@ -181,8 +174,7 @@ export const secretRequests = Effect.gen(function* () {
         Option.match(
           Option.filter(
             HashMap.get(all, bot),
-            (waiting) =>
-              waiting.id === request && waiting.asker === by && Option.isSome(waiting.shown),
+            (waiting) => waiting.id === request && mine(waiting) && Option.isSome(waiting.shown),
           ),
           {
             onNone: () => [Option.none(), all],

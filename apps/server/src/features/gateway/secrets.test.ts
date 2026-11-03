@@ -102,13 +102,11 @@ const supplied = SecretAnswer.cases.Supplied.make({ value: Redacted.make(passwor
 /** The person's answer to `shown` once it is no longer waiting. */
 const answerLate = (shown: PendingSecret) => Effect.flip(answerTo(shown, supplied));
 
-/** Whether `person`, alice unless named, is shown any request of the Bot's now. */
-const shownTo = (person: PersonActor) =>
+/** The request of the Bot's that `person`, alice unless named, is shown now, if any. */
+const shownNow = (person: PersonActor = alice) =>
   SecretRequests.use((secrets) =>
     secrets.pending(assistant.id).pipe(Stream.runHead, Effect.map(Option.flatten)),
   ).pipe(Effect.provideService(CurrentActor, person));
-
-const shownNow = shownTo(alice);
 
 const conversation = ConversationId.make("conversation-1");
 
@@ -259,7 +257,7 @@ ask:
           Effect.flip(gateway.act(inTurn, askForPassword)),
         );
 
-        return [refused, yield* shownNow] as const;
+        return [refused, yield* shownNow()] as const;
       }).pipe(Effect.provide(startGateway(computer.layer, askBeforeTyping)));
 
       expect(refused.message).toBe(declinedEarlier("request_secret"));
@@ -344,7 +342,7 @@ ask:
             Effect.flip(gateway.act(inTurn, { action: "type", ref: "e2", text: "grace" })),
           );
 
-          const shownAfter = [yield* shownNow, yield* approvalShownNow];
+          const shownAfter = [yield* shownNow(), yield* approvalShownNow];
 
           const askingNextRun = yield* Gateway.use((gateway) =>
             Effect.forkChild(Effect.result(gateway.act(inRun("run-2"), askForPassword))),
@@ -393,7 +391,7 @@ ask:
         const [toBob, refused, answer] = yield* Effect.gen(function* () {
           const asking = yield* readThenAsk;
           const shown = yield* untilShown;
-          const toBob = yield* shownTo(bob);
+          const toBob = yield* shownNow(bob);
           const refused = yield* Effect.flip(answerTo(shown, supplied, bob));
           yield* answerTo(shown, supplied);
 
@@ -437,7 +435,7 @@ ask:
         yield* TestClock.adjust("10 minutes");
         const refused = yield* Effect.flip(Fiber.join(asking));
 
-        return [refused, yield* answerLate(shown), yield* shownNow] as const;
+        return [refused, yield* answerLate(shown), yield* shownNow()] as const;
       }).pipe(Effect.provide(startGateway(computer.layer)));
 
       expect(refused.message).toContain("Your person did not answer within 10m");
@@ -510,7 +508,7 @@ allow:
       const [refused, nobodyAsked] = yield* Gateway.use((gateway) =>
         gateway.act(bot, { action: "snapshot" }).pipe(
           Effect.andThen(Effect.flip(gateway.act(bot, askForPassword))),
-          Effect.flatMap((refused) => Effect.map(shownNow, (none) => [refused, none] as const)),
+          Effect.flatMap((refused) => Effect.map(shownNow(), (none) => [refused, none] as const)),
         ),
       ).pipe(Effect.provide(startGateway(computer.layer, policy)));
 
@@ -539,7 +537,7 @@ allow:
       const [refused, nobodyAsked] = yield* Gateway.use((gateway) =>
         gateway.act(bot, { action: "snapshot" }).pipe(
           Effect.andThen(Effect.flip(gateway.act(bot, { ...askForPassword, ref: "e4" }))),
-          Effect.flatMap((refused) => Effect.map(shownNow, (none) => [refused, none] as const)),
+          Effect.flatMap((refused) => Effect.map(shownNow(), (none) => [refused, none] as const)),
         ),
       ).pipe(Effect.provide(startGateway(computer.layer)));
 
@@ -572,7 +570,7 @@ allow:
         const [refused, nobodyAsked] = yield* Gateway.use((gateway) =>
           gateway.act(bot, { action: "snapshot" }).pipe(
             Effect.andThen(Effect.flip(gateway.act(bot, askForPassword))),
-            Effect.flatMap((refused) => Effect.map(shownNow, (none) => [refused, none] as const)),
+            Effect.flatMap((refused) => Effect.map(shownNow(), (none) => [refused, none] as const)),
           ),
         ).pipe(Effect.provide(startGateway(computer.layer)));
 
@@ -780,7 +778,7 @@ describe("request_secret over MCP", () => {
       yield* Effect.promise(() => stop(session, call));
 
       const rows = yield* untilSettled;
-      const shownAfter = yield* shownNow.pipe(Effect.provideContext(served));
+      const shownAfter = yield* shownNow().pipe(Effect.provideContext(served));
 
       call.abort();
       yield* Effect.promise(() => asking);
