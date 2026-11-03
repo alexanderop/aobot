@@ -21,10 +21,20 @@ function rowWith(detail: Schema.JsonObject): AuditRow {
 describe("whyOf", () => {
   it("reads the rule and the reason a refusal names", () => {
     expect(whyOf(rowWith({ rule: "no-rm-rf", reason: "denied by rule" }))).toEqual({
-      rule: Option.some("no-rm-rf"),
+      decidedBy: Option.some("no-rm-rf"),
       reason: Option.some("denied by rule"),
     });
   });
+
+  it.each([
+    ["names no rule", { name: "Change password", safety: "credentials" }],
+    ["names the ask rule it was asked under", { rule: "ask-first", safety: "security" }],
+  ])(
+    "reads an action handed to the person that %s as decided by the safety list",
+    (_case, detail) => {
+      expect(whyOf(rowWith(detail)).decidedBy).toEqual(Option.some(`safety:${detail.safety}`));
+    },
+  );
 
   it.each([
     [{ answer: "yes", by: "person" }, "Yes (person)"],
@@ -32,7 +42,7 @@ describe("whyOf", () => {
     [{ answer: "no", by: "the server stopped" }, "No (the server stopped)"],
   ])("reads the person's answer %j as %j", (detail, reason) => {
     expect(whyOf(rowWith({ approval: "approval-1", ...detail }))).toEqual({
-      rule: Option.none(),
+      decidedBy: Option.none(),
       reason: Option.some(reason),
     });
   });

@@ -1,13 +1,18 @@
 import { answerLabels, ApprovalAnswer, ApprovalAnsweredBy, type AuditRow } from "@aobot/domain";
 import { Option, Schema } from "effect";
 
-/** Why a row's action was decided as it was, as its detail says: the rule that decided, and the reason. */
+/**
+Why a row's action was decided as it was, as its detail says: what decided it, a rule or the safety list,
+and the reason.
+*/
 interface Why {
-  readonly rule: Option.Option<string>;
+  readonly decidedBy: Option.Option<string>;
   readonly reason: Option.Option<string>;
 }
 
 const decodeRule = Schema.decodeUnknownOption(Schema.Struct({ rule: Schema.NonEmptyString }));
+
+const decodeSafety = Schema.decodeUnknownOption(Schema.Struct({ safety: Schema.NonEmptyString }));
 
 const decodeReason = Schema.decodeUnknownOption(Schema.Struct({ reason: Schema.NonEmptyString }));
 
@@ -16,8 +21,10 @@ const decodeAnswer = Schema.decodeUnknownOption(
 );
 
 /**
-The rule and the reason `row`'s detail names, each when it names one as text. A person's answer to an
-approval reads as its reason, with who or what gave it, such as "No (time limit)".
+The rule and the reason `row`'s detail names, each when it names one as text. An action the safety list
+hands to the person is decided by that list, such as `safety:credentials`, also when its row names the ask
+rule the person had been asked under. A person's answer to an approval reads as its reason, with who or
+what gave it, such as "No (time limit)".
 */
 export function whyOf(row: AuditRow): Why {
   const answered = Option.map(
@@ -26,7 +33,10 @@ export function whyOf(row: AuditRow): Why {
   );
 
   return {
-    rule: Option.map(decodeRule(row.detail), ({ rule }) => rule),
+    decidedBy: Option.orElse(
+      Option.map(decodeSafety(row.detail), ({ safety }) => `safety:${safety}`),
+      () => Option.map(decodeRule(row.detail), ({ rule }) => rule),
+    ),
     reason: Option.orElse(
       Option.map(decodeReason(row.detail), ({ reason }) => reason),
       () => answered,
