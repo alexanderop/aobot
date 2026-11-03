@@ -44,6 +44,7 @@ export const featureDependencies: ReadonlyMap<
       ["screen", []],
       ["audit", []],
       ["approvals", ["chat"]],
+      ["session", []],
     ]),
   ],
   [
