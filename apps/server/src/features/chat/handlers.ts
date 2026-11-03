@@ -43,8 +43,8 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
     const turns = yield* Turns;
 
     /**
-    The Bot the page picked for a conversation of the caller's that `standing` says how it stands, unless
-    it is someone else's or belongs to another Bot. A Bot no longer in `bots.yaml` is unknown, so its old
+    The Bot the page picked for a conversation that stands for the caller as `standing`, refused when the
+    conversation is someone else's or another Bot's. A Bot no longer in `bots.yaml` is unknown, so its old
     conversations open no more.
     */
     const botOf = Effect.fnUntraced(function* (
