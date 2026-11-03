@@ -80,7 +80,8 @@ before creating its directory. The server graph today:
 | `bots`, `audit`, `policy`, `computers`, `auth` | nothing                                |
 | `gateway`                                      | `bots`, `policy`, `audit`, `computers` |
 | `agent`                                        | `bots`, `gateway`                      |
-| `chat`                                         | `bots`, `agent`                        |
+| `lifecycle`                                    | `bots`, `audit`                        |
+| `chat`                                         | `bots`, `agent`, `lifecycle`           |
 | `approvals`                                    | `gateway`                              |
 
 Only `gateway` depends on `computers`, so "every action goes through the gateway" is enforced by the

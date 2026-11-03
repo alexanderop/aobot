@@ -279,8 +279,8 @@ the person was asked under. The audit page still shows the list there, as `safet
 ## Life of one request
 
 1. A person sends a message with the Bot they picked.
-2. The server starts an agent turn on behalf of that Bot, with its instructions, which name the tools it
-   was granted.
+2. The server starts an agent turn on behalf of that Bot, once `Turns.start` read that the Bot is not
+   paused, with its instructions, which name the tools it was granted.
 3. The agent asks for a tool, for example `navigate`.
 4. The gateway checks the grant, then the safety list, then the rules, and writes one audit row either
    way. When an ask rule holds, it asks the person in the chat first and waits for their answer.
@@ -390,6 +390,36 @@ carries no `Origin`. The `/files` routes below are guarded the same way.
 either is swept to `unknown` at start-up like any other call. Their spans, `ComputerControl.take` and
 `ComputerControl.handBack`, carry the events `control.door_closed` (with `control.in_flight`),
 `control.taken` and `control.released`; a refused call adds `control.refused` to its `Gateway.act` span.
+
+## Stopping and pausing a Bot
+
+A person stops their Bot's turn with Stop. An admin pauses a Bot, and none of its turns runs anywhere
+until they resume it; in single-user mode the person is the admin. Both go through `Turns`, in the
+`lifecycle` feature, which owns the turns this server runs.
+
+1. Every turn starts through `Turns.start`, whoever asks for it: today `Chat.send`, later a routine or a
+   hop from another Bot. It claims the conversation, one turn per conversation, then reads `bot_pauses`.
+   A paused Bot is refused with `BotPaused` before anything is stored, and the page says "This Bot is
+   paused." and puts the message back in the composer. The read is tried three times, 100 ms apart, and
+   when none answers the turn is refused with `PauseUnknown`: a Bot that may be paused never starts on a
+   guess. Either refusal writes `turn · deny` with `{ bot, reason }`, `bot paused` or
+   `pause state unreadable`.
+2. The claim comes before the read, so a pause stored after the read still finds the turn and stops it.
+   No turn slips between the two.
+3. Stop ends the turn running in its conversation, its model stream and its running tool call with it.
+   The turn ends with `RUN_ERROR` `stopped`, keeps what the Bot said, and writes `turn.stopped · allow`
+   with `reason: "stopped by the person"`, then its `succeeded`.
+4. `Pause.pause` stores the Bot's row in `bot_pauses` and its `bot.paused` rows in one transaction, then
+   stops every turn of that Bot on this server at once. Each ends with `RUN_ERROR` `paused`, "This Bot is
+   paused.", and a `turn.stopped` row naming `bot paused`. `Pause.resume` deletes the row with its
+   `bot.resumed` rows. Pausing a paused Bot or resuming a running one writes nothing.
+5. Every five seconds each server reads `bot_pauses` and, as the deployment, stops its turns of every Bot
+   paused on another server. When three reads in a row fail while a Bot has a turn running here, its
+   turns stop too, with `pause_unknown`: one slow query does not stop every running turn, fifteen seconds
+   of a database that stays unreadable does. The same read keeps `Pause.watch` current, which the page
+   follows for its Paused badge and its Pause and Resume button.
+
+Pausing every Bot at once waits for admin controls.
 
 ## Files in and out of the workspace
 
@@ -772,6 +802,7 @@ const conversation = Atom.family((id: ConversationId) => /* fold ChatEvents into
 | `useSelection()`              | (none)                               | The Bot and conversation the page has open, as the server confirmed it, and `pick` to open another Bot                                                                                       | E2-1 |
 | `useSecretRequest(call, bot)` | `useHumanInTheLoop`                  | What a `request_secret` card shows, with the request `Secret.pending` streams for the Bot, `supply`, which sends the typed secret over `Secret.answer` with that request's id, and `decline` | E2-3 |
 | `useApproval(id, turn)`       | `useHumanInTheLoop`, `useInterrupt`  | The approval card of the conversation: the question `Approval.pending` streams, the answer for the rest of its turn, and `choose`, which sends yes or no over `Approval.answer`              | E2-5 |
+| `usePause(bot)`               | (none)                               | Whether the Bot is paused, once the server said, whether a pause or a resume is on its way, why the last one failed, `pause` and `resume`                                                    | E2-7 |
 | `useAuditTrail()`             | (none)                               | The audit rows the URL's filters let through, newest first, whether older ones are left, why the last page failed, `filter`, `loadMore` and `reload`, which reads the trail again            | E2-4 |
 
 The page opens the Bot and the conversation the URL names as `?bot=<id>&c=<id>`, or the first Bot in

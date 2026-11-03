@@ -43,6 +43,7 @@ screenshot.
 - **Groups:** a small muted heading per group (`fitness`, `dev stuff`, `news`), then one row per Bot:
   avatar, name, a one-line preview of the last message, an unread dot on the right.
 - **Selected row:** a slightly lighter rounded background.
+- **Paused Bot:** its avatar dimmed, and Paused in `--muted` under its name.
 - **Bottom:** your photo and name, and an apps button.
 
 E2-1 builds the pinned grid, the groups and the selected row. A pinned Bot shows only in the grid, and a
@@ -53,6 +54,12 @@ in the app, previews and unread dots for E3-2, and the bottom bar for people (E3
 
 - **Header:** the Bot's avatar and name in a pill, centred, with the time below. Until the conversation
   opens the pill says Connecting…, and Unavailable with a `--danger` dot when it cannot.
+- **Pause:** a Pause pill on `--bubble` at the header's right end, Resume in the accent colour while the
+  Bot is paused, disabled while the change is on its way and shown once the server has said which. The
+  pill says Paused in `--muted` after the Bot's name, and why a pause or a resume did not happen shows in
+  `--danger` under the header. A message sent to a paused Bot goes back into the composer with "This Bot
+  is paused." in the error line, and a pause that ends a running turn says the same; the person's own
+  Stop says nothing.
 - **Your messages:** right-aligned, accent background, dark text (`--bg`, 4.5:1 or better), large radius.
 - **Bot messages:** left-aligned, dark grey background, max ~60% width. A Bot's consecutive messages are
   separate bubbles stacked with a small gap, not one long block.
@@ -153,4 +160,5 @@ Dark is the main theme. A light theme is a later ticket.
 | [E2-3](backlog/E2-roles-and-guardrails/E2-3-never-record-secrets.md)                | Secret entry card                               |
 | [E2-4](backlog/E2-roles-and-guardrails/E2-4-an-audit-page-people-can-read.md)       | Audit page                                      |
 | [E2-5](backlog/E2-roles-and-guardrails/E2-5-ask-before-risky-actions.md)            | Approval card                                   |
+| [E2-7](backlog/E2-roles-and-guardrails/E2-7-pause-a-bot.md)                         | Pause and Resume, the Paused badge              |
 | [E3-2](backlog/E3-people/E3-2-my-conversations-only-mine.md)                        | Last-message previews and unread dots           |
