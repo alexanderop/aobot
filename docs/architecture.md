@@ -565,10 +565,11 @@ Three things hold that up.
 
 **A person types a secret, never the chat.** A Bot that needs a password calls
 `request_secret({ ref, field })`, naming the field for its person, such as `the password for the login
-page`. The gateway checks the grant, holds a request for the Bot, then checks the door, the ref and the
-rules as for `type`, with `tool.name == "request_secret"` and the element the ref names. Each Bot has at
-most one request at a time; a second is `secret.requested · deny` with `{ reason: "already asked" }`
-before anything is judged. The ref must name a `textbox` or a `searchbox`, else the call is
+page`. The gateway checks the grant, holds a request for the Bot and its turn's person, then checks the
+door, the ref and the rules as for `type`, with `tool.name == "request_secret"` and the element the ref
+names. Each Bot has at most one request at a time per person, so one person's request never holds up
+another's turn with the same Bot; a second is `secret.requested · deny` with
+`{ reason: "already asked" }` before anything is judged. The ref must name a `textbox` or a `searchbox`, else the call is
 `secret.requested · deny` with `reason: "not a text field"`, and the computer itself refuses `type_secret`
 for any element but a text `<input>` or a `<textarea>`: what a contenteditable element holds is page text,
 which no read hides. A page on no site, such as `about:blank` or a `data:` page, has no host to show the
@@ -604,7 +605,7 @@ reports it failed, but, as its source reads, sends no `notifications/cancelled` 
 connection open, so the gateway still waits. The Bot reads that the tool failed, and its card says it did
 not get the secret, since the call no longer runs, so nothing can be supplied any more. The request waits
 on until the turn ends, or for the rest of its ten minutes, `no answer`, and until then the Bot's next
-`request_secret` is `already asked`.
+`request_secret` for that person is `already asked`.
 
 **The computer never reads a secret back.** Playwright's snapshot prints what a field holds, a password
 field's included (`textbox "Password" [ref=e3]: hunter2`). After every action the computer asks the page

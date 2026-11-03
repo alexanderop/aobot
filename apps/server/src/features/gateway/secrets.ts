@@ -18,7 +18,7 @@ import {
   SubscriptionRef,
 } from "effect";
 import { actorId, CurrentActor } from "../../shared/actor.ts";
-import { type Asked, askedOf, shownToCaller } from "./asked.ts";
+import { type Asked, shownToCaller } from "./asked.ts";
 
 /** A person answering the secret a Bot asked them for. */
 export class SecretRequests extends Context.Service<
@@ -44,8 +44,9 @@ export class SecretRequests extends Context.Service<
 
 /**
 One Bot's request for a secret, made in the turn of the person whose `actorId` is `asker`. It is held for
-the Bot while its ref is resolved and judged, so a second request is refused before any rule runs, and
-`shown` to that person only once the rules allowed it; only then is their answer taken.
+the Bot and that person while its ref is resolved and judged, so a second request of theirs is refused
+before any rule runs, and `shown` to that person only once the rules allowed it; only then is their answer
+taken.
 */
 interface Waiting extends Asked {
   readonly id: SecretRequestId;
@@ -53,10 +54,19 @@ interface Waiting extends Asked {
   readonly shown: Option.Option<PendingSecret>;
 }
 
-/** Each Bot's request that waits for its person, by the Bot. */
-type Requests = HashMap.HashMap<BotId, Waiting>;
+/**
+Whose request waits: one Bot's, asked of the person whose `actorId` is `asker`. Keys compare by value. By
+the person too, so a request in one person's turn never holds up another's turn with the same Bot.
+*/
+interface Slot {
+  readonly bot: BotId;
+  readonly asker: string;
+}
 
-/** The Bot asked for a secret while its earlier request still waits for the person. */
+/** Each request that waits for its person, by its {@link Slot}. */
+type Requests = HashMap.HashMap<Slot, Waiting>;
+
+/** The Bot asked for a secret while its earlier request still waits for the same person. */
 export class AlreadyAsked extends Schema.TaggedError<AlreadyAsked>()("AlreadyAsked", {}) {}
 
 /** One Bot's request for a secret, from {@link secretRequests}'s `open`. */
@@ -77,24 +87,24 @@ const noRequest = new NoSecretRequested({
 const samePending = (a: PendingSecret, b: PendingSecret) => a.request === b.request;
 
 /**
-Where each Bot's request for a secret waits for the person's answer, one request per Bot at a time. In
+Where each Bot's request for a secret waits for the person's answer, one per Bot and person at a time. In
 memory: a request waits inside one turn, and a restart ends the turn with it. The answer is handed over
 once, so a second answer to the same request finds none.
 */
 export const secretRequests = Effect.gen(function* () {
   const requests = yield* SubscriptionRef.make<Requests>(HashMap.empty());
 
-  /** Takes `bot`'s request out, when it is still `id`, and says whether it did. */
-  const withdraw = (bot: BotId, id: SecretRequestId) =>
+  /** Takes the request at `slot` out, when it is still `id`, and says whether it did. */
+  const withdraw = (slot: Slot, id: SecretRequestId) =>
     SubscriptionRef.modify(requests, (all): readonly [boolean, Requests] =>
-      Option.exists(HashMap.get(all, bot), (waiting) => waiting.id === id)
-        ? [true, HashMap.remove(all, bot)]
+      Option.exists(HashMap.get(all, slot), (waiting) => waiting.id === id)
+        ? [true, HashMap.remove(all, slot)]
         : [false, all],
     );
 
   /**
   Holds a request for `bot`, in the {@link CurrentActor}'s turn, until the scope closes. Fails while another
-  of its requests waits.
+  of its requests of that person waits.
   */
   const open = (bot: BotId): Effect.Effect<OpenRequest, AlreadyAsked, Scope.Scope> =>
     Effect.acquireRelease(
@@ -106,27 +116,29 @@ export const secretRequests = Effect.gen(function* () {
           shown: Option.none(),
         };
 
+        const slot: Slot = { bot, asker: waiting.asker };
+
         const opened = yield* SubscriptionRef.modify(
           requests,
           (all): readonly [boolean, Requests] =>
-            HashMap.has(all, bot) ? [false, all] : [true, HashMap.set(all, bot, waiting)],
+            HashMap.has(all, slot) ? [false, all] : [true, HashMap.set(all, slot, waiting)],
         );
 
         if (!opened) return yield* new AlreadyAsked();
 
-        return waiting;
+        return { ...waiting, slot };
       }),
-      ({ id }) => withdraw(bot, id),
+      ({ slot, id }) => withdraw(slot, id),
     ).pipe(
-      Effect.map(({ id, answer }): OpenRequest => {
-        const withdrawn = withdraw(bot, id);
+      Effect.map(({ slot, id, answer }): OpenRequest => {
+        const withdrawn = withdraw(slot, id);
 
         return {
           ask: (field, host) =>
             SubscriptionRef.update(requests, (all) =>
               HashMap.modifyAt(
                 all,
-                bot,
+                slot,
                 Option.map((waiting) =>
                   waiting.id === id
                     ? { ...waiting, shown: Option.some({ request: id, field, host }) }
@@ -156,7 +168,7 @@ export const secretRequests = Effect.gen(function* () {
   const pending = (bot: BotId) =>
     shownToCaller(
       requests,
-      () => bot,
+      (asker) => ({ bot, asker }),
       ({ shown }) => shown,
       samePending,
     );
@@ -166,19 +178,19 @@ export const secretRequests = Effect.gen(function* () {
     request: SecretRequestId,
     given: SecretAnswer,
   ) {
-    const mine = askedOf(actorId(yield* CurrentActor));
+    const slot: Slot = { bot, asker: actorId(yield* CurrentActor) };
 
     const taken = yield* SubscriptionRef.modify(
       requests,
       (all): readonly [Option.Option<Deferred.Deferred<SecretAnswer>>, Requests] =>
         Option.match(
           Option.filter(
-            HashMap.get(all, bot),
-            (waiting) => waiting.id === request && mine(waiting) && Option.isSome(waiting.shown),
+            HashMap.get(all, slot),
+            (waiting) => waiting.id === request && Option.isSome(waiting.shown),
           ),
           {
             onNone: () => [Option.none(), all],
-            onSome: (waiting) => [Option.some(waiting.answer), HashMap.remove(all, bot)],
+            onSome: (waiting) => [Option.some(waiting.answer), HashMap.remove(all, slot)],
           },
         ),
     );

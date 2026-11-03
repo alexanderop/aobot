@@ -28,7 +28,7 @@ import { CurrentActor, type PersonActor } from "../../shared/actor.ts";
 import { alice, bob } from "../../shared/testing/people.ts";
 import { recordedSpans } from "../../shared/testing/recorded-spans.ts";
 import { assistant } from "../bots/testing/test-bots.ts";
-import { policyFrom } from "../policy/testing/test-policy.ts";
+import { allowEverything, policyFrom } from "../policy/testing/test-policy.ts";
 import { ApprovalRequests } from "./approvals.ts";
 import { ComputerControl } from "./control.ts";
 import { Claim, Gateway } from "./gateway.ts";
@@ -78,14 +78,15 @@ const readThenAsk = Gateway.use((gateway) =>
     .pipe(Effect.andThen(Effect.forkChild(gateway.act(bot, askForPassword)))),
 );
 
-/** The request the turn's person, alice, is shown, once the Bot's request waits for them. */
-const untilShown = SecretRequests.use((secrets) =>
-  secrets.pending(assistant.id).pipe(
-    Stream.filter(Option.isSome),
-    Stream.runHead,
-    Effect.map((shown) => Option.getOrThrow(Option.flatten(shown))),
-  ),
-).pipe(Effect.provideService(CurrentActor, alice));
+/** The request `person`, alice unless named, is shown, once the Bot's request waits for them. */
+const untilShown = (person: PersonActor = alice) =>
+  SecretRequests.use((secrets) =>
+    secrets.pending(assistant.id).pipe(
+      Stream.filter(Option.isSome),
+      Stream.runHead,
+      Effect.map((shown) => Option.getOrThrow(Option.flatten(shown))),
+    ),
+  ).pipe(Effect.provideService(CurrentActor, person));
 
 /** `person`'s answer to `shown`, alice's unless named. */
 const answerTo = (shown: PendingSecret, answer: SecretAnswer, person: PersonActor = alice) =>
@@ -95,7 +96,7 @@ const answerTo = (shown: PendingSecret, answer: SecretAnswer, person: PersonActo
 
 /** The person's answer, once the Bot's request waits for it. */
 const answerOnceShown = (answer: SecretAnswer) =>
-  Effect.flatMap(untilShown, (shown) => answerTo(shown, answer));
+  Effect.flatMap(untilShown(), (shown) => answerTo(shown, answer));
 
 const supplied = SecretAnswer.cases.Supplied.make({ value: Redacted.make(password) });
 
@@ -115,6 +116,9 @@ const inRun = (run: string) =>
   Claim.cases.Named.make({ bot: assistant.id, turn: { conversation, run: RunId.make(run) } });
 
 const inTurn = inRun("run-1");
+
+/** Run `run-2` is bob's turn; every other run is alice's. */
+const peopleByRun = (run: RunId) => (run === "run-2" ? bob : alice);
 
 const bot = inTurn;
 
@@ -144,7 +148,7 @@ describe("request_secret", () => {
 
       const [shown, answer] = yield* Effect.gen(function* () {
         const asking = yield* readThenAsk;
-        const shown = yield* untilShown;
+        const shown = yield* untilShown();
         yield* answerTo(shown, supplied);
 
         return [shown, yield* Fiber.join(asking)] as const;
@@ -290,7 +294,7 @@ ask:
           Effect.forkChild(gateway.act(inTurn, askForPassword)),
         );
 
-        yield* untilShown;
+        yield* untilShown();
 
         const refused = yield* Gateway.use((gateway) =>
           Effect.flip(gateway.act(inTurn, { action: "type", ref: "e2", text: "grace" })),
@@ -331,7 +335,7 @@ ask:
             Effect.forkChild(Effect.result(gateway.act(inTurn, askForPassword))),
           );
 
-          yield* unanswered(yield* untilShown);
+          yield* unanswered(yield* untilShown());
           yield* Fiber.join(asking);
 
           const secretAgain = yield* Gateway.use((gateway) =>
@@ -348,7 +352,7 @@ ask:
             Effect.forkChild(Effect.result(gateway.act(inRun("run-2"), askForPassword))),
           );
 
-          const nextRun = yield* untilShown;
+          const nextRun = yield* untilShown();
           yield* answerTo(nextRun, supplied);
           yield* Fiber.join(askingNextRun);
 
@@ -369,7 +373,7 @@ ask:
 
       const [refused, answer] = yield* Effect.gen(function* () {
         const asking = yield* readThenAsk;
-        const shown = yield* untilShown;
+        const shown = yield* untilShown();
         const other = { ...shown, request: SecretRequestId.make("another-request") };
         const refused = yield* answerLate(other);
         yield* answerTo(shown, supplied);
@@ -390,7 +394,7 @@ ask:
 
         const [toBob, refused, answer] = yield* Effect.gen(function* () {
           const asking = yield* readThenAsk;
-          const shown = yield* untilShown;
+          const shown = yield* untilShown();
           const toBob = yield* shownNow(bob);
           const refused = yield* Effect.flip(answerTo(shown, supplied, bob));
           yield* answerTo(shown, supplied);
@@ -401,6 +405,34 @@ ask:
         expect(toBob).toEqual(Option.none());
         expect(refused).toBeInstanceOf(NoSecretRequested);
         expect(answer).toContain("Your person typed");
+      }).pipe(Effect.provide(database)),
+  );
+
+  it.effect(
+    "takes a request in each person's turn with the same Bot, each from its own person",
+    () =>
+      Effect.gen(function* () {
+        const computer = signInComputer();
+
+        const answers = yield* Effect.gen(function* () {
+          const forAlice = yield* readThenAsk;
+          const toAlice = yield* untilShown();
+
+          const forBob = yield* Gateway.use((gateway) =>
+            Effect.forkChild(gateway.act(inRun("run-2"), askForPassword)),
+          );
+
+          const toBob = yield* untilShown(bob);
+          yield* answerTo(toBob, supplied, bob);
+          yield* answerTo(toAlice, supplied);
+
+          return [yield* Fiber.join(forAlice), yield* Fiber.join(forBob)];
+        }).pipe(Effect.provide(startGateway(computer.layer, allowEverything, peopleByRun)));
+
+        expect(answers).toEqual([
+          expect.stringContaining("Your person typed"),
+          expect.stringContaining("Your person typed"),
+        ]);
       }).pipe(Effect.provide(database)),
   );
 
@@ -431,7 +463,7 @@ ask:
 
       const [refused, late, after] = yield* Effect.gen(function* () {
         const asking = yield* readThenAsk;
-        const shown = yield* untilShown;
+        const shown = yield* untilShown();
         yield* TestClock.adjust("10 minutes");
         const refused = yield* Effect.flip(Fiber.join(asking));
 
@@ -454,7 +486,7 @@ ask:
 
       const late = yield* Effect.gen(function* () {
         const asking = yield* readThenAsk;
-        const shown = yield* untilShown;
+        const shown = yield* untilShown();
         yield* Fiber.interrupt(asking);
 
         return yield* answerLate(shown);
@@ -474,7 +506,7 @@ ask:
 
       const refused = yield* Effect.gen(function* () {
         const asking = yield* readThenAsk;
-        yield* untilShown;
+        yield* untilShown();
 
         const second = yield* Gateway.use((gateway) =>
           Effect.flip(gateway.act(bot, askForPassword)),
@@ -600,7 +632,7 @@ allow:
 
       const refused = yield* Effect.gen(function* () {
         const asking = yield* readThenAsk;
-        const shown = yield* untilShown;
+        const shown = yield* untilShown();
         yield* ComputerControl.use((control) => control.take);
         yield* answerTo(shown, supplied);
 
@@ -773,7 +805,7 @@ describe("request_secret over MCP", () => {
         call.signal,
       ).catch(() => "aborted");
 
-      const shownFirst = yield* untilShown.pipe(Effect.provideContext(served));
+      const shownFirst = yield* untilShown().pipe(Effect.provideContext(served));
 
       yield* Effect.promise(() => stop(session, call));
 

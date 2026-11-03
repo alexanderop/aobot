@@ -62,14 +62,15 @@ function shell() {
   });
 }
 
-/** The question the turn's person, alice, is shown, once the conversation waits on one. */
-const untilShown = ApprovalRequests.use((requests) =>
-  requests.pending(conversation).pipe(
-    Stream.filter(Option.isSome),
-    Stream.runHead,
-    Effect.map((shown) => Option.getOrThrow(Option.flatten(shown))),
-  ),
-).pipe(Effect.provideService(CurrentActor, alice));
+/** The question `person`, alice unless named, is shown, once the conversation waits on one. */
+const untilShown = (person: PersonActor = alice) =>
+  ApprovalRequests.use((requests) =>
+    requests.pending(conversation).pipe(
+      Stream.filter(Option.isSome),
+      Stream.runHead,
+      Effect.map((shown) => Option.getOrThrow(Option.flatten(shown))),
+    ),
+  ).pipe(Effect.provideService(CurrentActor, person));
 
 /** The question `person`, alice unless named, is shown now, if any. */
 const shownNow = (person: PersonActor = alice) =>
@@ -105,7 +106,7 @@ const askAndAnswer = (
 ) =>
   Effect.gen(function* () {
     const acting = yield* actInBackground(claim, request);
-    const shown = yield* untilShown;
+    const shown = yield* untilShown();
     yield* answerTo(shown, answer);
 
     return { shown, result: yield* Fiber.join(acting) };
@@ -201,7 +202,7 @@ describe("Gateway asking the person", () => {
     () =>
       Effect.gen(function* () {
         const acting = yield* actInBackground(firstRun, removeNotes);
-        const shown = yield* untilShown;
+        const shown = yield* untilShown();
 
         expect(yield* shownNow(bob)).toEqual(Option.none());
         expect(yield* Effect.flip(answerTo(shown, "yes", bob))).toBeInstanceOf(NoApprovalWaiting);
@@ -294,7 +295,7 @@ ask:
 
       const [shown, result, late] = yield* Effect.gen(function* () {
         const acting = yield* actInBackground(firstRun, removeNotes);
-        const shown = yield* untilShown;
+        const shown = yield* untilShown();
         yield* TestClock.adjust(approvalWaitLimit);
         const result = yield* Fiber.join(acting);
 
@@ -375,7 +376,7 @@ ask:
 
       const [second, result] = yield* Effect.gen(function* () {
         const first = yield* actInBackground(firstRun, removeNotes);
-        const shown = yield* untilShown;
+        const shown = yield* untilShown();
 
         const second = yield* Gateway.use((gateway) =>
           Effect.flip(gateway.act(firstRun, { action: "run", command: "rm todo.txt" })),
@@ -414,7 +415,7 @@ ask:
         yield* Gateway.use((gateway) => gateway.act(firstRun, { action: "snapshot" }));
 
         const acting = yield* actInBackground(firstRun, { action: "click", ref: "e3" });
-        const shown = yield* untilShown;
+        const shown = yield* untilShown();
 
         snapshot = '- button "Delete everything" [ref=e3]';
         yield* Gateway.use((gateway) => gateway.act(firstRun, { action: "snapshot" }));
@@ -463,7 +464,7 @@ ask:
         yield* Gateway.use((gateway) => gateway.act(firstRun, { action: "snapshot" }));
 
         const acting = yield* actInBackground(firstRun, { action: "click", ref: "e3" });
-        const shown = yield* untilShown;
+        const shown = yield* untilShown();
 
         url = "https://example.com/settings/security";
         yield* Gateway.use((gateway) => gateway.act(firstRun, { action: "snapshot" }));
@@ -498,7 +499,7 @@ ask:
 
       const [shown, result] = yield* Effect.gen(function* () {
         const acting = yield* actInBackground(firstRun, removeNotes);
-        const shown = yield* untilShown;
+        const shown = yield* untilShown();
         yield* ComputerControl.use((control) => control.take);
         yield* answerTo(shown, "yes");
 
@@ -543,7 +544,7 @@ ask:
 
       const shown = yield* Effect.gen(function* () {
         const acting = yield* actInBackground(firstRun, removeNotes);
-        const shown = yield* untilShown;
+        const shown = yield* untilShown();
         const long = yield* actInBackground(firstRun, { action: "run", command: "sleep 100" });
         yield* Deferred.await(started);
         yield* answerTo(shown, "yes");
@@ -599,7 +600,7 @@ ask:
 
         yield* Effect.gen(function* () {
           const acting = yield* actInBackground(firstRun, removeNotes);
-          yield* answerTo(yield* untilShown, "yes");
+          yield* answerTo(yield* untilShown(), "yes");
           yield* Deferred.await(started);
           yield* Fiber.interrupt(acting);
         }).pipe(Effect.provide(startGateway(hanging.layer, askBeforeRm)));
@@ -646,7 +647,7 @@ ask:
 
       const told = yield* Effect.gen(function* () {
         const acting = yield* actInBackground(firstRun, removeNotes);
-        yield* answerTo(yield* untilShown, "yes");
+        yield* answerTo(yield* untilShown(), "yes");
         yield* Deferred.await(started);
         yield* Fiber.interrupt(acting);
 
@@ -669,7 +670,7 @@ ask:
           Effect.forkDetach(Effect.result(gateway.act(firstRun, removeNotes))),
         );
 
-        return yield* untilShown;
+        return yield* untilShown();
       }).pipe(Effect.provide(startGateway(shell().layer, askBeforeRm)));
 
       const restart = Effect.provide(Effect.void, startGateway(shell().layer, askBeforeRm));
@@ -703,7 +704,7 @@ ask:
           Effect.forkDetach(Effect.result(gateway.act(firstRun, removeNotes))),
         );
 
-        return yield* untilShown;
+        return yield* untilShown();
       }).pipe(Effect.provide(startGateway(shell().layer, askBeforeRm)));
 
       yield* Effect.provide(Effect.void, startGateway(shell().layer, askBeforeRm));
@@ -732,7 +733,7 @@ ask:
 
       const shown = yield* Effect.gen(function* () {
         const acting = yield* actInBackground(firstRun, removeNotes);
-        const shown = yield* untilShown;
+        const shown = yield* untilShown();
         yield* Fiber.interrupt(acting);
 
         return shown;
@@ -779,7 +780,7 @@ describe("Gateway asking the person, when a row cannot be written", () => {
           Effect.forkDetach(Effect.result(gateway.act(firstRun, removeNotes))),
         );
 
-        return yield* untilShown;
+        return yield* untilShown();
       }).pipe(Effect.provide(startGateway(shell().layer, askBeforeRm)));
 
       const restart = Effect.provide(Effect.void, startGateway(shell().layer, askBeforeRm));
