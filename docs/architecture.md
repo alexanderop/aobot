@@ -328,7 +328,9 @@ whoever answered it.
 **Signing in.** `GET /auth/sign-in?return=<path>` sends the browser to the provider with PKCE, state and
 nonce, kept until it comes back in a ten-minute `aobot_signin` cookie on `/auth`. `GET /auth/callback` is
 read as an address at `PUBLIC_URL`, never from `Host`, checks the state, trades the code for an ID token
-through `openid-client` (only `provider.ts` imports it), and needs a verified email address. Then, in one
+through `openid-client` (only `provider.ts` imports it), and needs a verified email address in printable
+ASCII, refusing any other as `unsupported_email`: only `A` to `Z` are lower-cased, so the Kelvin sign's
+`Kate@` is never read as `kate@`. Then, in one
 transaction, the address must be admitted, the person is recorded, made an admin when `ADMIN_EMAILS`
 names them for the first time, and given a seven-day session: a random token in an HttpOnly, SameSite=Lax
 `aobot_session` cookie, `Secure` when `PUBLIC_URL` is `https`, and only its SHA-256 in `sessions`. The

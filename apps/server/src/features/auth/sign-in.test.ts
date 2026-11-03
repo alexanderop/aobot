@@ -165,6 +165,15 @@ describe("signing in", () => {
     expect((await signIn()).headers.get("location")).toBe("/?signin=no_verified_email");
   });
 
+  it("refuses an address only a lookalike of another's, rather than signing that person in", async () => {
+    vouched = claimsOf("\u212Aate@example.com");
+
+    const back = await signIn();
+
+    expect(back.headers.get("location")).toBe("/?signin=unsupported_email");
+    expect(cookiesOf(back).attributes(sessionCookie)).toBe("");
+  });
+
   it("refuses a callback that belongs to no sign-in in flight, or to another one", async () => {
     const without = await get("/auth/callback?code=code-1&state=state-1");
 

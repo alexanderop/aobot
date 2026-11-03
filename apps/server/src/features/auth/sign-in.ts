@@ -129,15 +129,15 @@ export const signInRoutes = (publicUrl: URL) =>
 
           const claims = yield* provider.finish(callback, pending.value);
 
-          const email = Option.flatMap(
-            Option.filter(claims.email, () => claims.emailVerified),
-            normalizeEmail,
-          );
+          const verified = Option.filter(claims.email, () => claims.emailVerified);
+          const email = Option.flatMap(verified, normalizeEmail);
 
           if (Option.isNone(email)) {
-            yield* people.refuse("no_verified_email", Option.none(), { subject: claims.subject });
+            const code = Option.isNone(verified) ? "no_verified_email" : "unsupported_email";
 
-            return yield* new SignInRefused({ code: "no_verified_email" });
+            yield* people.refuse(code, Option.none(), { subject: claims.subject });
+
+            return yield* new SignInRefused({ code });
           }
 
           const { token } = yield* people.enter({

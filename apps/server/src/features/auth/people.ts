@@ -44,6 +44,7 @@ const refusalWords: Readonly<Record<SignInRefusalCode, string>> = {
   domain: "domain not allowed",
   removed: "removed",
   no_verified_email: "no verified email",
+  unsupported_email: "unsupported email",
   provider: "provider refused",
   expired: "expired",
   unavailable: "unavailable",

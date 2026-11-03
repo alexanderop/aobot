@@ -12,12 +12,18 @@ describe("normalizeEmail", () => {
     expect(normalizeEmail(raw)).toEqual(Option.some(email));
   });
 
-  it.each(["", "alice", "@example.com", "alice@", "al ice@example.com"])(
-    "reads %j as no address",
-    (raw) => {
-      expect(normalizeEmail(raw)).toEqual(Option.none());
-    },
-  );
+  it.each([
+    "",
+    "alice",
+    "@example.com",
+    "alice@",
+    "al ice@example.com",
+    "\u212Aate@example.com",
+    "ﬀ@example.com",
+    "jürgen@example.com",
+  ])("reads %j as no address", (raw) => {
+    expect(normalizeEmail(raw)).toEqual(Option.none());
+  });
 });
 
 describe("admission", () => {

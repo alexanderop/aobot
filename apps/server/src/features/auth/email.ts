@@ -12,12 +12,18 @@ export function normalizeDomain(raw: string): Option.Option<string> {
 }
 
 /**
-`raw` as sign-in compares an address: lower-cased, split at its last `@`, with its domain in ASCII. None
-for anything that is not an address.
+`raw` as sign-in compares an address: split at its last `@`, its domain in ASCII, and lower-cased. Only
+`A` to `Z` are lower-cased in the part before the `@`: Unicode case folding reads the Kelvin sign `K` as
+`k`, so another account's `Kate@` would sign in as `kate@`. None for anything that is not an address, a
+part before the `@` outside ASCII included.
 */
 export function normalizeEmail(raw: string): Option.Option<Email> {
   const at = raw.lastIndexOf("@");
-  const local = raw.slice(0, at).trim().toLowerCase();
+
+  const local = raw
+    .slice(0, at)
+    .trim()
+    .replace(/[A-Z]/gu, (letter) => letter.toLowerCase());
 
   return at <= 0
     ? Option.none()

@@ -2,11 +2,11 @@ import { Schema } from "effect";
 import { RpcMiddleware } from "effect/rpc";
 
 /**
-An email address as sign-in compares it: lower-cased, with its domain in ASCII. It is a person's id on
-every audit row they cause.
+An email address as sign-in compares it: in printable ASCII and lower-cased, so no two spellings of one
+address, and no lookalike of another, are two people. It is a person's id on every audit row they cause.
 */
 export const Email = Schema.String.pipe(
-  Schema.check(Schema.isPattern(/^[^\s@A-Z]+@[^\s@A-Z]+$/u)),
+  Schema.check(Schema.isPattern(/^[!-?[-~]+@[!-?[-~]+$/u)),
   Schema.brand("Email"),
 );
 
@@ -37,6 +37,7 @@ export const SignInRefusalCode = Schema.Literals([
   "domain",
   "removed",
   "no_verified_email",
+  "unsupported_email",
   "provider",
   "expired",
   "unavailable",
@@ -50,6 +51,8 @@ export const signInRefusalWords: Readonly<Record<SignInRefusalCode, string>> = {
   domain: "Addresses at that domain cannot sign in here.",
   removed: "This address was removed from aobot. Ask an admin to let you back in.",
   no_verified_email: "Your company account has no verified email address.",
+  unsupported_email:
+    "Your company account's address has characters other than plain ASCII, which aobot does not sign in.",
   provider: "Sign-in was cancelled or refused by your company account.",
   expired: "That sign-in took too long or was already used. Try again.",
   unavailable: "Sign-in is unavailable right now. Try again in a moment.",
