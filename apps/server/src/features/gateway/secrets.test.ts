@@ -24,8 +24,8 @@ import {
 } from "effect";
 import { HttpMiddleware, HttpRouter, HttpServer } from "effect/http";
 import { TestClock } from "effect/testing";
-import { CurrentActor } from "../../shared/actor.ts";
-import { alice } from "../../shared/testing/people.ts";
+import { CurrentActor, type PersonActor } from "../../shared/actor.ts";
+import { alice, bob } from "../../shared/testing/people.ts";
 import { recordedSpans } from "../../shared/testing/recorded-spans.ts";
 import { assistant } from "../bots/testing/test-bots.ts";
 import { policyFrom } from "../policy/testing/test-policy.ts";
@@ -78,18 +78,20 @@ const readThenAsk = Gateway.use((gateway) =>
     .pipe(Effect.andThen(Effect.forkChild(gateway.act(bot, askForPassword)))),
 );
 
-/** The request the person is shown, once the Bot's request waits for them. */
+/** The request the turn's person, alice, is shown, once the Bot's request waits for them. */
 const untilShown = SecretRequests.use((secrets) =>
   secrets.pending(assistant.id).pipe(
     Stream.filter(Option.isSome),
     Stream.runHead,
     Effect.map((shown) => Option.getOrThrow(Option.flatten(shown))),
   ),
-);
+).pipe(Effect.provideService(CurrentActor, alice));
 
-/** The person's answer to `shown`. */
-const answerTo = (shown: PendingSecret, answer: SecretAnswer) =>
-  SecretRequests.use((secrets) => secrets.answer(assistant.id, shown.request, answer));
+/** `person`'s answer to `shown`, alice's unless named. */
+const answerTo = (shown: PendingSecret, answer: SecretAnswer, person: PersonActor = alice) =>
+  SecretRequests.use((secrets) => secrets.answer(assistant.id, shown.request, answer)).pipe(
+    Effect.provideService(CurrentActor, person),
+  );
 
 /** The person's answer, once the Bot's request waits for it. */
 const answerOnceShown = (answer: SecretAnswer) =>
@@ -100,10 +102,13 @@ const supplied = SecretAnswer.cases.Supplied.make({ value: Redacted.make(passwor
 /** The person's answer to `shown` once it is no longer waiting. */
 const answerLate = (shown: PendingSecret) => Effect.flip(answerTo(shown, supplied));
 
-/** Whether the person is shown any request of the Bot's now. */
-const shownNow = SecretRequests.use((secrets) =>
-  secrets.pending(assistant.id).pipe(Stream.runHead, Effect.map(Option.flatten)),
-);
+/** Whether `person`, alice unless named, is shown any request of the Bot's now. */
+const shownTo = (person: PersonActor) =>
+  SecretRequests.use((secrets) =>
+    secrets.pending(assistant.id).pipe(Stream.runHead, Effect.map(Option.flatten)),
+  ).pipe(Effect.provideService(CurrentActor, person));
+
+const shownNow = shownTo(alice);
 
 const conversation = ConversationId.make("conversation-1");
 
@@ -127,7 +132,7 @@ ask:
 /** The approval card the person is shown in the conversation now, if any. */
 const approvalShownNow = ApprovalRequests.use((approvals) =>
   approvals.pending(conversation).pipe(Stream.runHead, Effect.map(Option.flatten)),
-);
+).pipe(Effect.provideService(CurrentActor, alice));
 
 /** What the model reads of a call under `ask-before-typing` after a no to that rule in its run. */
 const declinedEarlier = (tool: string) =>
@@ -377,6 +382,28 @@ ask:
       expect(refused).toBeInstanceOf(NoSecretRequested);
       expect(answer).toContain("Your person typed");
     }).pipe(Effect.provide(database)),
+  );
+
+  it.effect(
+    "shows the request to its turn's person only, and takes no answer from anyone else",
+    () =>
+      Effect.gen(function* () {
+        const computer = signInComputer();
+
+        const [toBob, refused, answer] = yield* Effect.gen(function* () {
+          const asking = yield* readThenAsk;
+          const shown = yield* untilShown;
+          const toBob = yield* shownTo(bob);
+          const refused = yield* Effect.flip(answerTo(shown, supplied, bob));
+          yield* answerTo(shown, supplied);
+
+          return [toBob, refused, yield* Fiber.join(asking)] as const;
+        }).pipe(Effect.provide(startGateway(computer.layer)));
+
+        expect(toBob).toEqual(Option.none());
+        expect(refused).toBeInstanceOf(NoSecretRequested);
+        expect(answer).toContain("Your person typed");
+      }).pipe(Effect.provide(database)),
   );
 
   it.effect("tells the model the person declined, and types nothing", () =>

@@ -17,16 +17,21 @@ import {
   Stream,
   SubscriptionRef,
 } from "effect";
+import { actorId, CurrentActor } from "../../shared/actor.ts";
 
 /** A person answering the secret a Bot asked them for. */
 export class SecretRequests extends Context.Service<
   SecretRequests,
   {
-    /** The request `bot` waits on for its person, if any: now, then each change. */
+    /**
+    The request `bot` waits on for the {@link CurrentActor}, if any: now, then each change. A request is
+    shown only to the person whose turn made it.
+    */
     readonly pending: (bot: BotId) => Stream.Stream<Option.Option<PendingSecret>>;
     /**
-    Hands `answer` to `bot`'s waiting request `request`, which the gateway then carries out. Fails when
-    that request is not the one waiting: it was never shown, or it was answered, timed out or stopped.
+    Hands the {@link CurrentActor}'s `answer` to `bot`'s waiting request `request`, which the gateway then
+    carries out. Fails when that request is not the one waiting for them: it was never shown, it was made
+    in someone else's turn, or it was answered, timed out or stopped.
     */
     readonly answer: (
       bot: BotId,
@@ -37,12 +42,13 @@ export class SecretRequests extends Context.Service<
 >()("aobot/gateway/SecretRequests") {}
 
 /**
-One Bot's request for a secret. It is held for the Bot while its ref is resolved and judged, so a second
-request is refused before any rule runs, and `shown` to the person only once the rules allowed it; only
-then is an answer taken.
+One Bot's request for a secret, made in the turn of the person whose `actorId` is `asker`. It is held for
+the Bot while its ref is resolved and judged, so a second request is refused before any rule runs, and
+`shown` to that person only once the rules allowed it; only then is their answer taken.
 */
 interface Waiting {
   readonly id: SecretRequestId;
+  readonly asker: string;
   readonly answer: Deferred.Deferred<SecretAnswer>;
   readonly shown: Option.Option<PendingSecret>;
 }
@@ -86,12 +92,16 @@ export const secretRequests = Effect.gen(function* () {
         : [false, all],
     );
 
-  /** Holds a request for `bot` until the scope closes. Fails while another of its requests waits. */
+  /**
+  Holds a request for `bot`, in the {@link CurrentActor}'s turn, until the scope closes. Fails while another
+  of its requests waits.
+  */
   const open = (bot: BotId): Effect.Effect<OpenRequest, AlreadyAsked, Scope.Scope> =>
     Effect.acquireRelease(
       Effect.gen(function* () {
         const waiting: Waiting = {
           id: SecretRequestId.make(crypto.randomUUID()),
+          asker: actorId(yield* CurrentActor),
           answer: yield* Deferred.make<SecretAnswer>(),
           shown: Option.none(),
         };
@@ -144,9 +154,18 @@ export const secretRequests = Effect.gen(function* () {
     );
 
   const pending = (bot: BotId) =>
-    SubscriptionRef.changes(requests).pipe(
-      Stream.map((all) => Option.flatMap(HashMap.get(all, bot), ({ shown }) => shown)),
-      Stream.changesWith(samePending),
+    Stream.unwrap(
+      Effect.map(CurrentActor, (actor) =>
+        SubscriptionRef.changes(requests).pipe(
+          Stream.map((all) =>
+            Option.flatMap(
+              Option.filter(HashMap.get(all, bot), (waiting) => waiting.asker === actorId(actor)),
+              ({ shown }) => shown,
+            ),
+          ),
+          Stream.changesWith(samePending),
+        ),
+      ),
     );
 
   const answer = Effect.fn("SecretRequests.answer")(function* (
@@ -154,13 +173,16 @@ export const secretRequests = Effect.gen(function* () {
     request: SecretRequestId,
     given: SecretAnswer,
   ) {
+    const by = actorId(yield* CurrentActor);
+
     const taken = yield* SubscriptionRef.modify(
       requests,
       (all): readonly [Option.Option<Deferred.Deferred<SecretAnswer>>, Requests] =>
         Option.match(
           Option.filter(
             HashMap.get(all, bot),
-            (waiting) => waiting.id === request && Option.isSome(waiting.shown),
+            (waiting) =>
+              waiting.id === request && waiting.asker === by && Option.isSome(waiting.shown),
           ),
           {
             onNone: () => [Option.none(), all],
