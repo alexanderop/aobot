@@ -109,8 +109,8 @@ The chat API the server serves and the page calls. Every call names a conversati
 nobody has written to yet; any other is refused with {@link NotYourConversation} before anything else is
 read. A send to a paused Bot, or to one whose pause the server cannot read, is refused with
 {@link BotPaused} or {@link PauseUnknown} before any message is stored. `Chat.list` answers the caller's
-conversations that have a message, the one written to last first, and `Chat.open` and `Chat.read` mark
-everything in one as read.
+conversations that have a message, the one written to last first. `Chat.open` only reads; `Chat.read`
+marks everything in a conversation as read.
 */
 export class ChatRpcs extends RpcGroup.make(
   Rpc.make("Chat.open", {

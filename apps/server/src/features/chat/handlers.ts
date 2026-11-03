@@ -79,8 +79,8 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
     });
 
     /**
-    A free conversation opens empty, with nothing read, so a first message someone else sends meanwhile is
-    not shown.
+    Only reads: `Chat.read` says the person has seen it. A free conversation opens empty, with nothing read,
+    so a first message someone else sends meanwhile is not shown.
     */
     const open = Effect.fn("Chat.open")(function* ({
       conversationId,
@@ -91,8 +91,6 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
       const bot = botSummary(yield* known(botId));
 
       if (Standing.$is("Free")(standing)) return { bot, messages: [], isRunning: false };
-
-      yield* store.markRead(conversationId);
 
       return {
         bot,

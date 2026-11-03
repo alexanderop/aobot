@@ -35,7 +35,7 @@ The conversation atoms, one family per atom. `state` is the single source of tru
 and `stop` are the only things that write it. Each family returns an atom, never a wrapper object:
 `Atom.family` holds its values weakly, so a plain object would be collected between renders and the
 page would silently start a second conversation state. `list` is the person's conversations, asked for
-again whenever one opens, a turn ends or one is read.
+again whenever a turn ends or one is read.
 */
 export function makeConversations(
   runtime: Atom.AtomRuntime<ChatClient>,
@@ -71,7 +71,6 @@ export function makeConversations(
             Effect.tap((snapshot) =>
               Atom.update(state(id), (current) => seedFromSnapshot(current, snapshot)),
             ),
-            Effect.tap(() => Atom.refresh(list)),
             Effect.map(({ bot }) => OpenOutcome.Opened({ bot })),
             Effect.catchTags({
               UnknownBot: ({ botId }) =>

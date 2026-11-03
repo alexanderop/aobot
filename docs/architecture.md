@@ -944,10 +944,10 @@ primes a fresh CLI session with them.
 `Chat.list` answers the caller's conversations that have a message, the one written to last first, each
 with its Bot, the first 120 characters of its last message and whether it is unread. A conversation of a
 Bot no longer in `bots.yaml` is left out, since it opens no more. `conversations.read_seq` is the last
-message the owner has seen: a Bot's message after it is unread. `Chat.open` marks everything read, and
-so does `Chat.read`, which the page calls while it shows the conversation, when it shows and each time a
-turn ends in it, so an answer the person watched arrive is never shown unread. The page asks for the list
-again when a conversation opens, when a turn ends and after a read.
+message the owner has seen: a Bot's message after it is unread. `Chat.open` only reads; `Chat.read`
+marks everything read, and the page calls it while it shows the conversation, when it shows and each time
+a turn ends in it, so an answer the person watched arrive is never shown unread. The page asks for the
+list again when a turn ends and after a read.
 
 A conversation belongs to the Bot of its first message. `Chat.open` and `Chat.send` name the Bot the page
 picked; the server refuses another Bot with `ConversationOfAnotherBot`, naming the conversation's own,

@@ -271,7 +271,7 @@ describe("a conversation nobody had written to when Alice asked about it", () =>
 });
 
 describe("a conversation's unread mark", () => {
-  it.effect("is set by the Bot's message and cleared by opening or reading it", () => {
+  it.effect("is set by the Bot's message and cleared by reading it, not by opening it", () => {
     const chat = answering();
 
     return Effect.gen(function* () {
@@ -284,13 +284,10 @@ describe("a conversation's unread mark", () => {
       yield* asAlice["Chat.send"](message(first, "Hi")).pipe(Stream.runCollect);
       expect(yield* unread).toEqual([true]);
 
-      yield* asAlice["Chat.read"]({ conversationId: first });
-      expect(yield* unread).toEqual([false]);
-
-      yield* asAlice["Chat.send"](message(first, "Again")).pipe(Stream.runCollect);
+      yield* asAlice["Chat.open"]({ conversationId: first, botId: assistant.id });
       expect(yield* unread).toEqual([true]);
 
-      yield* asAlice["Chat.open"]({ conversationId: first, botId: assistant.id });
+      yield* asAlice["Chat.read"]({ conversationId: first });
       expect(yield* unread).toEqual([false]);
     }).pipe(Effect.provide(chat.layer));
   });

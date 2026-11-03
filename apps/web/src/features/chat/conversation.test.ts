@@ -155,17 +155,6 @@ function listedOnce(
   );
 }
 
-/** A server's list that names how many times it was asked for in its one conversation's preview. */
-function countingList() {
-  let asked = 0;
-
-  return () => {
-    asked += 1;
-
-    return [{ conversationId, botId: bot.id, preview: `asked ${asked}`, unread: false }];
-  };
-}
-
 const previews = (listed: ReadonlyArray<ConversationSummary>) =>
   listed.map((summary) => summary.preview);
 
@@ -233,26 +222,25 @@ describe("given a conversation served by an in-memory Bot", () => {
     expect(registry.get(atoms.state)).toEqual(initialState);
   });
 
-  it("asks for the person's conversations again once the conversation opened and once a turn ended", async () => {
+  it("lists the Bot's answer as the conversation's last message once its turn ended", async () => {
+    let answered = false;
+
     const { registry, atoms } = start({
       send: () =>
         Stream.fromIterable<ChatEvent>([
           ...started,
           { type: "RUN_FINISHED", threadId: conversationId, runId },
-        ]),
-      list: countingList(),
+        ]).pipe(Stream.ensuring(Effect.sync(() => (answered = true)))),
+      list: () =>
+        answered ? [{ conversationId, botId: bot.id, preview: "Hello", unread: false }] : [],
     });
 
     await opened(registry, atoms.open);
-    await listedOnce(registry, atoms.list, (listed) => previews(listed).includes("asked 2"));
-
     registry.set(atoms.send, userMessage);
 
-    expect(
-      previews(
-        await listedOnce(registry, atoms.list, (listed) => previews(listed).includes("asked 3")),
-      ),
-    ).toEqual(["asked 3"]);
+    expect(previews(await listedOnce(registry, atoms.list, (listed) => listed.length > 0))).toEqual(
+      ["Hello"],
+    );
   });
 
   it("takes a message back to offer it again and opens again when the conversation turned out another Bot's", async () => {
