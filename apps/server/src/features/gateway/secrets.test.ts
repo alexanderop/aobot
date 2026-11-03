@@ -113,13 +113,13 @@ const inRun = (run: string) =>
 
 const inTurn = inRun("run-1");
 
-const askBeforePassword = policyFrom(`deny: []
+const askBeforeTyping = policyFrom(`deny: []
 allow:
   - name: granted-tools
     when: "true"
 ask:
-  - name: ask-before-password
-    when: element.name == "Password"
+  - name: ask-before-typing
+    when: element.role == "textbox"
 `);
 
 /** The approval card the person is shown in the conversation now, if any. */
@@ -127,7 +127,7 @@ const approvalShownNow = ApprovalRequests.use((approvals) =>
   approvals.pending(conversation).pipe(Stream.runHead, Effect.map(Option.flatten)),
 );
 
-/** What the model reads of a call under `ask-before-password` after a no to that rule in its run. */
+/** What the model reads of a call under `ask-before-typing` after a no to that rule in its run. */
 const declinedEarlier = (tool: string) =>
   `${tool} did not run: your person already said no to this in this conversation. Do not ask again until they write to you.`;
 
@@ -220,7 +220,7 @@ ask:
     }).pipe(Effect.provide(database)),
   );
 
-  it.effect("refuses a secret for a field its person said no to typing into, in that run", () =>
+  it.effect("refuses a secret under an ask rule its person said no to, in that run", () =>
     Effect.gen(function* () {
       const computer = signInComputer();
 
@@ -229,7 +229,7 @@ ask:
 
         const typing = yield* Gateway.use((gateway) =>
           Effect.forkChild(
-            Effect.result(gateway.act(inTurn, { action: "type", ref: "e3", text: "guess" })),
+            Effect.result(gateway.act(inTurn, { action: "type", ref: "e2", text: "grace" })),
           ),
         );
 
@@ -253,7 +253,7 @@ ask:
         );
 
         return [refused, yield* shownNow] as const;
-      }).pipe(Effect.provide(startGateway(computer.layer, askBeforePassword)));
+      }).pipe(Effect.provide(startGateway(computer.layer, askBeforeTyping)));
 
       expect(refused.message).toBe(declinedEarlier("request_secret"));
       expect(shownAfter).toEqual(Option.none());
@@ -266,7 +266,7 @@ ask:
           name: "Password",
           host: "shop.example",
           field: "the password for shop.example",
-          rule: "ask-before-password",
+          rule: "ask-before-typing",
           reason: "declined earlier",
         },
       ]);
@@ -288,7 +288,7 @@ ask:
         yield* untilShown;
 
         const refused = yield* Gateway.use((gateway) =>
-          Effect.flip(gateway.act(inTurn, { action: "type", ref: "e3", text: "guess" })),
+          Effect.flip(gateway.act(inTurn, { action: "type", ref: "e2", text: "grace" })),
         );
 
         const cardShown = yield* approvalShownNow;
@@ -297,7 +297,7 @@ ask:
         yield* Fiber.join(asking);
 
         return [refused, cardShown] as const;
-      }).pipe(Effect.provide(startGateway(computer.layer, askBeforePassword)));
+      }).pipe(Effect.provide(startGateway(computer.layer, askBeforeTyping)));
 
       expect(refused.message).toBe(
         "type did not run: you already asked your person and they have not answered. Wait for that answer.",
@@ -334,7 +334,7 @@ ask:
           );
 
           const typing = yield* Gateway.use((gateway) =>
-            Effect.flip(gateway.act(inTurn, { action: "type", ref: "e3", text: "guess" })),
+            Effect.flip(gateway.act(inTurn, { action: "type", ref: "e2", text: "grace" })),
           );
 
           const shownAfter = [yield* shownNow, yield* approvalShownNow];
@@ -348,7 +348,7 @@ ask:
           yield* Fiber.join(askingNextRun);
 
           return [secretAgain, typing, shownAfter, nextRun] as const;
-        }).pipe(Effect.provide(startGateway(computer.layer, askBeforePassword)));
+        }).pipe(Effect.provide(startGateway(computer.layer, askBeforeTyping)));
 
         expect(secretAgain.message).toBe(declinedEarlier("request_secret"));
         expect(typing.message).toBe(declinedEarlier("type"));

@@ -4,6 +4,9 @@ import { AuditLog, type AuditRowId, type Decision, type Outcome } from "../audit
 import type { ComputerActFailed, ComputerLost, ComputerUnavailable } from "../computers/public.ts";
 import { capText } from "../../shared/tool-result.ts";
 
+/** The decision of a row that refuses an action: `deny`, or `hand_off` for one that is always the person's. */
+export type RefusalDecision = Extract<Decision, "deny" | "hand_off">;
+
 /** The one person every action is on the authority of, until E3 brings sign-in. */
 export const singleUser = "single-user";
 
@@ -54,15 +57,15 @@ export const personAudit = Effect.gen(function* () {
     );
 
   /**
-  A `deny` row for `action`, only logged when it cannot be written: what was denied did not happen either
-  way, so the refusal still stands.
+  A `deny` or `hand_off` row for `action`, only logged when it cannot be written: what was refused did not
+  happen either way, so the refusal still stands.
   */
-  const deny = (action: AuditAction, detail: Schema.JsonObject) =>
-    decide("deny", action, detail).pipe(
+  const refuse = (decision: RefusalDecision, action: AuditAction, detail: Schema.JsonObject) =>
+    decide(decision, action, detail).pipe(
       Effect.asVoid,
       Effect.catchTag("AuditWriteFailed", (error) =>
-        Effect.logError("A deny row could not be written").pipe(
-          Effect.annotateLogs({ action, reason: error.message }),
+        Effect.logError("A refusal row could not be written").pipe(
+          Effect.annotateLogs({ action, decision, reason: error.message }),
         ),
       ),
     );
@@ -84,5 +87,5 @@ export const personAudit = Effect.gen(function* () {
       ),
     );
 
-  return { decide, deny, outcome, settle };
+  return { decide, refuse, outcome, settle };
 });

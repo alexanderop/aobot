@@ -430,6 +430,54 @@ ask:
     }).pipe(Effect.provide(database)),
   );
 
+  it.effect("hands a yes to the person once the page moved on to one that is theirs", () =>
+    Effect.gen(function* () {
+      let url = "https://example.com/notes";
+
+      const computer = fakeComputers({
+        browse: (action) =>
+          Effect.succeed({
+            action: action.action,
+            url,
+            title: "Notes",
+            snapshot: '- button "Delete" [ref=e3]',
+            truncated: false,
+          }),
+      });
+
+      const [result, clicked] = yield* Effect.gen(function* () {
+        yield* Gateway.use((gateway) => gateway.act(firstRun, { action: "snapshot" }));
+
+        const acting = yield* actInBackground(firstRun, { action: "click", ref: "e3" });
+        const shown = yield* untilShown;
+
+        url = "https://example.com/settings/security";
+        yield* Gateway.use((gateway) => gateway.act(firstRun, { action: "snapshot" }));
+        yield* answerTo(shown, "yes");
+
+        return [yield* Fiber.join(acting), shown] as const;
+      }).pipe(Effect.provide(startGateway(computer.layer, askBeforeRm)));
+
+      expect(refusalOf(result)).toContain("click did not run: changing a security setting");
+      expect(computer.actions.map((action) => action.action)).toEqual(["snapshot", "snapshot"]);
+      expect((yield* decodedTrail).at(-1)).toEqual([
+        "click · hand_off",
+        {
+          bot: "assistant",
+          ref: "e3",
+          role: "button",
+          name: "Delete",
+          host: "example.com",
+          rule: "ask-before-rm",
+          approval: clicked.approval,
+          path: "/settings/security",
+          safety: "security",
+        },
+      ]);
+      expect(yield* ledger).toEqual(["lapsed"]);
+    }).pipe(Effect.provide(database)),
+  );
+
   it.effect("refuses a yes once a person took the computer, naming the approval", () =>
     Effect.gen(function* () {
       const computer = shell();

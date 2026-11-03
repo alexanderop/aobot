@@ -5,6 +5,7 @@ import {
   BotId,
   CommandEnd,
   type CommandRan,
+  ConversationId,
   commandTimeLimit,
   ComputerNotStarted,
   FileAction,
@@ -15,6 +16,7 @@ import {
   type PageAction,
   type PageRead,
   PersonInput,
+  RunId,
 } from "@aobot/domain";
 import { NodeHttpServer } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
@@ -2679,6 +2681,138 @@ allow:
       const span = tracing.spans.find((candidate) => candidate.name === "Gateway.act");
       expect(span?.attributes.get("gateway.decision")).toBe("deny");
       expect(span?.attributes.has("gateway.rule")).toBe(false);
+    }).pipe(Effect.provide(database)),
+  );
+});
+
+const account = `- generic [ref=e1]:
+  - textbox "New password" [ref=e2]
+  - button "Change password" [ref=e3]`;
+
+/** A computer whose every answer is the page `snapshot`, read at `url`. */
+function pageAt(url: string, snapshot: string) {
+  return fakeComputers({
+    browse: (action) =>
+      Effect.succeed({ action: action.action, url, title: "Page", snapshot, truncated: false }),
+  });
+}
+
+const changePassword = { action: "click", ref: "e3" } as const;
+
+/** What the model reads when the click on Change password is handed to its person. */
+const handedOffPassword =
+  "click did not run: entering or changing a password, one-time code or other credential is always your person's to do, never a Bot's, whatever the rules say. Stop, tell your person what needs doing, and ask them to take control of your computer and do it themselves.";
+
+const changePasswordRow = [
+  "click · hand_off",
+  {
+    bot: "assistant",
+    ref: "e3",
+    role: "button",
+    name: "Change password",
+    host: "shop.example",
+    path: "/account",
+    safety: "credentials",
+  },
+];
+
+/** Reads the account page, then clicks Change password, as `claim`. */
+const readThenChangePassword = (claim: Claim) =>
+  Gateway.use((gateway) =>
+    gateway
+      .act(claim, { action: "snapshot" })
+      .pipe(Effect.andThen(Effect.flip(gateway.act(claim, changePassword)))),
+  );
+
+describe("Gateway safety list", () => {
+  it.effect(
+    "hands a click on Change password to the person though a rule allows everything, and never forwards it",
+    () =>
+      Effect.gen(function* () {
+        const computer = pageAt("https://shop.example/account", account);
+        const tracing = recordedSpans();
+
+        const refused = yield* readThenChangePassword(bot).pipe(
+          Effect.provide(startGateway(computer.layer)),
+          Effect.provide(tracing.layer),
+        );
+
+        expect(refused.message).toBe(handedOffPassword);
+        expect(computer.actions.map((action) => action.action)).toEqual(["snapshot"]);
+        expect((yield* decodedTrail).slice(2)).toEqual([changePasswordRow]);
+
+        const span = tracing.spans.filter((candidate) => candidate.name === "Gateway.act").at(-1);
+        expect(span?.attributes.get("gateway.decision")).toBe("hand_off");
+        expect(span?.attributes.get("decision.source")).toBe("safety");
+        expect(span?.attributes.get("gateway.safety")).toBe("credentials");
+        expect(span?.attributes.has("gateway.rule")).toBe(false);
+      }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("hands it off before a deny rule that would refuse it is read", () =>
+    Effect.gen(function* () {
+      const computer = pageAt("https://shop.example/account", account);
+
+      const policy = policyFrom(`deny:
+  - name: no-password-changes
+    when: element.name == "Change password"
+allow:
+  - name: everything
+    when: "true"
+`);
+
+      const refused = yield* readThenChangePassword(bot).pipe(
+        Effect.provide(startGateway(computer.layer, policy)),
+      );
+
+      expect(refused.message).toBe(handedOffPassword);
+      expect((yield* decodedTrail).slice(2)).toEqual([changePasswordRow]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect("never asks the person about it, whatever ask rule holds for it", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const computer = pageAt("https://shop.example/account", account);
+
+      const policy = policyFrom(`deny: []
+allow:
+  - name: everything
+    when: "true"
+ask:
+  - name: ask-before-passwords
+    when: element.name == "Change password"
+`);
+
+      const inTurn = Claim.cases.Named.make({
+        bot: assistant.id,
+        turn: { conversation: ConversationId.make("conversation-1"), run: RunId.make("run-1") },
+      });
+
+      const refused = yield* readThenChangePassword(inTurn).pipe(
+        Effect.provide(startGateway(computer.layer, policy)),
+      );
+
+      expect(refused.message).toBe(handedOffPassword);
+      expect((yield* decodedTrail).slice(2)).toEqual([changePasswordRow]);
+      expect(yield* sql`SELECT id FROM approvals`).toEqual([]);
+    }).pipe(Effect.provide(database)),
+  );
+
+  it.effect.each([
+    ["https://shop.example/cart?next=/checkout#checkout", ["snapshot", "click"]],
+    ["https://shop.example/checkout", ["snapshot"]],
+  ] as const)("judges a click on %s by the page's path, never its query", ([url, forwarded]) =>
+    Effect.gen(function* () {
+      const computer = pageAt(url, '- button "Continue" [ref=e3]');
+
+      yield* Gateway.use((gateway) =>
+        gateway
+          .act(bot, { action: "snapshot" })
+          .pipe(Effect.andThen(Effect.result(gateway.act(bot, { action: "click", ref: "e3" })))),
+      ).pipe(Effect.provide(startGateway(computer.layer)));
+
+      expect(computer.actions.map((action) => action.action)).toEqual(forwarded);
     }).pipe(Effect.provide(database)),
   );
 });
