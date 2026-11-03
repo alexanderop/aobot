@@ -27,7 +27,24 @@ const createChat = Effect.gen(function* () {
   yield* sql`CREATE INDEX messages_by_conversation ON messages (conversation_id, seq)`;
 });
 
+const addOwners = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+
+  // The actor id of the person whose conversation it is, as audit rows name them. No reference to
+  // `people`: the single user has no row there. A conversation from before has none, so it opens for
+  // nobody.
+  yield* sql`ALTER TABLE conversations ADD COLUMN owner_id text`;
+
+  // The last message the owner has seen, so a Bot's message after it is unread.
+  yield* sql`ALTER TABLE conversations ADD COLUMN read_seq integer NOT NULL DEFAULT 0`;
+
+  yield* sql`CREATE INDEX conversations_by_owner ON conversations (owner_id)`;
+});
+
 /** Brings the chat tables up to date. Safe to run at every boot. */
 export const migrateChat = SqliteMigrator.run({
-  loader: SqliteMigrator.fromRecord({ "0001_create_chat": createChat }),
+  loader: SqliteMigrator.fromRecord({
+    "0001_create_chat": createChat,
+    "0002_add_owners": addOwners,
+  }),
 });

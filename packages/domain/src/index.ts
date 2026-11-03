@@ -6,8 +6,10 @@ export {
   ConversationOfAnotherBot,
   ConversationRef,
   ConversationSnapshot,
+  ConversationSummary,
   Message,
   MessageAlreadySent,
+  NotYourConversation,
   OpenConversation,
   SendMessage,
 } from "./chat-rpcs.ts";

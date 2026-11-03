@@ -77,19 +77,52 @@ export class ConversationOfAnotherBot extends Schema.TaggedError<ConversationOfA
 ) {}
 
 /**
-The chat API the server serves and the page calls. A send to a paused Bot, or to one whose pause the
-server cannot read, is refused with {@link BotPaused} or {@link PauseUnknown} before anything is stored.
+The conversation is someone else's, or one from before conversations had an owner, which is nobody's. Its
+messages, its turn and its questions are refused as one, whoever asks. A conversation nobody has written
+to yet is free: it opens empty, and the first message makes it the sender's.
+*/
+export class NotYourConversation extends Schema.TaggedError<NotYourConversation>()(
+  "NotYourConversation",
+  { conversationId: ConversationId },
+) {
+  override get message() {
+    return "This conversation is not yours.";
+  }
+}
+
+/**
+One of the person's conversations, as the sidebar lists it: its Bot, the start of its last message, and
+whether the Bot has written since the person last had it open.
+*/
+export const ConversationSummary = Schema.Struct({
+  conversationId: ConversationId,
+  botId: BotId,
+  preview: Schema.String,
+  unread: Schema.Boolean,
+});
+
+/** A decoded {@link ConversationSummary}. */
+export type ConversationSummary = typeof ConversationSummary.Type;
+
+/**
+The chat API the server serves and the page calls. Every call names a conversation of the caller's, or one
+nobody has written to yet; any other is refused with {@link NotYourConversation} before anything else is
+read. A send to a paused Bot, or to one whose pause the server cannot read, is refused with
+{@link BotPaused} or {@link PauseUnknown} before any message is stored. `Chat.list` answers the caller's
+conversations that have a message, the one written to last first, and `Chat.open` and `Chat.read` mark
+everything in one as read.
 */
 export class ChatRpcs extends RpcGroup.make(
   Rpc.make("Chat.open", {
     payload: OpenConversation,
     success: ConversationSnapshot,
-    error: Schema.Union([UnknownBot, ConversationOfAnotherBot]),
+    error: Schema.Union([NotYourConversation, UnknownBot, ConversationOfAnotherBot]),
   }),
   Rpc.make("Chat.send", {
     payload: SendMessage,
     success: ChatEvent,
     error: Schema.Union([
+      NotYourConversation,
       ConversationBusy,
       MessageAlreadySent,
       UnknownBot,
@@ -99,5 +132,7 @@ export class ChatRpcs extends RpcGroup.make(
     ]),
     stream: true,
   }),
-  Rpc.make("Chat.stop", { payload: ConversationRef }),
+  Rpc.make("Chat.stop", { payload: ConversationRef, error: NotYourConversation }),
+  Rpc.make("Chat.read", { payload: ConversationRef, error: NotYourConversation }),
+  Rpc.make("Chat.list", { success: Schema.Array(ConversationSummary) }),
 ).middleware(SignedIn) {}

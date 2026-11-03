@@ -33,8 +33,8 @@ function chatWith(answer: Stream.Stream<AgentEvent, AgentError>) {
 
 /**
 A chat whose store holds a turn at `step` until `release` is completed, so the turn can be caught there:
-at `startup`, as it stores its conversation, or at `reply`, as it stores the Bot's message once the Bot
-finished.
+at `startup`, as it stores the person's message, or at `reply`, as it stores the Bot's message once the
+Bot finished.
 */
 function chatHolding(step: "startup" | "reply", answer: Stream.Stream<AgentEvent, AgentError>) {
   const entered = Deferred.makeUnsafe<void>();
@@ -53,10 +53,8 @@ function chatHolding(step: "startup" | "reply", answer: Stream.Stream<AgentEvent
 
       return ConversationStore.of({
         ...store,
-        ensure: (id, botId) =>
-          step === "startup" ? held(store.ensure(id, botId)) : store.ensure(id, botId),
         append: (id, message) =>
-          step === "reply" && message.role === "assistant"
+          step === (message.role === "user" ? "startup" : "reply")
             ? held(store.append(id, message))
             : store.append(id, message),
       });
