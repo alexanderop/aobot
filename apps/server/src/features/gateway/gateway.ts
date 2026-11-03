@@ -982,7 +982,6 @@ export const gatewayLayer = Layer.effectContext(
         UnknownRef: (unknown) =>
           deny({ ref: unknown.ref, reason: unknown.reason }, unknownRefAnswer(tool, unknown)),
         UnknownPage: () => deny({ reason: unreadSnapshot }, unknownPageAnswer(tool)),
-        // Its row names the safety list, which decided it before any rule was read.
         HandedOff: ({ action, path, safety }) =>
           Effect.annotateCurrentSpan({
             "decision.source": "safety",
