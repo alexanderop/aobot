@@ -336,7 +336,12 @@ names them for the first time, and given a seven-day session: a random token in 
 `aobot_session` cookie, `Secure` when `PUBLIC_URL` is `https`, and only its SHA-256 in `sessions`. The
 browser returns to the page it came from, never another site. `POST /auth/sign-out` ends the session.
 `GET /auth/session` tells the page who it is open for, and the page mounts nothing that opens a socket
-until it has read that.
+until it has read that. Every RPC client's socket hangs off that answer (`shared/rpc-protocol.ts`): it
+opens only while someone is signed in and is built again when that changes, so a sign-out, a removal or
+an expiry closes every socket and every atom on one waits instead of asking again. The page reads the
+session every half minute, on focus, and whenever the server refuses a socket or answers a call
+`SignedOut`; a browser cannot tell a 401 upgrade from a server it cannot reach, so only the session's
+answer decides whether to keep knocking.
 
 **Who may sign in.** One pure rule, `admission`: the address's domain is one of
 `SIGNIN_ALLOWED_EMAIL_DOMAINS` exactly, and the address was not removed. It is read before a person is
