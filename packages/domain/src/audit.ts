@@ -49,7 +49,8 @@ export type AcpClientMethod = typeof AcpClientMethod.Type;
 /**
 Every action an audit row can name: a Bot's tool, `request_secret` as `secret.requested` and the person's
 answer as `secret.supplied`, the person's answer to an action a rule asked them about, a person taking or
-handing back the computer, a person's file going in or out, and a CLI's call outside the gateway.
+handing back the computer, a person's file going in or out, a turn starting or being stopped, a Bot
+paused or resumed, and a CLI's call outside the gateway.
 */
 export const AuditAction = Schema.Literals([
   "navigate",
@@ -68,6 +69,10 @@ export const AuditAction = Schema.Literals([
   "control_released",
   "file.uploaded",
   "file.downloaded",
+  "turn",
+  "turn.stopped",
+  "bot.paused",
+  "bot.resumed",
   ...AcpClientMethod.literals,
 ]);
 
@@ -104,6 +109,10 @@ const actionLabels: Readonly<Record<AuditAction, string>> = {
   control_released: "Hand back control",
   "file.uploaded": "Upload a file",
   "file.downloaded": "Download a file",
+  turn: "Start a turn",
+  "turn.stopped": "Stop a turn",
+  "bot.paused": "Pause a Bot",
+  "bot.resumed": "Resume a Bot",
   "session/request_permission": "CLI asks for permission",
   "fs/read_text_file": "CLI reads a file",
   "fs/write_text_file": "CLI writes a file",

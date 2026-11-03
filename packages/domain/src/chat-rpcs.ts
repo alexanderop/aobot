@@ -3,6 +3,7 @@ import { Rpc, RpcGroup } from "effect/rpc";
 import { ChatEvent } from "./chat-event.ts";
 import { BotSummary, UnknownBot } from "./bot.ts";
 import { BotId, ConversationId, MessageId } from "./ids.ts";
+import { BotPaused, PauseUnknown } from "./pause-rpcs.ts";
 
 /** One stored message. A Bot message is stored once its run ends, with the text it got to. */
 export const Message = Schema.Struct({
@@ -74,7 +75,10 @@ export class ConversationOfAnotherBot extends Schema.TaggedError<ConversationOfA
   { conversationId: ConversationId, botId: BotId },
 ) {}
 
-/** The chat API the server serves and the page calls. */
+/**
+The chat API the server serves and the page calls. A send to a paused Bot, or to one whose pause the
+server cannot read, is refused with {@link BotPaused} or {@link PauseUnknown} before anything is stored.
+*/
 export class ChatRpcs extends RpcGroup.make(
   Rpc.make("Chat.open", {
     payload: OpenConversation,
@@ -89,6 +93,8 @@ export class ChatRpcs extends RpcGroup.make(
       MessageAlreadySent,
       UnknownBot,
       ConversationOfAnotherBot,
+      BotPaused,
+      PauseUnknown,
     ]),
     stream: true,
   }),

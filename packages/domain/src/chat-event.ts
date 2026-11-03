@@ -2,10 +2,18 @@ import { Schema } from "effect";
 import { ConversationId, MessageId, RunId, ToolCallId } from "./ids.ts";
 
 /**
-Why a run ended without finishing. `busy` never appears here: a second message is refused by
-{@link ConversationBusy} before any run starts.
+Why a run ended without finishing. `stopped` is the person's Stop, `paused` an admin's pause, and
+`pause_unknown` a server that could no longer read whether the Bot is paused. `busy` never appears here:
+a second message is refused by {@link ConversationBusy} before any run starts.
 */
-export const RunErrorCode = Schema.Literals(["stalled", "step_limit", "model", "stopped"]);
+export const RunErrorCode = Schema.Literals([
+  "stalled",
+  "step_limit",
+  "model",
+  "stopped",
+  "paused",
+  "pause_unknown",
+]);
 
 /** A decoded {@link RunErrorCode}. */
 export type RunErrorCode = typeof RunErrorCode.Type;
