@@ -4,11 +4,17 @@ import { Option, Schema } from "effect";
 
 const decodeEmail = Schema.decodeUnknownOption(Email);
 
-/** A domain as sign-in compares it: lower-cased and in ASCII, so `Exämple.com` is `xn--exmple-cua.com`. */
-export function normalizeDomain(raw: string): Option.Option<string> {
-  const domain = domainToASCII(raw.trim().toLowerCase());
+/** Labels of letters, digits and hyphens, joined by dots: what an address's domain is once in ASCII. */
+const asciiDomain = /^[a-z0-9-]+(?:\.[a-z0-9-]+)*$/u;
 
-  return domain === "" ? Option.none() : Option.some(domain);
+/**
+A domain as sign-in compares it: lower-cased and in ASCII, so `Exämple.com` is `xn--exmple-cua.com`. None
+for anything no address has after its `@`, such as `*.example.com` or the root dot of `example.com.`.
+*/
+export function normalizeDomain(raw: string): Option.Option<string> {
+  return Option.liftPredicate(domainToASCII(raw.trim().toLowerCase()), (domain) =>
+    asciiDomain.test(domain),
+  );
 }
 
 /**

@@ -112,7 +112,11 @@ const providerConfig = Config.all({
 
 const signInConfig = Config.all({
   provider: providerConfig,
-  allowedDomains: listConfig("SIGNIN_ALLOWED_EMAIL_DOMAINS", normalizeDomain, "a domain").pipe(
+  allowedDomains: listConfig(
+    "SIGNIN_ALLOWED_EMAIL_DOMAINS",
+    normalizeDomain,
+    "a domain an address can have, such as example.com, with no wildcard, @ or trailing dot",
+  ).pipe(
     Config.flatMap((domains) =>
       Array.isReadonlyArrayNonEmpty(domains)
         ? Config.succeed(domains)
@@ -121,9 +125,11 @@ const signInConfig = Config.all({
           ),
     ),
   ),
-  admins: listConfig("ADMIN_EMAILS", normalizeEmail, "an email address").pipe(
-    Config.map((admins): ReadonlySet<Email> => new Set(admins)),
-  ),
+  admins: listConfig(
+    "ADMIN_EMAILS",
+    normalizeEmail,
+    "an email address, such as alice@example.com",
+  ).pipe(Config.map((admins): ReadonlySet<Email> => new Set(admins))),
 });
 
 /**

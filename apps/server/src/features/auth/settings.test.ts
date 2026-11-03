@@ -106,7 +106,27 @@ describe("authConfig", () => {
           "alice@example.com",
         ]);
         expect(yield* refusalOf({ ...signIn, ADMIN_EMAILS: "alice" })).toContain(
-          'ADMIN_EMAILS lists "alice", which is not an email address.',
+          'ADMIN_EMAILS lists "alice", which is not an email address',
+        );
+      }),
+  );
+
+  it.effect.each(["example.com.", "*.example.com", "@example.com", "a..example.com"])(
+    "refuses the allowed domain %j, which no address would ever match",
+    (domain) =>
+      Effect.gen(function* () {
+        expect(yield* refusalOf({ ...signIn, SIGNIN_ALLOWED_EMAIL_DOMAINS: domain })).toContain(
+          `SIGNIN_ALLOWED_EMAIL_DOMAINS lists ${JSON.stringify(domain)}, which is not a domain`,
+        );
+      }),
+  );
+
+  it.effect.each(["alice@example.com.", "alice@*.example.com"])(
+    "refuses the admin %j, whom no sign-in would ever match",
+    (admin) =>
+      Effect.gen(function* () {
+        expect(yield* refusalOf({ ...signIn, ADMIN_EMAILS: admin })).toContain(
+          `ADMIN_EMAILS lists ${JSON.stringify(admin)}, which is not an email address`,
         );
       }),
   );
