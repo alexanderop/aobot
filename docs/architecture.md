@@ -575,7 +575,8 @@ which no read hides. A page on no site, such as `about:blank` or a `data:` page,
 person, so a request there is `secret.requested · deny` with `reason: "no site"`. Once `secret.requested · allow` is written, the request gets an id from the server and
 is shown to the person: `Secret.pending { bot }` streams it as `{ request, field, host }`, with the host of
 the field's page as the server read it, so the card says "the password on shop.example" and a Bot cannot
-pass one site's field off as another's. It then waits for the person outside the door, so a person can
+pass one site's field off as another's. A request is the person's whose turn made it: `Secret.pending`
+shows it to them only, and `Secret.answer` from anyone else finds none. It then waits for the person outside the door, so a person can
 take the computer meanwhile. The page draws the request as a secret card (see `docs/design.md`). Supply
 sends the value over `Secret.answer { bot, request, answer }` on its own socket, as a `Redacted` that a
 log, an error or a span prints as `<redacted>`, and the page wipes it once the call settles; it never goes
@@ -673,7 +674,8 @@ as `ask` when one holds. The action leaves the door before any row is written, a
    keep their redaction.
 4. Waits outside the door, at most ten minutes, in a `Gateway.awaitApproval` span with `gateway.rule`,
    `approval.answer` and `approval.by`. `Approval.answer { conversation, approval, answer }` answers it;
-   an answer for another question, or one after the wait ended, fails with `NoApprovalWaiting`. Whoever
+   an answer for another question, one after the wait ended, or one from anyone but the person whose turn
+   asked, to whom alone `Approval.pending` shows the card, fails with `NoApprovalWaiting`. Whoever
    takes the card down first answers: the person, or the time limit, which answers no. A stopped turn
    answers no too. `approval.answered · answered` records `{ bot, approval, answer, by }`, in one
    transaction with the ledger's `yes` or `no`, with `by` one of `ApprovalAnsweredBy` in the domain
@@ -905,7 +907,8 @@ const conversation = Atom.family((id: ConversationId) => /* fold ChatEvents into
 | `useControl()`                | (none)                               | Who holds the computer every Bot shares, why the last take, click or hand back failed, `takeControl`, `handBack`, `click`                                                                    | E1-5 |
 | `useAttachments(id, send)`    | (none)                               | The files picked in the conversation's composer and how each upload went, `attach`, `dismiss`, and `send`, which names the files that arrived                                                | E1-6 |
 | `useBots()`                   | (none)                               | The Bots the server knows, as `bots.yaml` lists them, for the sidebar                                                                                                                        | E2-1 |
-| `useSelection()`              | (none)                               | The Bot and conversation the page has open, as the server confirmed it, and `pick` to open another Bot                                                                                       | E2-1 |
+| `useSelection()`              | (none)                               | The Bot and conversation the page has open, as the server confirmed it, and `choose` to open another Bot, a listed conversation or a new one                                                 | E2-1 |
+| `useConversationList()`       | (none)                               | The person's conversations with a message, the one written to last first, each with its Bot, a preview of its last message and whether it is unread                                          | E3-2 |
 | `useSecretRequest(call, bot)` | `useHumanInTheLoop`                  | What a `request_secret` card shows, with the request `Secret.pending` streams for the Bot, `supply`, which sends the typed secret over `Secret.answer` with that request's id, and `decline` | E2-3 |
 | `useApproval(id, turn)`       | `useHumanInTheLoop`, `useInterrupt`  | The approval card of the conversation: the question `Approval.pending` streams, the answer for the rest of its turn, and `choose`, which sends yes or no over `Approval.answer`              | E2-5 |
 | `usePause(bot)`               | (none)                               | Whether the Bot is paused, once the server said, whether a pause or a resume is on its way, why the last one failed, `pause` and `resume`                                                    | E2-7 |
@@ -917,12 +920,34 @@ The page opens the Bot and the conversation the URL names as `?bot=<id>&c=<id>`,
 `bots.yaml`; a `bot` that is no Bot the server knows, or no Bot id at all, opens the first Bot and drops
 the URL's conversation. One writable `selection` atom holds it: its read side derives it from the URL, the
 Bot list, a memory of each Bot's last conversation and what `Chat.open` answered for that pair, and
-corrects the URL to show it without a history entry; its write side takes a picked Bot and pushes a
-history entry, so Back returns to the Bot before. The memory lives in an atom and is mirrored to
+corrects the URL to show it without a history entry; its write side takes a `Choice` (a Bot, a listed
+conversation, or a new conversation with a Bot) and pushes a history entry, so Back returns to what was
+open before. The memory lives in an atom and is mirrored to
 `localStorage` at best, so a private window still returns to the conversation a person left. Each write
 takes in what other tabs stored first, so two tabs never overwrite each other's Bots. The sign-in screen
 forgets it, so whoever signs in next on the same browser does not open the last person's conversations.
 Each sidebar entry is a link to `?bot=<id>`, so it opens in a new tab or copies like any link.
+
+A conversation belongs to the person who wrote to it first, and to the Bot of that message.
+`conversations.owner_id` holds the person's actor id, as audit rows name them, with no reference to
+`people`, since the single user has no row there. `Chat.send` claims the conversation before the turn
+starts, in one `INSERT … ON CONFLICT DO UPDATE … RETURNING` that answers the stored owner, so of two people
+racing on one new id the database lets one have it, and a turn only ever runs in its person's
+conversation. `Chat.open`, `Chat.send`, `Chat.stop` and `Chat.read` refuse anyone else's with
+`NotYourConversation`, and so does a conversation from before owners were recorded, which is nobody's. A
+conversation nobody has written to is free and opens empty. The page leaves a conversation that is not the
+person's for a new one with the same Bot and remembers that one instead, so an address someone else's
+browser remembered never shows their messages. Continuing a conversation needs nothing more: every turn
+passes the stored messages to the runtime, which rebuilds the `effect/ai` chat from them, or, for `acp`,
+primes a fresh CLI session with them.
+
+`Chat.list` answers the caller's conversations that have a message, the one written to last first, each
+with its Bot, the first 120 characters of its last message and whether it is unread. A conversation of a
+Bot no longer in `bots.yaml` is left out, since it opens no more. `conversations.read_seq` is the last
+message the owner has seen: a Bot's message after it is unread. `Chat.open` marks everything read, and
+so does `Chat.read`, which the page calls while it shows the conversation, when it shows and each time a
+turn ends in it, so an answer the person watched arrive is never shown unread. The page asks for the list
+again when a conversation opens, when a turn ends and after a read.
 
 A conversation belongs to the Bot of its first message. `Chat.open` and `Chat.send` name the Bot the page
 picked; the server refuses another Bot with `ConversationOfAnotherBot`, naming the conversation's own,

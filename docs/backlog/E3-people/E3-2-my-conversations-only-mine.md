@@ -2,7 +2,7 @@
 id: E3-2
 title: My conversations, only mine
 epic: E3
-status: todo
+status: done
 depends_on: [E3-1]
 estimate: 2d
 ---

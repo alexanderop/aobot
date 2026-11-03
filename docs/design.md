@@ -48,7 +48,15 @@ screenshot.
 
 E2-1 builds the pinned grid, the groups and the selected row. A pinned Bot shows only in the grid, and a
 Bot in no group is listed just below it without a heading. Search and "new Bot" wait for creating Bots
-in the app, previews and unread dots for E3-2, and the bottom bar for people (E3).
+in the app, and the bottom bar for people (E3).
+
+E3-2 puts the previews and unread dots on the person's conversations rather than on the Bots, since a
+person can have many conversations with one Bot. Below the Bots, a muted Conversations heading with a
+small New pill on `--bubble` at its right, which starts a new conversation with the Bot open beside it.
+Under it one row per conversation, the one written to last first: the Bot's avatar, its name, a one-line
+preview of the last message in `--muted`, and an `--unread` dot on the right while the Bot has written
+since the person last had it open. The open conversation's row has the selected background. With none
+yet, the heading is followed by "No conversations yet." in `--muted`.
 
 ### Conversation
 

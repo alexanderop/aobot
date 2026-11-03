@@ -9,6 +9,8 @@ word by word, and finds the whole conversation again after a reload. While a tur
 - `chat-stream` the answer appears word by word, not all at once.
 - `chat-persist` a reload of the same `?bot=assistant&c=<id>` URL shows both bubbles again.
 - `chat-stop` Stop ends a running turn.
+- `chat-list` the sidebar's Conversations list the person's own, newest first, each with a preview and a
+  dot while unread; New starts another; someone else's `?c=` opens a new conversation instead (E3-2).
 
 ## How to get to it (user POV)
 
@@ -41,3 +43,6 @@ Preconditions: baseline. No script set (the default answer is fine), or set one 
 - `chat-stop` is not covered by any `vp run verify` scenario yet. What Stop leaves in the transcript and the
   audit is not pinned; report what you saw rather than assume.
 - Opening http://localhost:3100 without `?c=` starts a new, empty conversation.
+- Conversation rows are `.conversation-list__row` (their `href` carries `c=`), the preview
+  `.conversation-list__preview`, the dot `.conversation-list__unread`, none yet `.conversation-list__empty`.
+  New is the button named `New conversation with <Bot name>`. `vp run verify E3-2` drives all of it.
