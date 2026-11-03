@@ -631,12 +631,12 @@ export const gatewayLayer = Layer.effectContext(
     Closes a question an earlier run left open, in rows the deployment writes at start-up on the authority
     of the person it asked.
     */
-    const closeInTrail = ({ approval, bot, asker, tool, rule, answered }: LeftOpen) => {
+    const closeInTrail = ({ approval, bot, actorId, tool, rule, answered }: LeftOpen) => {
       const byDeployment = (decision: Decision, action: AuditAction, detail: Schema.JsonObject) =>
         audit.record({
           traceId: Option.none(),
           initiatorKind: "deployment",
-          actorId: asker,
+          actorId,
           decision,
           action,
           detail,

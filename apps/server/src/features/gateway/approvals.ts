@@ -163,13 +163,13 @@ export interface HeldQuestion {
 
 /**
 A question an earlier run left open, as when the server stopped while it waited for the person or before
-its yes was spent: the Bot it was asked for, whose authority it was asked on by their `actor_id`, the tool
-and the ask rule, and whether it was answered.
+its yes was spent: the Bot it was asked for, the `actorId` of the person whose authority it was asked on,
+the tool and the ask rule, and whether it was answered.
 */
 export interface LeftOpen {
   readonly approval: ApprovalId;
   readonly bot: BotId;
-  readonly asker: string;
+  readonly actorId: string;
   readonly tool: ToolName;
   readonly rule: string;
   readonly answered: boolean;
@@ -540,7 +540,7 @@ export const approvalRequests = Effect.gen(function* () {
         const left: LeftOpen = {
           approval: id,
           bot: bot_id,
-          asker: actor_id,
+          actorId: actor_id,
           tool,
           rule,
           answered: state === "yes",

@@ -452,8 +452,8 @@ describe("approvalRequests", () => {
           const closed = { bot, tool: "run", rule };
 
           expect(yield* restarted.closeLeftOpen(written)).toEqual([
-            { approval: approved.id, asker: "alice@example.com", ...closed, answered: true },
-            { approval: waiting.id, asker: "bob@example.com", ...closed, answered: false },
+            { approval: approved.id, actorId: "alice@example.com", ...closed, answered: true },
+            { approval: waiting.id, actorId: "bob@example.com", ...closed, answered: false },
           ]);
           expect(yield* restarted.closeLeftOpen(written)).toEqual([]);
           expect(yield* ledger).toEqual([
@@ -476,7 +476,7 @@ describe("approvalRequests", () => {
       expect(yield* ledger).toEqual([["run-1", "asked"]]);
 
       expect(yield* restarted.closeLeftOpen(written)).toEqual([
-        { approval, bot, asker: "deployment", tool: "run", rule, answered: false },
+        { approval, bot, actorId: "deployment", tool: "run", rule, answered: false },
       ]);
       expect(yield* ledger).toEqual([["run-1", "no"]]);
     }).pipe(Effect.provide(database)),
