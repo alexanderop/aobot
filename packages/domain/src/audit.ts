@@ -1,13 +1,14 @@
 import { DateTime, Schema } from "effect";
 
 /**
-What an audit row says of its action: the gateway's decision, `allow` or `deny`, or `ask` when it asked the
-person first and `answered` once they answered or the time ran out; or what became of an allowed action,
-`succeeded`, `failed` or `unknown`.
+What an audit row says of its action: the gateway's decision, `allow` or `deny`, `hand_off` when the
+action is always the person's to do, or `ask` when it asked the person first and `answered` once they
+answered or the time ran out; or what became of an allowed action, `succeeded`, `failed` or `unknown`.
 */
 export const AuditDecision = Schema.Literals([
   "allow",
   "deny",
+  "hand_off",
   "ask",
   "answered",
   "succeeded",
@@ -77,6 +78,7 @@ export type AuditAction = typeof AuditAction.Type;
 const decisionLabels: Readonly<Record<AuditDecision, string>> = {
   allow: "Allowed",
   deny: "Refused",
+  hand_off: "Handed to the person",
   ask: "Asked the person",
   answered: "Answered",
   succeeded: "Succeeded",

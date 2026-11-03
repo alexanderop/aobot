@@ -186,11 +186,42 @@ describe("AuditLog", () => {
   );
 
   it.effect(
-    "keeps every row a server before approvals wrote, each outcome after its allow row",
+    "keeps handing an action to the person as a decision no outcome follows or settles",
     () =>
       Effect.gen(function* () {
+        const audit = yield* AuditLog;
+
+        const handedOff = yield* audit.record({ ...allow, decision: "hand_off", action: "click" });
+
+        const outcome = yield* Effect.flip(
+          audit.recordOutcome({
+            allowRow: handedOff,
+            initiatorKind: "person",
+            outcome: "succeeded",
+            detail: {},
+          }),
+        );
+
+        expect(outcome._tag).toBe("AuditWriteFailed");
+        expect(yield* audit.settleUnfinished).toBe(0);
+        expect((yield* auditRows).map((row) => [row["decision"], row["outcome_of"]])).toEqual([
+          ["hand_off", null],
+        ]);
+      }).pipe(Effect.provide(testAuditDatabase)),
+  );
+
+  it.effect.each([
+    ["approvals", ["0004_add_approval_rows", "0005_add_hand_off_rows"]],
+    ["hand-offs", ["0005_add_hand_off_rows"]],
+  ] as const)(
+    "keeps every row a server before %s wrote, each outcome after its allow row",
+    ([, added]) =>
+      Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        const { "0004_add_approval_rows": _added, ...before } = auditMigrations;
+
+        const before = Object.fromEntries(
+          Object.entries(auditMigrations).filter(([name]) => !added.some((one) => one === name)),
+        );
 
         yield* SqliteMigrator.run({
           table: "audit_migrations",
