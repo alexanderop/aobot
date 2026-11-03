@@ -15,6 +15,7 @@ import {
   refuseForAnotherBot,
   refuseMessage,
   refuseUnknownBot,
+  refuseWhilePaused,
   seedFromSnapshot,
 } from "./conversation-state.ts";
 import type { ConversationState } from "./conversation-state.ts";
@@ -73,6 +74,18 @@ describe("given a message the person just sent", () => {
       expect(texts(stopped).at(-1)).toBe("Hello there from");
     });
 
+    it("says the Bot is paused when a pause ends the run, keeping the words so far", () => {
+      const paused = fold(midway, [
+        { type: "RUN_ERROR", message: "This Bot is paused.", code: "paused" },
+      ]);
+
+      expect(isRunning(paused)).toBe(false);
+      expect(paused.status).toEqual(
+        ConversationStatus.Failed({ code: "paused", message: "This Bot is paused." }),
+      );
+      expect(texts(paused).at(-1)).toBe("Hello there from");
+    });
+
     it("reports a failed run with its reason", () => {
       const failed = fold(midway, [{ type: "RUN_ERROR", message: "no reply", code: "stalled" }]);
 
@@ -103,6 +116,24 @@ describe("given a message the person just sent", () => {
       status: { code: "unknown_bot" },
     });
     expect(refuseUnknownBot(asked, other, Option.none()).transcript).toEqual(asked.transcript);
+  });
+
+  it("offers a message refused for a pause again and says why, until the person sends again", () => {
+    const paused = refuseWhilePaused(asked, userId, "paused");
+
+    expect(paused.transcript).toEqual([]);
+    expect(paused.unsent).toEqual(Option.some({ id: userId, text: "Say hi in five words" }));
+    expect(paused.status).toEqual(
+      ConversationStatus.Failed({ code: "paused", message: "This Bot is paused." }),
+    );
+    expect(refuseWhilePaused(asked, userId, "pause_unknown").status).toMatchObject({
+      code: "pause_unknown",
+      message: expect.stringContaining("could not tell whether this Bot is paused"),
+    });
+
+    const resent = appendUserMessage(paused, userId, "Say hi in five words");
+    expect(resent.unsent).toEqual(Option.none());
+    expect(isRunning(resent)).toBe(true);
   });
 
   it("offers a message sent to the wrong Bot again, still after the conversation opens with its own", () => {

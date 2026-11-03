@@ -1,7 +1,7 @@
 import { Option } from "effect";
 import { useEffect, useRef } from "react";
 import type { BotId, ConversationId } from "@aobot/domain";
-import { BotAvatar } from "../bots/public.ts";
+import { BotAvatar, type UsePause, usePause } from "../bots/public.ts";
 import { ApprovalCard } from "./ApprovalCard.tsx";
 import { Bubble } from "./Bubble.tsx";
 import { Composer } from "./Composer.tsx";
@@ -11,9 +11,28 @@ import "./chat.css";
 import { useAttachments } from "./use-attachments.ts";
 import { useConversation } from "./use-conversation.ts";
 
+/** Pause, or Resume while the Bot is paused, once the server has said which it is. */
+function PauseButton(props: { readonly pause: UsePause }) {
+  const { paused, sending, pause, resume } = props.pause;
+
+  return Option.match(paused, {
+    onNone: () => null,
+    onSome: (isPaused) => (
+      <button
+        type="button"
+        className={isPaused ? "pause-button pause-button--resume" : "pause-button"}
+        disabled={sending}
+        onClick={isPaused ? resume : pause}
+      >
+        {isPaused ? "Resume" : "Pause"}
+      </button>
+    ),
+  });
+}
+
 /**
-One conversation with a Bot: the pill with its avatar and name, the transcript with the question the Bot
-waits on below it, and the composer.
+One conversation with a Bot: the pill with its avatar and name, Paused when it is, and the button that
+pauses or resumes it; the transcript with the question the Bot waits on below it, and the composer.
 */
 export function ConversationView(props: {
   readonly conversationId: ConversationId;
@@ -25,6 +44,7 @@ export function ConversationView(props: {
   );
 
   const files = useAttachments(props.conversationId, send);
+  const pause = usePause(props.botId);
   const bottom = useRef<HTMLDivElement>(null);
   const last = transcript.at(-1);
 
@@ -49,11 +69,23 @@ export function ConversationView(props: {
               <>
                 <BotAvatar bot={summary.id} size={22} />
                 {summary.name}
+                {Option.getOrElse(pause.paused, () => false) ? (
+                  <span className="pill__badge">Paused</span>
+                ) : null}
               </>
             ),
           })}
         </span>
+        <PauseButton pause={pause} />
       </header>
+      {Option.match(pause.problem, {
+        onNone: () => null,
+        onSome: (why) => (
+          <p className="conversation__pause-problem" role="alert">
+            {why}
+          </p>
+        ),
+      })}
       <div className="conversation__messages" role="log" aria-live="polite" aria-busy={isRunning}>
         {transcript.map(
           TranscriptItem.$match({

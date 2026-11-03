@@ -15,6 +15,7 @@ import {
   refuseForAnotherBot,
   refuseMessage,
   refuseUnknownBot,
+  refuseWhilePaused,
   requestStop,
   seedFromSnapshot,
 } from "./conversation-state.ts";
@@ -122,6 +123,16 @@ export function makeConversations(
                 refuseForAnotherBot(current, botId, outgoing.messageId),
               ).pipe(
                 Effect.andThen(Atom.refresh(open({ conversationId: id, botId: outgoing.botId }))),
+              ),
+            ),
+            Effect.catchTag("BotPaused", () =>
+              Atom.update(state(id), (current) =>
+                refuseWhilePaused(current, outgoing.messageId, "paused"),
+              ),
+            ),
+            Effect.catchTag("PauseUnknown", () =>
+              Atom.update(state(id), (current) =>
+                refuseWhilePaused(current, outgoing.messageId, "pause_unknown"),
               ),
             ),
             Effect.catchTag("MessageAlreadySent", () =>

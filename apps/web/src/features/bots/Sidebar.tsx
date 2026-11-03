@@ -3,9 +3,11 @@ import { type MouseEvent, useId } from "react";
 import { BotAvatar } from "./BotAvatar.tsx";
 import { sidebarSections } from "./sidebar-sections.ts";
 import "./sidebar.css";
+import { usePausedBots } from "./use-pause.ts";
 
 interface Picking {
   readonly selected: BotId;
+  readonly paused: ReadonlyArray<BotId>;
   /** Where a Bot's link leads, for a click that opens it elsewhere: a new tab, a copied link. */
   readonly linkTo: (bot: BotId) => string;
   readonly onPick: (bot: BotId) => void;
@@ -18,9 +20,10 @@ function isPlainClick(event: MouseEvent): boolean {
 
 const avatarSize = { tile: 52, row: 32 } as const;
 
-/** One Bot: a tile in the pinned grid, or a row under a group. */
+/** One Bot: a tile in the pinned grid, or a row under a group. A paused Bot says so under its name. */
 function BotLink(props: Picking & { readonly bot: BotSummary; readonly layout: "tile" | "row" }) {
   const { bot } = props;
+  const paused = props.paused.includes(bot.id);
 
   return (
     <li>
@@ -28,6 +31,7 @@ function BotLink(props: Picking & { readonly bot: BotSummary; readonly layout: "
         href={props.linkTo(bot.id)}
         className={`sidebar__${props.layout}`}
         aria-current={bot.id === props.selected ? "page" : undefined}
+        data-paused={paused}
         onClick={(event) => {
           if (!isPlainClick(event)) return;
 
@@ -36,8 +40,11 @@ function BotLink(props: Picking & { readonly bot: BotSummary; readonly layout: "
         }}
       >
         <BotAvatar bot={bot.id} size={avatarSize[props.layout]} />
-        <span className="sidebar__name" title={bot.name}>
-          {bot.name}
+        <span className="sidebar__label">
+          <span className="sidebar__name" title={bot.name}>
+            {bot.name}
+          </span>
+          {paused ? <span className="sidebar__paused">Paused</span> : null}
         </span>
       </a>
     </li>
@@ -70,9 +77,17 @@ function Group(props: {
 The Bots to talk to, as a messenger lists contacts: the pinned ones as a grid of large avatars, then a row
 per Bot under each group's heading. The selected Bot's conversation is the one open beside it.
 */
-export function Sidebar(props: Picking & { readonly bots: ReadonlyArray<BotSummary> }) {
+export function Sidebar(
+  props: Omit<Picking, "paused"> & { readonly bots: ReadonlyArray<BotSummary> },
+) {
   const { pinned, ungrouped, groups } = sidebarSections(props.bots);
-  const picking: Picking = { selected: props.selected, linkTo: props.linkTo, onPick: props.onPick };
+
+  const picking: Picking = {
+    selected: props.selected,
+    paused: usePausedBots(),
+    linkTo: props.linkTo,
+    onPick: props.onPick,
+  };
 
   return (
     <nav className="sidebar" aria-label="Bots">

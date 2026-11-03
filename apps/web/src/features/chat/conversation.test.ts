@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import {
   BotId,
+  BotPaused,
   ChatRpcs,
   ConversationBusy,
   ConversationId,
@@ -41,7 +42,10 @@ const started: ChatEvent[] = [
 const fakeServer = (script: {
   readonly send: (
     stopped: Deferred.Deferred<void>,
-  ) => Stream.Stream<ChatEvent, ConversationBusy | MessageAlreadySent | ConversationOfAnotherBot>;
+  ) => Stream.Stream<
+    ChatEvent,
+    ConversationBusy | MessageAlreadySent | ConversationOfAnotherBot | BotPaused
+  >;
   readonly open?: Effect.Effect<ConversationSnapshot, UnknownBot | ConversationOfAnotherBot>;
   readonly stop?: (stopped: Deferred.Deferred<void>) => Effect.Effect<void>;
 }) => {
@@ -344,6 +348,27 @@ describe("given a conversation served by an in-memory Bot", () => {
 
     expect(state.status).toMatchObject({ code: "busy" });
     expect(state.transcript).toEqual([]);
+  });
+
+  it("says the Bot is paused and offers the refused message again", async () => {
+    const { registry, atoms } = start({
+      send: () => Stream.fail(new BotPaused({ botId: bot.id })),
+    });
+
+    await until(registry, atoms.state, (current) => Option.isSome(current.bot));
+    registry.set(atoms.send, userMessage);
+
+    const state = await until(registry, atoms.state, (current) =>
+      ConversationStatus.$is("Failed")(current.status),
+    );
+
+    expect(state.status).toEqual(
+      ConversationStatus.Failed({ code: "paused", message: "This Bot is paused." }),
+    );
+    expect(state.transcript).toEqual([]);
+    expect(state.unsent).toEqual(
+      Option.some({ id: userMessage.messageId, text: userMessage.text }),
+    );
   });
 
   it("goes idle and keeps one bubble when the server says it already had the message", async () => {

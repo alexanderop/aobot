@@ -10,8 +10,8 @@ import type { BotId, MessageId, RunId, ToolCallId } from "@aobot/domain";
 
 /**
 Why a conversation is in the failed state. `stopped` is not here: the person asked for it, so a stopped
-run is just idle. `busy`, `connection`, `unknown_bot` and `another_bot` come from the page, not from a
-run.
+run is just idle. A pause is: the person did not ask for it, so the page says why the Bot stopped.
+`busy`, `connection`, `unknown_bot` and `another_bot` come from the page, not from a run.
 */
 export type FailureCode =
   | Exclude<RunErrorCode, "stopped">
@@ -186,6 +186,19 @@ export function refuseUnknownBot(
   };
 }
 
+/** The conversation without the person's message `messageId`, which the composer offers again. */
+function takeBack(
+  state: ConversationState,
+  messageId: MessageId,
+): Pick<ConversationState, "transcript" | "unsent"> {
+  const refused = Arr.findFirst(state.transcript, (item) => isMessage(item, messageId));
+
+  return {
+    transcript: state.transcript.filter((item) => !isMessage(item, messageId)),
+    unsent: Option.map(refused, (message) => ({ id: messageId, text: message.text })),
+  };
+}
+
 /**
 The conversation belongs to another Bot than the one the message was sent to, as when another tab sent
 its first message to that Bot. Nothing was stored, so the message is taken back and offered again in the
@@ -196,16 +209,37 @@ export function refuseForAnotherBot(
   botId: BotId,
   messageId: MessageId,
 ): ConversationState {
-  const refused = Arr.findFirst(state.transcript, (item) => isMessage(item, messageId));
-
   return {
     ...state,
-    transcript: state.transcript.filter((item) => !isMessage(item, messageId)),
-    unsent: Option.map(refused, (message) => ({ id: messageId, text: message.text })),
+    ...takeBack(state, messageId),
     status: ConversationStatus.Failed({
       code: "another_bot",
       message: `This conversation is ${botId}'s, so the message was not sent.`,
     }),
+  };
+}
+
+/** What the page says when a message is refused for a pause. */
+const pauseRefusals = {
+  paused: "This Bot is paused.",
+  pause_unknown:
+    "The server could not tell whether this Bot is paused, so the message was not sent. Try again in a moment.",
+} satisfies Partial<Record<FailureCode, string>>;
+
+/**
+The server refused the message because the Bot is paused, or because it could not read whether it is.
+Nothing was stored, so the message is taken back and offered again in the composer, to send once the
+Bot runs again.
+*/
+export function refuseWhilePaused(
+  state: ConversationState,
+  messageId: MessageId,
+  code: keyof typeof pauseRefusals,
+): ConversationState {
+  return {
+    ...state,
+    ...takeBack(state, messageId),
+    status: ConversationStatus.Failed({ code, message: pauseRefusals[code] }),
   };
 }
 
