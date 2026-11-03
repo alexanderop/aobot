@@ -222,6 +222,42 @@ describe("safetyOf", () => {
       "/wallet",
       "payments",
     ],
+    [
+      "types a full-width password",
+      type("textbox", "Ｐａｓｓｗｏｒｄ", "s3cret!"),
+      "/account",
+      "credentials",
+    ],
+    [
+      "turns on two-factor sign-in spelt with a non-breaking hyphen",
+      click("button", "Enable two\u2011factor authentication"),
+      "/settings",
+      "security",
+    ],
+    [
+      "changes a password split by a soft hyphen",
+      click("button", "Change Pass\u00ADword"),
+      "/account",
+      "credentials",
+    ],
+    [
+      "continues on a percent-encoded transfer page",
+      click("button", "Weiter"),
+      "/%C3%BCberweisung",
+      "payments",
+    ],
+    [
+      "types a password split by a zero-width space",
+      type("textbox", "Pass\u200Bword", "s3cret!"),
+      "/account",
+      "credentials",
+    ],
+    [
+      "continues on a checkout page whose path has a malformed escape",
+      click("button", "Weiter"),
+      "/checkout/%E0%A4%A",
+      "payments",
+    ],
   ] as const)("hands off an action that %s", (_case, action, path, list) => {
     expect(safetyOf(action, path)).toEqual(Option.some(list));
   });

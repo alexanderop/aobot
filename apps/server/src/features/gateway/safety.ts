@@ -101,9 +101,26 @@ export const safetyAbout = (list: SafetyList): string => safetyLists[list].about
 const listOf = (words: string): Option.Option<SafetyList> =>
   Array.findFirst(SafetyList.literals, (list) => safetyLists[list].pattern.test(words));
 
-/** The element's role and name, and the host and path of the page it is on: never its query or fragment. */
+const decodePath = Option.liftThrowable(decodeURIComponent);
+
+/**
+`words` with full-width letters folded, soft hyphens and zero-width characters dropped and typographic dashes
+made plain, since a page can spell a word a person reads as "password" in a way a pattern would miss.
+*/
+const plain = (words: string): string =>
+  words
+    .normalize("NFKC")
+    .replaceAll(/[\u00AD\u200B-\u200D\u2060\uFEFF]/gu, "")
+    .replaceAll(/[\u2010-\u2015\u2212]/gu, "-");
+
+/**
+The element's role and name, and the host and path of the page it is on, its percent-escapes decoded where
+they are well formed: never its query or fragment.
+*/
 const onPage = ({ role, name, url }: RefTarget, path: string) =>
-  listOf([role, name, hostOf(url), path].join(" "));
+  listOf(
+    plain([role, name, hostOf(url), Option.getOrElse(decodePath(path), () => path)].join(" ")),
+  );
 
 /**
 The safety list `action` falls under, read from the element it acts on as the server's snapshot names it

@@ -235,8 +235,10 @@ and donations, billing). Each also matches its German words for a password, buyi
 
 **What it reads.** A `click`, `type` or `press` is matched on the element its ref resolved to, as the
 server's snapshot names it (role and name), and the host and path of the page that snapshot was read at,
-so a "Continue" button on `/checkout` is a payment. Never on the text a Bot types or the key it presses: a
-note about a customer's purchase is not a purchase. Never on the address's query or fragment, which the
+so a "Continue" button on `/checkout` is a payment. It matches them as a person reads them: full-width
+letters folded, soft hyphens and zero-width characters dropped, typographic dashes made plain, and the
+path's percent-escapes decoded, so `/%C3%BCberweisung` is a transfer. Never on the text a Bot types or the
+key it presses: a note about a customer's purchase is not a purchase. Never on the address's query or fragment, which the
 latest snapshot does not keep. A snapshot stored before E2-6 has no path, so the migration that adds it
 forgets the snapshot, as the one that added its address did. The lists are deliberately broad: a false
 hand-off costs the person one click, a missed one costs them their account or their money.
