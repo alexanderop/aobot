@@ -31,7 +31,7 @@ export const pauseStoreLayer = Layer.effect(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
 
-    const paused = sql`SELECT bot_id FROM bot_pauses`.pipe(
+    const paused = sql`SELECT bot_id FROM bot_pauses ORDER BY bot_id`.pipe(
       Effect.flatMap(decodeBots),
       Effect.map(Array.map((row) => row.bot_id)),
       Effect.mapError((error) => new PauseUnreadable({ message: error.message })),

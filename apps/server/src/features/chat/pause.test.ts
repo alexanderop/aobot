@@ -9,12 +9,13 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import { Context, Effect, Fiber, Layer, Queue, Ref, Stream } from "effect";
 import { RpcTest } from "effect/rpc";
+import { SqlClient } from "effect/sql";
 import { TestClock } from "effect/testing";
 import { AgentEvent, AgentRuntime } from "../agent/public.ts";
-import { assistant, testBots } from "../bots/testing/test-bots.ts";
+import { assistant } from "../bots/testing/test-bots.ts";
 import { Turns } from "../lifecycle/public.ts";
-import { testLifecycle } from "../lifecycle/testing/test-lifecycle.ts";
 import { chatLayer } from "./public.ts";
+import { workingAgent } from "./testing/test-agents.ts";
 import { testDatabase } from "./testing/test-database.ts";
 import { testServer } from "./testing/test-server.ts";
 
@@ -26,14 +27,6 @@ function send(text: string, messageId: string) {
   return { conversationId, botId: assistant.id, messageId: MessageId.make(messageId), text };
 }
 
-/** A Bot that says "One" and then works on forever, until its turn is stopped. */
-const working = Layer.succeed(
-  AgentRuntime,
-  AgentRuntime.of({
-    run: () => Stream.concat(Stream.make(AgentEvent.TextDelta({ text: "One" })), Stream.never),
-  }),
-);
-
 /** A Bot that answers "Ok" at once. */
 const answering = Layer.succeed(
   AgentRuntime,
@@ -44,8 +37,17 @@ const answering = Layer.succeed(
 
 /** One server's chat with its lifecycle beside it, failing the next reads of the pause state while `failures` says. */
 function server(agent: Layer.Layer<AgentRuntime>, failures: Ref.Ref<number> = Ref.makeUnsafe(0)) {
-  return chatLayer.pipe(Layer.provide(agent), Layer.provideMerge(testServer(failures)));
+  return chatLayer.pipe(Layer.provide(agent), Layer.provideMerge(testServer({ failures })));
 }
+
+/** The `turn.stopped` rows, oldest first: who stopped the turn, and why. */
+const stopRows = Effect.flatMap(
+  SqlClient.SqlClient,
+  (sql) => sql`
+    SELECT decision, initiator_kind, json_extract(detail, '$.reason') AS reason
+    FROM audit_rows WHERE action = 'turn.stopped' ORDER BY seq
+  `,
+);
 
 /** Runs a turn in the background, once the Bot has said its first word in it. */
 const afterAWord = <E>(sending: Stream.Stream<ChatEvent, E>) =>
@@ -103,7 +105,11 @@ describe("given a paused Bot", () => {
       const snapshot = yield* client["Chat.open"](opening);
       expect(snapshot.isRunning).toBe(false);
       expect(snapshot.messages.map(({ text }) => text)).toEqual(["Count to a million", "One"]);
-    }).pipe(Effect.provide(server(working))),
+      expect(yield* stopRows).toEqual([
+        { decision: "allow", initiator_kind: "person", reason: "bot paused" },
+        { decision: "succeeded", initiator_kind: "person", reason: null },
+      ]);
+    }).pipe(Effect.provide(server(workingAgent))),
   );
 });
 
@@ -152,12 +158,11 @@ describe("given a database that cannot say whether the Bot is paused", () => {
 describe("given two servers on one database", () => {
   it.effect("stops a turn on one within five seconds of a pause on the other", () =>
     Effect.gen(function* () {
-      const database = yield* Layer.build(testDatabase);
+      const database = Layer.succeedContext(yield* Layer.build(testDatabase));
 
       const replica = chatLayer.pipe(
-        Layer.provide(working),
-        Layer.provideMerge(Layer.mergeAll(testLifecycle(), testBots)),
-        Layer.provide(Layer.succeedContext(database)),
+        Layer.provide(workingAgent),
+        Layer.provideMerge(testServer({ database })),
       );
 
       const a = yield* Layer.build(replica);
@@ -167,12 +172,14 @@ describe("given two servers on one database", () => {
       const turn = yield* afterAWord(onB["Chat.send"](send("Count to a million", "user-1")));
 
       yield* Context.get(a, Turns).pause(assistant.id);
-      yield* TestClock.adjust("4 seconds");
-      expect((yield* onB["Chat.open"](opening)).isRunning).toBe(true);
+      yield* TestClock.adjust("5 seconds");
 
-      yield* TestClock.adjust("1 second");
       expect((yield* Fiber.join(turn)).at(-1)).toMatchObject({ type: "RUN_ERROR", code: "paused" });
       expect((yield* onB["Chat.open"](opening)).isRunning).toBe(false);
+      expect(yield* stopRows.pipe(Effect.provide(b))).toEqual([
+        { decision: "allow", initiator_kind: "deployment", reason: "bot paused" },
+        { decision: "succeeded", initiator_kind: "deployment", reason: null },
+      ]);
     }),
   );
 });

@@ -1,18 +1,27 @@
 import type { BotId, PauseNotChanged, UnknownBot } from "@aobot/domain";
-import { Effect, Option, Predicate, Schedule, Stream } from "effect";
+import { Effect, Match, Option, Schedule, Stream } from "effect";
 import { Atom } from "effect/reactivity";
 import type { RpcClientError } from "effect/rpc";
 import { PauseClient } from "./pause-client.ts";
 
 /** What an admin asks of a Bot. */
-export type PauseChange = "pause" | "resume";
+type PauseChange = PauseNotChanged["change"];
+
+/** Why a pause or a resume the server could not store did not happen. */
+const notStored: Readonly<Record<PauseChange, string>> = {
+  pause: "The Bot was not paused: the pause could not be stored.",
+  resume: "The Bot was not resumed: the change could not be stored.",
+};
 
 /** Why a pause or a resume did not happen, as the server or the connection said. */
-function whyNotChanged(
-  error: Pick<PauseNotChanged | UnknownBot | RpcClientError.RpcClientError, "_tag" | "message">,
-): string {
-  return Predicate.isTagged(error, "UnknownBot") ? "The server knows no such Bot." : error.message;
-}
+const whyNotChanged = Match.typeTags<
+  PauseNotChanged | UnknownBot | RpcClientError.RpcClientError,
+  string
+>()({
+  PauseNotChanged: ({ change }) => notStored[change],
+  UnknownBot: () => "The server knows no such Bot.",
+  RpcClientError: () => "Cannot reach the server.",
+});
 
 /** The pause atoms, over the client `runtime` gives: the server's on the page, a fake one in a test. */
 export function makePauses(runtime: Atom.AtomRuntime<PauseClient>) {

@@ -18,7 +18,7 @@ import { AgentRuntime } from "../agent/public.ts";
 import { Bots, botSummary, turnInstructions } from "../bots/public.ts";
 import { Turns } from "../lifecycle/public.ts";
 import { ConversationStore } from "./conversation-store.ts";
-import { TurnStopped, isTerminal, turnEvents, turnStatus } from "./turn.ts";
+import { isTerminal, turnEvents, turnStatus } from "./turn.ts";
 
 /** The Bot's messages so far with one more streamed event folded in: text grows the message it names. */
 function recordText(messages: ReadonlyArray<Message>, event: ChatEvent): ReadonlyArray<Message> {
@@ -80,7 +80,12 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
       };
 
       const bot = yield* botOf(conversationId, message.botId);
-      const { stopped, release } = yield* turns.start(conversationId, bot.id);
+
+      const { stopped, recordStop, release } = yield* turns.start(
+        conversationId,
+        ids.runId,
+        bot.id,
+      );
 
       yield* store.ensure(conversationId, bot.id);
 
@@ -117,10 +122,6 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
 
       yield* Effect.addFinalizer(() => settle);
 
-      const whenStopped = Effect.flatMap(Deferred.await(stopped), (reason) =>
-        Effect.fail(new TurnStopped({ reason })),
-      );
-
       // A stop that landed during the awaits above has already completed the signal. Checking it
       // here keeps the model from speaking at all, where interruptWhen alone would let a first
       // delta through.
@@ -128,7 +129,7 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
         Deferred.isDone(stopped).pipe(
           Effect.map((isStopped) =>
             isStopped
-              ? Stream.fromEffect(whenStopped)
+              ? Stream.fromEffect(Deferred.await(stopped))
               : agent
                   .run({
                     bot: bot.id,
@@ -137,9 +138,13 @@ export const chatHandlersLayer = ChatRpcs.toLayer(
                     instructions: turnInstructions(bot),
                     history,
                   })
-                  .pipe(Stream.interruptWhen(whenStopped)),
+                  .pipe(Stream.interruptWhen(Deferred.await(stopped))),
           ),
         ),
+      ).pipe(
+        // Here, where the stop becomes how the turn ends: a stop that lands once the Bot finished
+        // records nothing.
+        Stream.tapErrorTag("TurnStopped", recordStop),
       );
 
       return turnEvents(ids, answer).pipe(

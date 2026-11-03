@@ -2,8 +2,8 @@ import { ConversationId, MessageId, RunId, ToolCallId } from "@aobot/domain";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Stream } from "effect";
 import { AgentEvent, StepLimit } from "../agent/public.ts";
-import { StopReason } from "../lifecycle/public.ts";
-import { TurnStopped, turnEvents, turnStatus } from "./turn.ts";
+import { TurnStopped } from "../lifecycle/public.ts";
+import { turnEvents, turnStatus } from "./turn.ts";
 
 const ids = {
   conversationId: ConversationId.make("conversation-1"),
@@ -138,23 +138,23 @@ describe("turnEvents", () => {
   );
 
   it.effect.each([
-    [StopReason.Person(), { code: "stopped", message: "Stopped." }],
-    [StopReason.Paused(), { code: "paused", message: "This Bot is paused." }],
+    [new TurnStopped({ code: "stopped", by: "person" }), { code: "stopped", message: "Stopped." }],
     [
-      StopReason.PauseUnknown(),
+      new TurnStopped({ code: "paused", by: "deployment" }),
+      { code: "paused", message: "This Bot is paused." },
+    ],
+    [
+      new TurnStopped({ code: "pause_unknown", by: "deployment" }),
       {
         code: "pause_unknown",
         message: "The server could not tell whether this Bot is paused, so it stopped this turn.",
       },
     ],
-  ] as const)("ends a turn stopped as %o with why, as a cancelled turn", ([reason, ending]) =>
+  ] as const)("ends a turn stopped as %o with why, as a cancelled turn", ([stop, ending]) =>
     Effect.gen(function* () {
       const events = yield* turnEvents(
         ids,
-        Stream.concat(
-          Stream.make(AgentEvent.TextDelta({ text: "One" })),
-          Stream.fail(new TurnStopped({ reason })),
-        ),
+        Stream.concat(Stream.make(AgentEvent.TextDelta({ text: "One" })), Stream.fail(stop)),
       ).pipe(Stream.runCollect);
 
       const last = events.at(-1);

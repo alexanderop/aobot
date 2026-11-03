@@ -9,4 +9,4 @@ export { migrateLifecycle } from "./migrations.ts";
 
 export { pauseHandlers } from "./rpcs.ts";
 
-export { StopReason, Turns } from "./turns.ts";
+export { Turns, TurnStopped } from "./turns.ts";

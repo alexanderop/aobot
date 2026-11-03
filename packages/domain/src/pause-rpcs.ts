@@ -4,7 +4,7 @@ import { UnknownBot } from "./bot.ts";
 import { BotId } from "./ids.ts";
 
 /** Names one Bot. */
-export const BotRef = Schema.Struct({ botId: BotId });
+const BotRef = Schema.Struct({ botId: BotId });
 
 /** The Bot is paused, so none of its turns starts until an admin resumes it. */
 export class BotPaused extends Schema.TaggedError<BotPaused>()("BotPaused", { botId: BotId }) {}
@@ -17,9 +17,13 @@ export class PauseUnknown extends Schema.TaggedError<PauseUnknown>()("PauseUnkno
   botId: BotId,
 }) {}
 
-/** A pause or a resume did not happen: it could not be stored together with the rows that record it. */
+/**
+A pause or a resume of the Bot, as `change` says, did not happen: it could not be stored together with
+the rows that record it.
+*/
 export class PauseNotChanged extends Schema.TaggedError<PauseNotChanged>()("PauseNotChanged", {
-  message: Schema.String,
+  botId: BotId,
+  change: Schema.Literals(["pause", "resume"]),
 }) {}
 
 /**

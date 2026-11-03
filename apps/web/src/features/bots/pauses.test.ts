@@ -22,7 +22,7 @@ function pauseServer(stuck: ReadonlyArray<BotId>) {
           ),
         "Pause.resume": ({ botId }) =>
           stuck.includes(botId)
-            ? Effect.fail(new PauseNotChanged({ message: "The Bot was not resumed." }))
+            ? Effect.fail(new PauseNotChanged({ botId, change: "resume" }))
             : SubscriptionRef.update(paused, (bots) => bots.filter((bot) => bot !== botId)),
       });
     }),
@@ -107,7 +107,7 @@ describe("given a Bot an admin can pause", () => {
     );
 
     expect(Option.flatten(AsyncResult.value(last))).toEqual(
-      Option.some("The Bot was not resumed."),
+      Option.some("The Bot was not resumed: the change could not be stored."),
     );
     await pausedNow([chief]);
   });
