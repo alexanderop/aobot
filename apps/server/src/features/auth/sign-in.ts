@@ -26,13 +26,19 @@ const encodePending = Schema.encodeSync(PendingCookie);
 const decodePending = Schema.decodeUnknownOption(PendingCookie);
 
 /**
-Where a sign-in may return to: a path on this server, never another site. `//evil.example` and
-`/\evil.example` are paths a browser reads as another host, so anything but a plain path is `/`.
+Where a sign-in may return to: the path, query and fragment of `raw` read as a browser reads it on
+`publicUrl`, when it stays on that origin, and `/` otherwise. Reading it the browser's way, tabs and
+newlines dropped and `\` read as `/`, is what keeps `/\t/evil.example` from leaving.
 */
-export function returnPathOf(raw: Option.Option<string>): string {
-  return Option.getOrElse(
-    Option.filter(raw, (path) => /^\/(?![/\\])/u.test(path)),
-    () => "/",
+export function returnPathOf(raw: Option.Option<string>, publicUrl: URL): string {
+  return Option.flatMap(raw, (value) =>
+    Option.fromNullishOr(URL.parse(value, publicUrl.href)),
+  ).pipe(
+    Option.filter((url) => url.origin === publicUrl.origin),
+    Option.match({
+      onNone: () => "/",
+      onSome: (url) => url.pathname + url.search + url.hash,
+    }),
   );
 }
 
@@ -73,6 +79,7 @@ export const signInRoutes = (publicUrl: URL) =>
 
           const returnTo = returnPathOf(
             Option.fromNullishOr(new URL(request.url, publicUrl).searchParams.get("return")),
+            publicUrl,
           );
 
           const { url, pending } = yield* provider.begin(returnTo);

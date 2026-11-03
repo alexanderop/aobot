@@ -206,14 +206,37 @@ describe("signing in", () => {
 });
 
 describe("returnPathOf", () => {
-  it.each(["/", "/audit?bot=assistant", "/?c=1#x"])("returns to %s", (path) => {
-    expect(returnPathOf(Option.some(path))).toBe(path);
+  const publicUrl = new URL("http://localhost:3100");
+
+  /** Where a browser that is sent to `location` from this server lands. */
+  const landsAt = (location: string) => new URL(location, publicUrl);
+
+  it.each([
+    ["/", "/"],
+    ["/audit?bot=assistant", "/audit?bot=assistant"],
+    ["/?c=1#x", "/?c=1#x"],
+    ["audit", "/audit"],
+  ])("returns %j to %j on this server", (raw, path) => {
+    expect(returnPathOf(Option.some(raw), publicUrl)).toBe(path);
   });
 
-  it.each(["//evil.example", "/\\evil.example", "https://evil.example", "evil", ""])(
-    "returns to / instead of %j",
-    (path) => {
-      expect(returnPathOf(Option.some(path))).toBe("/");
+  it.each([
+    "//evil.example",
+    "/\\evil.example",
+    "/\t/evil.example/x",
+    "/\n/evil.example/x",
+    "\t//evil.example",
+    "https://evil.example",
+    "http://localhost:3101/",
+    "javascript:alert(1)",
+  ])("returns to / instead of %j", (raw) => {
+    expect(returnPathOf(Option.some(raw), publicUrl)).toBe("/");
+  });
+
+  it.each(["/%09/evil.example", "/%2F/evil.example", "/%5Cevil.example"])(
+    "keeps %j on this server",
+    (raw) => {
+      expect(landsAt(returnPathOf(Option.some(raw), publicUrl)).origin).toBe(publicUrl.origin);
     },
   );
 });
