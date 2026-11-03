@@ -26,18 +26,20 @@ const encodePending = Schema.encodeSync(PendingCookie);
 const decodePending = Schema.decodeUnknownOption(PendingCookie);
 
 /**
-Where a sign-in may return to: the path, query and fragment of `raw` read as a browser reads it on
-`publicUrl`, when it stays on that origin, and `/` otherwise. Reading it the browser's way, tabs and
-newlines dropped and `\` read as `/`, is what keeps `/\t/evil.example` from leaving.
+Where a sign-in may return to: `raw` read as a browser reads it on `publicUrl`, as an absolute address on
+that origin when it stays there, and the origin's root otherwise. Absolute, because a browser reads a
+relative `Location` whose path starts `//` as another host, and dot segments can leave such a path behind.
+Reading it the browser's way, tabs and newlines dropped and `\` read as `/`, keeps `/\t/evil.example`
+from leaving.
 */
-export function returnPathOf(raw: Option.Option<string>, publicUrl: URL): string {
+export function returnAddressOf(raw: Option.Option<string>, publicUrl: URL): string {
   return Option.flatMap(raw, (value) =>
     Option.fromNullishOr(URL.parse(value, publicUrl.href)),
   ).pipe(
     Option.filter((url) => url.origin === publicUrl.origin),
     Option.match({
-      onNone: () => "/",
-      onSome: (url) => url.pathname + url.search + url.hash,
+      onNone: () => `${publicUrl.origin}/`,
+      onSome: (url) => `${url.origin}${url.pathname}${url.search}${url.hash}`,
     }),
   );
 }
@@ -77,7 +79,7 @@ export const signInRoutes = (publicUrl: URL) =>
         Effect.gen(function* () {
           const request = yield* HttpServerRequest.HttpServerRequest;
 
-          const returnTo = returnPathOf(
+          const returnTo = returnAddressOf(
             Option.fromNullishOr(new URL(request.url, publicUrl).searchParams.get("return")),
             publicUrl,
           );

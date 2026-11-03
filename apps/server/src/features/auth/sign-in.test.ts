@@ -9,7 +9,7 @@ import { SqlClient } from "effect/sql";
 import { sessionRoute } from "./http.ts";
 import { type Claims, Provider } from "./provider.ts";
 import { sessionCookie } from "./sessions.ts";
-import { returnPathOf, signInRoutes } from "./sign-in.ts";
+import { returnAddressOf, signInRoutes } from "./sign-in.ts";
 import { testAuthDatabase, testSignIn } from "./testing/test-auth.ts";
 
 /** Who the fake provider vouches for at the next callback. */
@@ -126,12 +126,20 @@ describe("signing in", () => {
     const { pairs, attributes } = cookiesOf(back);
 
     expect(back.status).toBe(303);
-    expect(back.headers.get("location")).toBe("/audit?bot=assistant");
+    expect(back.headers.get("location")).toBe("http://localhost:3100/audit?bot=assistant");
     expect(attributes(sessionCookie)).toMatch(/Max-Age=604800.*Path=\/;.*HttpOnly.*SameSite=Lax/u);
     expect(await sessionWith(pairs)).toEqual(
       SessionState.cases.SignedIn.make({
         person: { email: Email.make("alice@example.com"), name: "alice" },
       }),
+    );
+  });
+
+  it("keeps alice on this server when where she was is spelt with dot segments", async () => {
+    const back = await signIn("/.//evil.example/phish");
+
+    expect(new URL(back.headers.get("location") ?? "", "http://localhost:3100").origin).toBe(
+      "http://localhost:3100",
     );
   });
 
@@ -202,19 +210,20 @@ describe("signing in", () => {
   });
 });
 
-describe("returnPathOf", () => {
+describe("returnAddressOf", () => {
   const publicUrl = new URL("http://localhost:3100");
 
   /** Where a browser that is sent to `location` from this server lands. */
   const landsAt = (location: string) => new URL(location, publicUrl);
 
   it.each([
-    ["/", "/"],
-    ["/audit?bot=assistant", "/audit?bot=assistant"],
-    ["/?c=1#x", "/?c=1#x"],
-    ["audit", "/audit"],
-  ])("returns %j to %j on this server", (raw, path) => {
-    expect(returnPathOf(Option.some(raw), publicUrl)).toBe(path);
+    ["/", "http://localhost:3100/"],
+    ["/audit?bot=assistant", "http://localhost:3100/audit?bot=assistant"],
+    ["/?c=1#x", "http://localhost:3100/?c=1#x"],
+    ["audit", "http://localhost:3100/audit"],
+    ["http://someone@localhost:3100/audit", "http://localhost:3100/audit"],
+  ])("returns %j to %j", (raw, address) => {
+    expect(returnAddressOf(Option.some(raw), publicUrl)).toBe(address);
   });
 
   it.each([
@@ -226,14 +235,20 @@ describe("returnPathOf", () => {
     "https://evil.example",
     "http://localhost:3101/",
     "javascript:alert(1)",
-  ])("returns to / instead of %j", (raw) => {
-    expect(returnPathOf(Option.some(raw), publicUrl)).toBe("/");
+  ])("returns to the root instead of %j", (raw) => {
+    expect(returnAddressOf(Option.some(raw), publicUrl)).toBe("http://localhost:3100/");
   });
 
-  it.each(["/%09/evil.example", "/%2F/evil.example", "/%5Cevil.example"])(
-    "keeps %j on this server",
-    (raw) => {
-      expect(landsAt(returnPathOf(Option.some(raw), publicUrl)).origin).toBe(publicUrl.origin);
-    },
-  );
+  it.each([
+    "/%09/evil.example",
+    "/%2F/evil.example",
+    "/%5Cevil.example",
+    "/.//evil.example",
+    "/..//evil.example",
+    "/a/..//evil.example",
+    "/%2e//evil.example",
+    "http://localhost:3100//evil.example",
+  ])("keeps %j on this server", (raw) => {
+    expect(landsAt(returnAddressOf(Option.some(raw), publicUrl)).origin).toBe(publicUrl.origin);
+  });
 });
