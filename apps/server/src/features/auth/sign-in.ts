@@ -2,10 +2,10 @@ import type { SignInRefusalCode } from "@aobot/domain";
 import { Duration, Effect, Option, Redacted, Schema } from "effect";
 import { type Cookies, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { capText } from "../../shared/tool-result.ts";
-import { sessionCookie, sessionToken } from "./identity.ts";
 import { normalizeEmail } from "./email.ts";
-import { People, sessionLifetime, SignInRefused } from "./people.ts";
+import { People, SignInRefused } from "./people.ts";
 import { PendingSignIn, Provider, ProviderFailed } from "./provider.ts";
+import { sessionCookie, sessionLifetime, sessionToken } from "./sessions.ts";
 
 /** The cookie a sign-in in flight is kept in, between leaving for the provider and coming back. */
 const signInCookie = "aobot_signin";

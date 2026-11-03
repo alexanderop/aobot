@@ -38,10 +38,12 @@ export { signedInRpc } from "./http.ts";
 
 export { normalizeEmail } from "./email.ts";
 
-export { Identity, identitySignIn, sessionCookie } from "./identity.ts";
+export { Identity, identitySignIn } from "./identity.ts";
 
 export { migrateAuth } from "./migrations.ts";
 
 export { People, peopleLayer } from "./people.ts";
+
+export { sessionCookie } from "./sessions.ts";
 
 export { authConfig, AuthSettings } from "./settings.ts";

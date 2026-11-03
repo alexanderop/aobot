@@ -14,7 +14,8 @@ import { RpcSerialization, RpcServer, RpcTest } from "effect/rpc";
 import { actorId, CurrentActor } from "../../shared/actor.ts";
 import { auditLogLayer, migrateAudit } from "../audit/public.ts";
 import { sessionRoute, signedInGate, signedInRpc } from "./http.ts";
-import { Identity, identitySignIn, sessionCookie } from "./identity.ts";
+import { Identity, identitySignIn } from "./identity.ts";
+import { sessionCookie } from "./sessions.ts";
 import { migrateAuth } from "./migrations.ts";
 import { People, peopleLayer } from "./people.ts";
 

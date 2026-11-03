@@ -8,7 +8,8 @@ import { TestClock } from "effect/testing";
 import { actorId } from "../../shared/actor.ts";
 import { recordedSpans } from "../../shared/testing/recorded-spans.ts";
 import { auditLogLayer, migrateAudit } from "../audit/public.ts";
-import { Identity, identitySignIn, sessionCookie } from "./identity.ts";
+import { Identity, identitySignIn } from "./identity.ts";
+import { sessionCookie } from "./sessions.ts";
 import { migrateAuth } from "./migrations.ts";
 import { People, peopleLayer, type VerifiedPerson } from "./people.ts";
 

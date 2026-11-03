@@ -1,14 +1,12 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { type AuditAction, Email, SignInRefusalCode } from "@aobot/domain";
 import { Clock, Context, Duration, Effect, Layer, Option, Redacted, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import { Actor, CurrentActor, deployment } from "../../shared/actor.ts";
 import { auditRows } from "../audit/public.ts";
 import { domainOf, isAllowedDomain } from "./email.ts";
+import { sessionLifetime, tokenHash } from "./sessions.ts";
 import type { SignInSettings } from "./settings.ts";
-
-/** How long a session lasts from its sign-in, however much it is used. */
-export const sessionLifetime = Duration.days(7);
 
 /** A verified address, and what else the provider said of the person behind it. */
 export interface VerifiedPerson {
@@ -54,11 +52,6 @@ const refusalWords: Readonly<Record<SignInRefusalCode, string>> = {
   expired: "expired",
   unavailable: "unavailable",
 };
-
-/** The hash a session's token is stored and looked up by. */
-export function tokenHash(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
 
 /** An instant as the database writes its own, so the two compare as text. */
 function instant(millis: number): string {

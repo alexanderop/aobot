@@ -1,19 +1,11 @@
 import { Email, SessionState } from "@aobot/domain";
 import { Clock, Context, Effect, Layer, Option, Schema } from "effect";
-import { Cookies, type Headers } from "effect/http";
+import type { Headers } from "effect/http";
 import { SqlClient } from "effect/sql";
 import { Actor, type PersonActor, singleUser } from "../../shared/actor.ts";
 import { isAllowedDomain } from "./email.ts";
-import { tokenHash } from "./people.ts";
+import { sessionToken, tokenHash } from "./sessions.ts";
 import type { SignInSettings } from "./settings.ts";
-
-/** The cookie a person's session token is in. */
-export const sessionCookie = "aobot_session";
-
-/** The session token `headers` carry, if any. */
-export function sessionToken(headers: Headers.Headers): Option.Option<string> {
-  return Option.fromUndefinedOr(Cookies.parseHeader(headers["cookie"] ?? "")[sessionCookie]);
-}
 
 /**
 The database did not answer who a session belongs to. Whoever asked refuses the request for now, and never
